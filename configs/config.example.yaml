@@ -5,11 +5,21 @@ database:
   dsn: "postgres://postgres:postgres@localhost:5432/travelmcp?sslmode=disable"
 
 providers:
+  # По умолчанию источников нет: реальные провайдеры подключаются по мере
+  # реализации. Мок synth для демо/тестов включается явно:
+  #   PROVIDERS_ENABLED=synth
+  # Реестр Минтранса (межгородской автобус, регионы 22/42/54/70) — как есть:
+  #   PROVIDERS_ENABLED=intercity
+  #   (датасет data/reestr/regions.json с координатами собирается
+  #   scripts/extract-minstran.py с --osm и не хранится в git)
   enabled:
-    - synth
+    []
+  intercity:
+    # путь к JSON-датасету реестра (см. scripts/extract-minstran.py)
+    reestr_path: "data/reestr/regions.json"
 
 auth:
-  admin_token: ""
+  admin_token: "dev-secret"
 
 # Секреты — только через env (или .env, gitignored); в YAML не заполняются.
 yandex:

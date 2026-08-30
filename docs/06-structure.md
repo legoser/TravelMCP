@@ -12,7 +12,7 @@ Travel_MCP/
 │   └── mcp-server/            # точка входа: конфиг → реестр → HTTP+MCP → shutdown
 ├── internal/
 │   ├── model/                 # каноническая модель данных (ядро без зависимостей)
-│   ├── providers/             # адаптеры источников + Registry (сейчас synth + GTFS)
+│   ├── providers/             # адаптеры источников + Registry (synth, intercity)
 │   ├── geo/                   # гаверсин, ближайшие остановки, время пешего доступа
 │   ├── planner/               # CSA-поиск и сборка Journey (ядро бизнес-логики)
 │   ├── mcp/                   # MCP-сервер: инструменты find_route, list_providers
@@ -23,6 +23,8 @@ Travel_MCP/
 │   ├── common/                # заготовленные хелперы и фиксированные сценарии
 │   ├── integration/           # HTTP+MCP in-process через httptest
 │   └── smoke/                 # сборка бинарника + запуск отдельного процесса
+├── testdata/
+│   └── reestr/                # мини-фикстура реестра Минтранса (mini.json)
 ├── configs/config.example.yaml
 ├── docker-compose.yml         # mcp-server + PostgreSQL/PostGIS
 ├── Dockerfile
@@ -44,7 +46,7 @@ cmd/mcp-server ──→ config, providers, server, telemetry
 internal/server ──→ config, telemetry, providers, planner, mcp, mcp-go/server
 internal/mcp    ──→ planner, providers, model, mcp-go{server,mcp}
 internal/planner─→ model, geo, telemetry
-internal/providers ─→ model
+internal/providers ─→ model, geo
 internal/geo    ──→ model
 internal/model  ──→ (никого)
 test/smoke      ──→ internal/providers, test/common
@@ -86,13 +88,14 @@ mcp.NewToolResultJSON(Journey) → ответ клиенту
 | Сущность | Где | Примечания |
 |---|---|---|
 | `Coords`, `Mode` (+ `ModeFlight`), `Stop`, `Route`, `StopTime`, `Trip`, `Transfer`, `Connection`, `Network`, `SearchParams`, `LegPoint`, `Leg`, `Cost`, `Journey` | `internal/model/model.go` | каноническая модель; `Cost` — шов под будущий cost-движок |
-| `Provider` (ID/Health/Network), `Registry`, `HealthStatus`, `Synth` | `internal/providers/registry.go`, `internal/providers/synth.go` | synth — детерминированная сеть-фикстура для демо/тестов |
+| `Provider` (ID/Health/Network), `Registry`, `HealthStatus`, `Synth` | `internal/providers/registry.go`, `internal/providers/synth.go` | synth — детерминированная сеть-фикстура, мок только для тестов/демо (не продакшн-источник) |
+| `Intercity` (разбор JSON-датасета, пешие стыковки между близкими терминалами) | `internal/providers/intercity.go`, `internal/providers/intercity_test.go` | реальный источник exact-времён из реестра Минтранса; тест на `testdata/reestr/mini.json` |
 | `Haversine`, `WalkTimeMinutes`, `NearestStops` | `internal/geo/geo.go` | скорость пешком 5 км/ч; порог пешей доступности 30 мин |
 | `Planner.Plan`, `csa`, `reconstruct`, `buildLegs` | `internal/planner/planner.go` | CSA по медицинским правилам: сортировка по отправлению, пересадки по пешим стыковкам, лимит `MaxTransfers` |
 | `App.Server`, `handleFindRoute`, `handleListProviders`, `network()` | `internal/mcp/mcp.go` | инструменты MCP; `network()` склеивает провайдеров |
 | `Server.New` (mux, эндпоинты, монтаж `/mcp`) | `internal/server/server.go` | `NewStreamableHTTPServer` |
 | `Metrics.Inc`, `Snapshot`, `Named` | `internal/telemetry/telemetry.go` | мутекс-защищённые счётчики; в JSON для админки |
-| `Load` (default → YAML → env) | `internal/config/config.go` | env: `HTTP_ADDR`, `DATABASE_DSN`, `PROVIDERS_ENABLED`, `ADMIN_TOKEN` |
+| `Load` (default → YAML → env) | `internal/config/config.go` | env: `HTTP_ADDR`, `DATABASE_DSN`, `PROVIDERS_ENABLED`, `INTERCITY_REESTR_PATH`, `ADMIN_TOKEN` |
 | main: конфиг → реестр → server → graceful shutdown | `cmd/mcp-server/main.go` | `signal.NotifyContext` + `http.Server.Shutdown` |
 
 ## 5. Жизненный цикл процесса
@@ -104,8 +107,8 @@ mcp.NewToolResultJSON(Journey) → ответ клиенту
 4. `http.Server` стартует в горутине; `SIGTERM`/`SIGINT` → graceful shutdown
    с таймаутом 10 c.
 5. Провайдеры ленивы: сеть строится на каждый запрос (`Registry → Network()`).
-   Для `synth` это дёшево; с появлением реальных источников здесь появится
-   кэш/импорт в БД, интерфейс не изменится.
+   Для `synth` (мок) это дёшево; `intercity` читает и парсит JSON-датасет на
+   каждый вызов — кэш/импорт в БД появится позже, интерфейс не изменится.
 
 ## 6. Тестирование (точка входа — `make test`)
 
@@ -129,7 +132,7 @@ mcp.NewToolResultJSON(Journey) → ответ клиенту
 Реализовано сейчас | Из целевой архитектуры | Статус
 ---|---|---
 `model` | (в 03.1) | реализовано полностью
-`providers` (synth) | (03.2: gtfs, govregistry, osm…) | интерфейс готов, готова 1 реализация; остальные — roadmap
+`providers` (synth, intercity) | (03.2: gtfs, govregistry, osm…) | интерфейс готов, 2 реализации (мок + реестр Минтранса); остальные — roadmap
 `geo` (посчитать на лету) | (03.3: PostGIS/H3) | для каркаса достаточно; индексация — позже
 `planner` (CSA) | (03.4, п.3) | RAPTOR multi-criteria — дальнейший этап
 `config` (файл+env) | (03.5: третий уровень — БД, hot-reload) | БД-конфиг и hot-reload — позже

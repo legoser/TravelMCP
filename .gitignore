@@ -5,3 +5,4 @@ bin/
 configs/config.local.yaml
 .idea/
 .vscode/data/
+**/*.pyc

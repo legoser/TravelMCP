@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -27,7 +28,6 @@ func newApp(t *testing.T) (*httptest.Server, *common.MCPClient) {
 	t.Cleanup(ts.Close)
 
 	client := common.NewMCPClient(ts.URL)
-	client.Initialize(t)
 	return ts, client
 }
 
@@ -134,6 +134,16 @@ func TestFindRouteGround(t *testing.T) {
 	common.AssertGroundJourney(t, client)
 }
 
+func TestFindRouteByPlace(t *testing.T) {
+	_, client := newApp(t)
+	common.AssertPlaceJourney(t, client)
+}
+
+func TestFindRouteUnknownPlace(t *testing.T) {
+	_, client := newApp(t)
+	common.AssertUnknownPlace(t, client)
+}
+
 func TestFindRouteFlight(t *testing.T) {
 	_, client := newApp(t)
 	common.AssertFlightJourney(t, client)
@@ -147,4 +157,44 @@ func TestFindRouteNoRoute(t *testing.T) {
 func TestFindRouteValidation(t *testing.T) {
 	_, client := newApp(t)
 	common.AssertBadArgs(t, client)
+}
+
+func TestAPIKeyAuth(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Auth.AdminToken = "secret"
+	reg := providers.NewRegistry([]string{"synth"})
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ts := httptest.NewServer(server.New(cfg, logger, telemetry.New(), reg))
+	t.Cleanup(ts.Close)
+
+	resp, err := ts.Client().Get(ts.URL + "/api/v1/providers")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("without key: http %d, want 401", resp.StatusCode)
+	}
+
+	resp, err = ts.Client().Get(ts.URL + "/mcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("/mcp without key: http %d, want 401", resp.StatusCode)
+	}
+
+	client := common.NewMCPClient(ts.URL)
+	client.Key = "secret"
+	if names := client.ToolNames(t); len(names) == 0 {
+		t.Fatal("tools unreachable with valid key")
+	}
+	common.AssertGroundJourney(t, client)
+}
+
+func TestToolsCallWithoutInitialize(t *testing.T) {
+	_, client := newApp(t)
+	common.AssertGroundJourney(t, client)
+	common.AssertFlightJourney(t, client)
 }

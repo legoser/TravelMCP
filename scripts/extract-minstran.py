@@ -80,14 +80,132 @@ def split_times(field):
 
 def period_block(d, base):
     dep = split_times(d.get(base + 1))
-    arr = split_times(d.get(base + 5))
+    arr = split_times(d.get(base + 4))
     return {
         "days": d.get(base, "").strip() or None,
         "dep": dep or [],
         "dwell": split_times(d.get(base + 2)) or [],
         "arr": arr or [],
-        "period": d.get(base + 6, "").strip() or None,
+        "period": d.get(base + 5, "").strip() or None,
     }
+
+
+STOPWORDS = set("""оп остановочный пункт автовокзал автостанция автобусная станция
+ас ав дкп г с п р.п рп пгт пов кассовый аэропорт межд города вокзал название
+транспортный остановка""".split())
+
+
+def geocode_stops(stops, osm_path, gazetteer_path):
+    """Обогащает остановки координатами (OSM-метчинг + газетир).
+
+    Координаты в реестре отсутствуют; метчинг по имени: автовокзалы из OSM,
+    города/алиасы из газетира, префикс-совпадения для прилагательных.
+    Остановки без совпадения оставляем без координат (lat/lon = 0).
+    """
+    stopwords = STOPWORDS
+    lstops = [s.lower() for s in stopwords]
+
+    def norm(s):
+        s = s.lower()
+        for ch in "\u00ab\u00bb\"()[],.:\u2014\u2013/+":
+            s = s.replace(ch, " ")
+        return " ".join(s.split())
+
+    def tokens(s):
+        return [t for t in norm(s).split() if t and t not in stopwords]
+
+    def common_prefix(a, b):
+        n = 0
+        for x, y in zip(a, b):
+            if x != y:
+                break
+            n += 1
+        return n
+
+    exact = {}
+    osm_bus = []
+    try:
+        with open(osm_path, encoding="utf-8") as f:
+            osm = json.load(f)
+        for o in osm:
+            n = o.get("name")
+            if not n:
+                continue
+            nn = norm(n)
+            exact.setdefault(nn, (o.get("lat", 0), o.get("lon", 0)))
+            if "автовокзал" in nn or "автостанция" in nn:
+                osm_bus.append((nn, o.get("lat", 0), o.get("lon", 0)))
+    except OSError as e:
+        print("geocode: не удалось прочитать OSM {0}: {1}".format(osm_path, e),
+              file=sys.stderr)
+        return stops
+
+    g = []
+    try:
+        with open(gazetteer_path, encoding="utf-8") as f:
+            places = json.load(f)
+        for p in places:
+            g.append((norm(p["name"]), p.get("lat", 0), p.get("lon", 0)))
+            for a in p.get("aliases", []):
+                g.append((norm(a), p.get("lat", 0), p.get("lon", 0)))
+    except OSError as e:
+        print("geocode: не удалось прочитать газетир {0}: {1}".format(
+            gazetteer_path, e), file=sys.stderr)
+        return stops
+
+    def related(tok, gn):
+        if tok == gn:
+            return True
+        if tok.startswith(gn) or gn.startswith(tok):
+            return True
+        c = common_prefix(tok, gn)
+        return c >= 3 and abs(len(tok) - len(gn)) <= 4 and c * 2 >= min(len(tok), len(gn))
+
+    def match(name):
+        nn = norm(name)
+        if nn in exact:
+            return exact[nn]
+        toks = tokens(name) or [nn]
+        best = None
+        bl = 0
+        for t in toks:
+            if len(t) < 3:
+                continue
+            for gn, lat, lon in g:
+                if related(t, gn) and len(gn) > bl:
+                    bl = len(gn)
+                    best = (lat, lon)
+        if best:
+            return best
+        for onn, lat, lon in osm_bus:
+            hit = [t for t in toks if len(t) >= 3 and (t in onn or related(t, onn))]
+            score = sum(len(t) for t in hit)
+            if hit and score > bl:
+                bl = score
+                best = (lat, lon)
+        if best:
+            return best
+        for gn, lat, lon in g:
+            if gn and gn in nn and len(gn) > bl:
+                bl = len(gn)
+                best = (lat, lon)
+        if best:
+            return best
+        for t in toks:
+            if t in exact and len(t) >= 3:
+                return exact[t]
+        return None
+
+    found = 0
+    for s in stops:
+        c = match(s["name"])
+        if c and abs(c[1]) > 20 and abs(c[0]) < 70:
+            s["lat"] = c[0]
+            s["lon"] = c[1]
+            found += 1
+    print("geocode: координат получено {0} из {1}".format(found, len(stops)),
+          file=sys.stderr)
+    return stops
 
 
 def main():
@@ -96,6 +214,9 @@ def main():
     ap.add_argument("--regions", default="22,42,54,70",
                     help="коды регионов через запятую, напр. 22,42,54,70")
     ap.add_argument("--snapshot", default="", help="дата выгрузки, напр. 2026-06-16")
+    ap.add_argument("--osm", default="", help="OSM-датасет stops.json для геокодинга")
+    ap.add_argument("--gazetteer", default="internal/geo/places.json",
+                    help="газетир городов для геокодинга")
     ap.add_argument("--out", dest="output", required=True, help="путь к JSON")
     args = ap.parse_args()
 
@@ -172,6 +293,9 @@ def main():
     for (name, region), s in stops.items():
         if name:
             stops_out.append(s)
+
+    if args.osm:
+        stops_out = geocode_stops(stops_out, args.osm, args.gazetteer)
 
     result = {
         "source": "minstran_reestr",

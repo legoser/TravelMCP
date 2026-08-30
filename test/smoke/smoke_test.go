@@ -63,7 +63,6 @@ func TestSmokeMCPFlow(t *testing.T) {
 	base := common.StartServer(t, builtBinary(t), common.FreePort(t))
 
 	client := common.NewMCPClient(base)
-	client.Initialize(t)
 
 	names := client.ToolNames(t)
 	if len(names) == 0 {
@@ -71,7 +70,9 @@ func TestSmokeMCPFlow(t *testing.T) {
 	}
 
 	common.AssertGroundJourney(t, client)
+	common.AssertPlaceJourney(t, client)
 	common.AssertFlightJourney(t, client)
 	common.AssertNoRoute(t, client)
 	common.AssertBadArgs(t, client)
+	common.AssertUnknownPlace(t, client)
 }

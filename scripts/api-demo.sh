@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Демо/обследование API и MCP-инструментов travelmcp (ручной режим).
+# MCP вызывается stateless (без initialize/сессии); при заданном ADMIN_TOKEN
+# в каждый запрос добавляется заголовок API-ключа.
 # Для регрессионных тестов используйте `make test`.
 set -euo pipefail
 
@@ -16,8 +18,20 @@ if [ ! -x "$BIN" ]; then
   (cd "$DIR" && go build -o "$BIN" ./cmd/mcp-server)
 fi
 
+TOKEN=""
+if [ -f "$DIR/.env" ]; then
+  set -a; . "$DIR/.env"; set +a
+fi
+AUTH=()
+if [ -n "${ADMIN_TOKEN:-}" ]; then
+  TOKEN="$ADMIN_TOKEN"
+  AUTH=(-H "X-API-Key: $TOKEN")
+  echo ">> using API-ключ из ADMIN_TOKEN"
+fi
+
 echo ">> starting server on :$PORT"
-HTTP_ADDR="127.0.0.1:$PORT" PROVIDERS_ENABLED=synth "$BIN" -config "$DIR/configs/config.example.yaml" >/tmp/travelmcp-demo.log 2>&1 &
+HTTP_ADDR="127.0.0.1:$PORT" PROVIDERS_ENABLED=synth ADMIN_TOKEN="${ADMIN_TOKEN:-}" \
+  "$BIN" -config "$DIR/configs/config.example.yaml" >/tmp/travelmcp-demo.log 2>&1 &
 SRV=$!
 trap 'kill "$SRV" 2>/dev/null || true; wait "$SRV" 2>/dev/null || true' EXIT
 
@@ -36,38 +50,46 @@ echo "readyz:  $(curl -s "$BASE/readyz" | jq -c '{status}')"
 
 say "PROVIDERS"
 hr
-curl -s "$BASE/api/v1/providers" | jq -r 'to_entries[] | "\(.key): up=\(.value.up) records=\(.value.records)"'
+curl -s "${AUTH[@]}" "$BASE/api/v1/providers" | jq -r 'to_entries[] | "\(.key): up=\(.value.up) records=\(.value.records)"'
 
-SESSION=/tmp/travelmcp-session.txt
-: > "$SESSION"
 ID=0
 
 rpc() {
-  local method="$1" payload="$2" hdr sid newsid
-  local auth=()
-  sid=$(cat "$SESSION" 2>/dev/null || true)
-  [ -n "$sid" ] && auth=(-H "Mcp-Session-Id: $sid")
+  local method="$1" payload="$2"
   ID=$((ID + 1))
-  hdr=$(curl -s -D - -o "$OUT" -X POST "$BASE/mcp" \
+  curl -s -o "$OUT" -X POST "$BASE/mcp" \
     -H 'Content-Type: application/json' -H 'Accept: application/json' \
-    "${auth[@]}" \
-    -d "{\"jsonrpc\":\"2.0\",\"id\":$ID,\"method\":\"$method\",\"params\":$payload}")
-  newsid=$(printf '%s' "$hdr" | tr -d '\r' | sed -n 's/^Mcp-Session-Id: //p')
-  if [ -n "$newsid" ]; then
-    printf '%s' "$newsid" > "$SESSION"
-  fi
+    "${AUTH[@]}" \
+    -d "{\"jsonrpc\":\"2.0\",\"id\":$ID,\"method\":\"$method\",\"params\":$payload}"
 }
 
-say "MCP initialize / tools/list"
+say "MCP tools/list"
 hr
-rpc initialize '{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"api-demo","version":"0"}}'
-jq -r '.result.serverInfo.name + " v" + .result.serverInfo.version, (.result.capabilities.tools | "tools: \(.listChanged)")' "$OUT"
 rpc tools/list '{}'
 jq -r '.result.tools[].name' "$OUT"
 
 say "MCP find_route: Пермь → Екатеринбург (наземка, 06:00)"
 hr
 rpc tools/call '{"name":"find_route","arguments":{"from_lat":58.0135,"from_lon":56.2495,"to_lat":56.84,"to_lon":60.607,"departure":"2026-08-30T06:00:00Z"}}'
+jq -r '.result.content[0].text | fromjson |
+  "прибытие: \(.arrival)  пересадок: \(.transfers)",
+  (.legs[] | "  \(.mode): \(.from.name // .from.stop_id) → \(.to.name // .to.stop_id)  \(.departure | .[11:16])–\(.arrival | .[11:16])")' "$OUT"
+
+say "MCP find_route: по населённым пунктам Юрга → Барнаул"
+hr
+rpc tools/call '{"name":"find_route","arguments":{"from_place":"Юрга","to_place":"Барнаул","departure":"2026-08-30T06:00:00Z"}}'
+jq -r '
+  if (.result.isError == true) or (.error != null) then
+    "isError: true  сообщение: " + (.result.content[0].text // .error.message)
+  else
+    (.result.content[0].text | fromjson |
+      "прибытие: \(.arrival)  пересадок: \(.transfers)",
+      (.legs[] | "  \(.mode): \(.from.name // .from.stop_id) → \(.to.name // .to.stop_id)  \(.departure | .[11:16])–\(.arrival | .[11:16])"))
+  end' "$OUT"
+
+say "MCP find_route: по населённым пунктам Пермь → Екатеринбург"
+hr
+rpc tools/call '{"name":"find_route","arguments":{"from_place":"Пермь","to_place":"Екатеринбург","departure":"2026-08-30T06:00:00Z"}}'
 jq -r '.result.content[0].text | fromjson |
   "прибытие: \(.arrival)  пересадок: \(.transfers)",
   (.legs[] | "  \(.mode): \(.from.name // .from.stop_id) → \(.to.name // .to.stop_id)  \(.departure | .[11:16])–\(.arrival | .[11:16])")' "$OUT"

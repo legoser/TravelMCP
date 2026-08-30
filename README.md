@@ -45,8 +45,12 @@ OSM-гео-метки (`data/osm/stations.json`), сырые ответы Янд
 
 ## Статус
 
-Go-каркас реализован: MCP-сервер (Streamable HTTP, инструменты `find_route`,
-`list_providers`), HTTP-эндпоинты (`/healthz`, `/readyz`, `/api/v1/providers`,
-`/api/v1/dashboard`), синтетический провайдер данных (наземный транспорт и
-перелёты), ядро CSA-планировщика и телеметрия. Тестирование — через `make test`
-(unit + integration + smoke). Следующие этапы — в `docs/05-roadmap.md`.
+Go-каркас реализован: MCP-сервер (Streamable HTTP stateless, без рукопожатий
+и сессий; API-ключ через заголовок `Authorization: Bearer` / `X-API-Key` при
+заданном `ADMIN_TOKEN`), инструменты `find_route` (по координатам либо по
+населённому пункту через локальный газетир) и `list_providers`; HTTP-эндпоинты
+(`/healthz`, `/readyz`, `/api/v1/providers`, `/api/v1/dashboard` с той же
+авторизацией), ядро CSA-планировщика и телеметрия. Продакшн-источников по
+умолчанию нет (подключаются по мере реализации, см. `docs/05-roadmap.md`);
+синтетическая сеть `synth` — мок только для тестов/демо (`PROVIDERS_ENABLED=synth`).
+Тестирование — через `make test` (unit + integration + smoke).

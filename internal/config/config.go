@@ -17,8 +17,13 @@ type Database struct {
 	DSN string `yaml:"dsn"`
 }
 
+type Intercity struct {
+	ReestrPath string `yaml:"reestr_path"`
+}
+
 type Providers struct {
-	Enabled []string `yaml:"enabled"`
+	Enabled   []string  `yaml:"enabled"`
+	Intercity Intercity `yaml:"intercity"`
 }
 
 type Auth struct {
@@ -43,7 +48,10 @@ func Defaults() *Config {
 		HTTP:     HTTP{Addr: ":8080"},
 		Database: Database{},
 		Providers: Providers{
-			Enabled: []string{"synth"},
+			Enabled: []string{},
+			Intercity: Intercity{
+				ReestrPath: "data/reestr/regions.json",
+			},
 		},
 	}
 }
@@ -82,6 +90,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("PROVIDERS_ENABLED"); v != "" {
 		cfg.Providers.Enabled = splitCsv(v)
+	}
+	if v := os.Getenv("INTERCITY_REESTR_PATH"); v != "" {
+		cfg.Providers.Intercity.ReestrPath = v
 	}
 	if v := os.Getenv("YANDEX_RASP_KEY"); v != "" {
 		cfg.Yandex.RaspKey = v

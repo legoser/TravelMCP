@@ -30,7 +30,7 @@ func main() {
 	}
 
 	metrics := telemetry.New()
-	registry := providers.NewRegistry(cfg.Providers.Enabled)
+	registry := providers.NewRegistryWith(cfg.Providers.Enabled, cfg.Providers.Intercity.ReestrPath)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTP.Addr,

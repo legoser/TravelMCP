@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -96,6 +97,7 @@ func StartServer(t *testing.T, bin string, port int) string {
 	cmd.Env = append(os.Environ(),
 		"HTTP_ADDR="+fmt.Sprintf("127.0.0.1:%d", port),
 		"PROVIDERS_ENABLED=synth",
+		"ADMIN_TOKEN=",
 	)
 	var logs safeBuffer
 	cmd.Stdout = &logs
@@ -159,6 +161,7 @@ func Get(t *testing.T, base, path string) []byte {
 // MCPClient — минимальный JSON-RPC клиент поверх Streamable HTTP.
 type MCPClient struct {
 	Base   string
+	Key    string
 	client *http.Client
 	mu     sync.Mutex
 	sid    string
@@ -191,6 +194,9 @@ func (c *MCPClient) do(method string, params any) (int, []byte, error) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	if c.Key != "" {
+		req.Header.Set("X-API-Key", c.Key)
+	}
 	if sid != "" {
 		req.Header.Set("Mcp-Session-Id", sid)
 	}
@@ -327,6 +333,35 @@ func AssertGroundJourney(t *testing.T, c *MCPClient) {
 	if isErr {
 		t.Fatalf("ground route failed: %s", text)
 	}
+	assertGround(t, text)
+}
+
+// AssertPlaceJourney — сценарий по населённым пунктам: «Пермь» → «Екатеринбург»
+// (точки резолвятся в автовокзалы, межгород 900 без пересадок).
+func AssertPlaceJourney(t *testing.T, c *MCPClient) {
+	t.Helper()
+	text, isErr := c.CallTool(t, "find_route", map[string]any{
+		"from_place": "Пермь",
+		"to_place":   "Екатеринбург",
+		"departure":  "2026-08-30T06:00:00Z",
+	})
+	if isErr {
+		t.Fatalf("place route failed: %s", text)
+	}
+	j := assertJourney(t, text)
+	if want := "2026-08-30T08:30:00Z"; !j.Arrival.Equal(time.Date(2026, 8, 30, 8, 30, 0, 0, time.UTC)) {
+		t.Fatalf("arrival = %s, want %s", j.Arrival.Format(time.RFC3339), want)
+	}
+	if len(j.Legs) != 3 {
+		t.Fatalf("legs = %d, want 3 (walk, intercity 900, walk)", len(j.Legs))
+	}
+	if j.Transfers != 0 {
+		t.Fatalf("transfers = %d, want 0", j.Transfers)
+	}
+}
+
+func assertGround(t *testing.T, text string) {
+	t.Helper()
 	j := assertJourney(t, text)
 	if want := "2026-08-30T09:36:00Z"; !j.Arrival.Equal(time.Date(2026, 8, 30, 9, 36, 0, 0, time.UTC)) {
 		t.Fatalf("arrival = %s, want %s", j.Arrival.Format(time.RFC3339), want)
@@ -368,6 +403,22 @@ func AssertFlightJourney(t *testing.T, c *MCPClient) {
 	}
 	if want := time.Date(2026, 8, 30, 9, 5, 0, 0, time.UTC); !j.Arrival.Equal(want) {
 		t.Fatalf("arrival = %s, want %s", j.Arrival.Format(time.RFC3339), want.Format(time.RFC3339))
+	}
+}
+
+// AssertUnknownPlace — населённый пункт вне газетира.
+func AssertUnknownPlace(t *testing.T, c *MCPClient) {
+	t.Helper()
+	text, isErr := c.CallTool(t, "find_route", map[string]any{
+		"from_place": "Пермь",
+		"to_place":   "Нигдегород",
+		"departure":  "2026-08-30T06:00:00Z",
+	})
+	if !isErr {
+		t.Fatalf("expected unknown place error, got %s", text)
+	}
+	if !strings.Contains(text, "Нигдегород") {
+		t.Fatalf("error должен упоминать название места, got %s", text)
 	}
 }
 

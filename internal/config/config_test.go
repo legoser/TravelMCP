@@ -15,8 +15,8 @@ func TestLoadExample(t *testing.T) {
 	if cfg.HTTP.Addr != ":8080" {
 		t.Fatalf("addr = %q, want :8080", cfg.HTTP.Addr)
 	}
-	if len(cfg.Providers.Enabled) == 0 || cfg.Providers.Enabled[0] != "synth" {
-		t.Fatalf("enabled = %v, want [synth]", cfg.Providers.Enabled)
+	if len(cfg.Providers.Enabled) != 0 {
+		t.Fatalf("enabled = %v, want [] (нет продакшн-источников по умолчанию)", cfg.Providers.Enabled)
 	}
 }
 

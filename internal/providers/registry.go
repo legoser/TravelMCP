@@ -20,12 +20,17 @@ type Provider interface {
 }
 
 type Registry struct {
-	byID  map[string]Provider
-	order []string
+	byID          map[string]Provider
+	order         []string
+	intercityPath string
 }
 
 func NewRegistry(enabled []string) *Registry {
-	r := &Registry{byID: map[string]Provider{}}
+	return NewRegistryWith(enabled, "")
+}
+
+func NewRegistryWith(enabled []string, intercityPath string) *Registry {
+	r := &Registry{byID: map[string]Provider{}, intercityPath: intercityPath}
 	if len(enabled) == 0 {
 		return r
 	}
@@ -39,6 +44,8 @@ func (r *Registry) enable(id string) {
 	switch id {
 	case SynthID:
 		r.Register(NewSynth(time.Now()))
+	case IntercityID:
+		r.Register(NewIntercity(r.intercityPath, time.Now()))
 	}
 }
 
