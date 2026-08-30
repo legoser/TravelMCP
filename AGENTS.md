@@ -48,6 +48,7 @@ testdata/              эталонные фикстуры провайдеро�
 tools/osm-extract/     отдельный Go-модуль: PBF (OSM) → JSON гео-меток
 data/                  сырьё и датасеты сбора intercity (НЕ коммитятся)
 scripts/api-demo.sh    ручное демо/обследование API (curl+jq)
+scripts/mcp-route.sh   шаблоны запросов MCP: find_route (пункт/координаты), tools, providers
 scripts/yandex-collect.sh  точечный сбор фикстур Яндекса (env-ключи)
 scripts/extract-minstran.py  XLSX-реестр Минтранса → JSON датасет
 configs/               YAML-конфиги
@@ -92,6 +93,8 @@ make run            # go run ./cmd/mcp-server -config configs/config.example.yam
 make vet            # go vet ./...
 make fmt            # gofmt -w .
 ./scripts/api-demo.sh   # ручное демо API/MCP (мок synth по PROVIDERS_ENABLED=synth, требует jq)
+./scripts/mcp-route.sh  # шаблоны MCP-запросов (см. usage): place/coords/tools/providers;
+                        #   env: BASE, TOKEN; пример: ./scripts/mcp-route.sh place Юрга Барнаул
 ./scripts/yandex-collect.sh  # сбор фикстур Яндекса (требует env-ключи, jq)
 python3 scripts/extract-minstran.py --in data/raw/minstran/reestr.xlsx \
   --regions 22,42,54,70 --snapshot 2026-06-16 \
