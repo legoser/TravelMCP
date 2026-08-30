@@ -10,3 +10,8 @@ providers:
 
 auth:
   admin_token: ""
+
+# Секреты — только через env (или .env, gitignored); в YAML не заполняются.
+yandex:
+  rasp_key: ""
+  geocode_key: ""

@@ -4,4 +4,4 @@ bin/
 *.out
 configs/config.local.yaml
 .idea/
-.vscode/
+.vscode/data/

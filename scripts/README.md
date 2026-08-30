@@ -74,3 +74,73 @@ PORT=8080 ./scripts/api-demo.sh # свой порт
 - Автоматические эквиваленты этих сценариев: `make integration`, `make smoke`.
 - При добавлении нового поля/инструмента MCP — дополните сценарии в
   `test/common` и, если уместно, этот скрипт (правило из `AGENTS.md`).
+
+---
+
+# scripts/yandex-collect.sh — точечный сбор фикстур Яндекса (intercity)
+
+Разовый сбор эталонных ответов Яндекс Расписаний для провайдера `intercity`.
+Живой API вызывается **только** этим скриптом; Go-адаптер в рантайме Яндекса
+не трогает и работает по собранным фикстурам из `testdata/yandex/`.
+
+## Требования
+
+- Bash, `curl`, `jq`.
+- Ключи в окружении (не в репозитории!):
+  `YANDEX_RASP_KEY`, `YANDEX_GEOCODE_KEY`.
+
+## Запуск
+
+```sh
+export YANDEX_RASP_KEY=... YANDEX_GEOCODE_KEY=...
+./scripts/yandex-collect.sh
+YANDEX_DATE=2026-09-05 ./scripts/yandex-collect.sh  # фиксированная дата
+```
+
+## Что делает
+
+1. Геокодит 4 города (`nsk`, `barnaul`, `tomsk`, `kemerovo`) → координаты.
+2. `/nearest_stations` → код станции (автовокзал).
+3. `/schedule` для каждой станции (рейсы + `timezone` станции).
+4. `/search` для пар НСК↔Барнаул, НСК↔Томск, НСК↔Кемерово (`transport_types=bus`).
+5. Режет большие ответы, копирует в `testdata/yandex/`.
+
+Сырьё: `data/yandex/raw/` (не коммитится); фикстуры: `testdata/yandex/`
+(коммитятся вместе с кодом адаптера).
+
+## Почему не в Go-тестах
+
+Тесты по замыслу офлайн: адаптер Яндекса гоняется на фикстурах (тест-дабл),
+реальные запросы к API запрещены (правило из `docs/07-first-provider-plan.md`).
+
+## Подводные камни API (обнаружено при сборе)
+
+- Базовый URL `api.rasp.yandex.net/v3.0`: пути без завершающего слеша отдают
+  `302` → нужен `curl -L`, иначе ответы пустые.
+- `date` — строго `YYYY-MM-DD`; литерал `today` не принимается.
+- `system=standard` не существует (`v3.0_36`); коды `s…` — уже код Яндекса.
+- `station_type` бывает `bus_station`/`station`/`stop`/`bus_stop`/`airport`.
+- Геокодер: `geocode-maps.yandex.ru/1.x/` + `apikey`; координаты в `Point.pos`
+  формата «lng lat» (инвертированы относительно ответа).
+- Автовокзал Томска на дату сбора отдал 0 отправлений — фильтровать станции
+  по `station_type==bus_station` и иметь fallback на `/search` по паре.
+
+Детали — в `docs/07-first-provider-plan.md`, этап 0.2.
+
+---
+
+# scripts/extract-minstran.py — реестр Минтранса → JSON датасет
+
+Извлекает из XLSX-реестра межрегиональных маршрутов Минтранса маршруты,
+остановки и расписание по заданным регионам. Выход: `data/reestr/regions.json`
+(не коммитится; это рабочий датасет для Этапа 1 — парсинга в Go).
+
+```sh
+# сырьё: data/raw/minstran/reestr.xlsx (ручная/curl-загрузка с mintrans.gov.ru)
+python3 scripts/extract-minstran.py --in data/raw/minstran/reestr.xlsx \
+  --out data/reestr/regions.json
+```
+
+Параметры фильтрации регионов — в начале скрипта (`REGIONS`).
+
+Схема XLSX задокументирована в `docs/07-first-provider-plan.md` (этап 0.1).

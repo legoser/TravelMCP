@@ -40,7 +40,12 @@ internal/config/       конфиг: default → YAML → env
 test/common/           заготовленные сценарии и хелперы (integration + smoke)
 test/integration/      тесты HTTP+MCP in-process (httptest)
 test/smoke/            тесты с реальным бинарником (отдельный процесс)
+testdata/              эталонные фикстуры провайдера intercity (коммитятся)
+tools/osm-extract/     отдельный Go-модуль: PBF (OSM) → JSON гео-меток
+data/                  сырьё и датасеты сбора intercity (НЕ коммитятся)
 scripts/api-demo.sh    ручное демо/обследование API (curl+jq)
+scripts/yandex-collect.sh  точечный сбор фикстур Яндекса (env-ключи)
+scripts/extract-minstran.py  XLSX-реестр Минтранса → JSON датасет
 configs/               YAML-конфиги
 ```
 
@@ -80,6 +85,9 @@ make run            # go run ./cmd/mcp-server -config configs/config.example.yam
 make vet            # go vet ./...
 make fmt            # gofmt -w .
 ./scripts/api-demo.sh   # ручное демо API/MCP (требует jq)
+./scripts/yandex-collect.sh  # сбор фикстур Яндекса (требует env-ключи, jq)
+(cd tools/osm-extract && go run . -in ../../data/raw/osm/sfo.osm.pbf \
+  -out ../../data/osm/stations.json)  # PBF → JSON гео-меток
 ```
 
 Обязательная проверка после изменений: `gofmt` + `go vet ./...` + `make test`.
@@ -106,3 +114,4 @@ make fmt            # gofmt -w .
 - `docs/04-data-sources.md` — источники данных.
 - `docs/05-roadmap.md` — дорожная карта.
 - `docs/06-structure.md` — структура репозитория и связи (актуальный каркас).
+- `docs/07-first-provider-plan.md` — рабочий план провайдера междугородних автобусов (этапы 0–3).

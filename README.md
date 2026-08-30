@@ -33,6 +33,15 @@ MCP-сервер для поиска мультимодальных маршру
 - [`docs/04-data-sources.md`](docs/04-data-sources.md) — источники данных и их приведение к модели.
 - [`docs/05-roadmap.md`](docs/05-roadmap.md) — дорожная карта этапов.
 - [`docs/06-structure.md`](docs/06-structure.md) — структура репозитория и связи (актуальный каркас).
+- [`docs/07-first-provider-plan.md`](docs/07-first-provider-plan.md) — план добавления первого провайдера междугородних автобусов.
+
+## Рабочие данные (не коммитятся)
+
+`data/` — сырьё и датасеты сбора провайдера `intercity`: реестр Минтранса
+(`data/raw/minstran/`), выгрузка по 4 регионам (`data/reestr/regions.json`),
+OSM-гео-метки (`data/osm/stations.json`), сырые ответы Яндекса
+(`data/yandex/raw/`). Эталонные фикстуры для тестов — в `testdata/`
+(коммитятся).
 
 ## Статус
 

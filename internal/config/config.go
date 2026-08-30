@@ -25,11 +25,17 @@ type Auth struct {
 	AdminToken string `yaml:"admin_token"`
 }
 
+type Yandex struct {
+	RaspKey    string `yaml:"rasp_key"`
+	GeocodeKey string `yaml:"geocode_key"`
+}
+
 type Config struct {
 	HTTP      HTTP      `yaml:"http"`
 	Database  Database  `yaml:"database"`
 	Providers Providers `yaml:"providers"`
 	Auth      Auth      `yaml:"auth"`
+	Yandex    Yandex    `yaml:"yandex"`
 }
 
 func Defaults() *Config {
@@ -57,6 +63,9 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
+	if err := LoadDotenv(); err != nil {
+		return nil, fmt.Errorf("config: dotenv: %w", err)
+	}
 	applyEnv(cfg)
 	return cfg, nil
 }
@@ -73,6 +82,12 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("PROVIDERS_ENABLED"); v != "" {
 		cfg.Providers.Enabled = splitCsv(v)
+	}
+	if v := os.Getenv("YANDEX_RASP_KEY"); v != "" {
+		cfg.Yandex.RaspKey = v
+	}
+	if v := os.Getenv("YANDEX_GEOCODE_KEY"); v != "" {
+		cfg.Yandex.GeocodeKey = v
 	}
 }
 
