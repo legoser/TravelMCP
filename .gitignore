@@ -1,0 +1,7 @@
+.env
+bin/
+*.test
+*.out
+configs/config.local.yaml
+.idea/
+.vscode/

@@ -1,0 +1,29 @@
+services:
+  mcp-server:
+    build: .
+    ports:
+      - "8880:8080"
+    environment:
+      HTTP_ADDR: ":8080"
+      DATABASE_DSN: "postgres://postgres:postgres@db:5432/travelmcp?sslmode=disable"
+    restart: unless-stopped
+
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: travelmcp
+    ports:
+      - "5442:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d travelmcp"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  pgdata:

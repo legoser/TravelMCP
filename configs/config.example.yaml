@@ -1,0 +1,12 @@
+http:
+  addr: ":8080"
+
+database:
+  dsn: "postgres://postgres:postgres@localhost:5432/travelmcp?sslmode=disable"
+
+providers:
+  enabled:
+    - synth
+
+auth:
+  admin_token: ""
