@@ -32,11 +32,21 @@ func (s *Synth) Health() HealthStatus {
 	return status
 }
 
+// NetworkForDay строит синтетическую сеть с рейсами на указанный день.
+func (s *Synth) NetworkForDay(day time.Time) (*model.Network, error) {
+	dayBase := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC)
+	return s.build(dayBase), nil
+}
+
 func (s *Synth) addStop(net *model.Network, id, name string, lat, lon float64) {
 	net.Stops[id] = &model.Stop{ID: id, ProviderID: SynthID, Name: name, Lat: lat, Lon: lon}
 }
 
 func (s *Synth) Network() (*model.Network, error) {
+	return s.build(s.day), nil
+}
+
+func (s *Synth) build(dayBase time.Time) *model.Network {
 	net := model.NewNetwork()
 
 	s.addStop(net, "a-cen", "Пермь, Центральная площадь", 58.0135, 56.2495)
@@ -59,36 +69,36 @@ func (s *Synth) Network() (*model.Network, error) {
 	)
 
 	s.addLine(net, model.Route{ID: "a", ShortName: "1", LongName: "Центральная площадь — Автовокзал", Mode: model.ModeBus},
-		[]string{"a-cen", "a-bus"}, []int{15}, 360, 10, 1370)
+		[]string{"a-cen", "a-bus"}, []int{15}, 360, 10, 1370, dayBase)
 	s.addLine(net, model.Route{ID: "900", ShortName: "900", LongName: "Пермь — Екатеринбург", Mode: model.ModeBus},
-		[]string{"a-bus", "b-bus"}, []int{150}, 360, 60, 1380)
+		[]string{"a-bus", "b-bus"}, []int{150}, 360, 60, 1380, dayBase)
 	s.addLine(net, model.Route{ID: "b", ShortName: "5", LongName: "Автовокзал — Центральный рынок", Mode: model.ModeTram},
-		[]string{"b-bus", "b-mkt"}, []int{12}, 360, 6, 1380)
+		[]string{"b-bus", "b-mkt"}, []int{12}, 360, 6, 1380, dayBase)
 	s.addLine(net, model.Route{ID: "c", ShortName: "8", LongName: "Студенческая — Парк", Mode: model.ModeBus},
-		[]string{"c1", "c2"}, []int{8}, 360, 8, 1380)
+		[]string{"c1", "c2"}, []int{8}, 360, 8, 1380, dayBase)
 	s.addLine(net, model.Route{ID: "d", ShortName: "5", LongName: "Площадь — Вокзал", Mode: model.ModeBus},
-		[]string{"c2x", "c3"}, []int{8}, 360, 8, 1380)
+		[]string{"c2x", "c3"}, []int{8}, 360, 8, 1380, dayBase)
 	s.addLine(net, model.Route{ID: "r", ShortName: "Э", LongName: "Автовокзал — Поезд", Mode: model.ModeRail},
-		[]string{"a-bus", "a-air"}, []int{10}, 360, 15, 1380)
+		[]string{"a-bus", "a-air"}, []int{10}, 360, 15, 1380, dayBase)
 	s.addLine(net, model.Route{ID: "s1", ShortName: "С", LongName: "Пермь, Автовокзал — Аэропорт", Mode: model.ModeBus},
-		[]string{"a-bus", "a-apt"}, []int{30}, 300, 30, 1410)
+		[]string{"a-bus", "a-apt"}, []int{30}, 300, 30, 1410, dayBase)
 	s.addLine(net, model.Route{ID: "s2", ShortName: "С", LongName: "Екатеринбург, Аэропорт — Автовокзал", Mode: model.ModeBus},
-		[]string{"b-apt", "b-bus"}, []int{30}, 300, 30, 1410)
+		[]string{"b-apt", "b-bus"}, []int{30}, 300, 30, 1410, dayBase)
 	s.addLine(net, model.Route{ID: "fly", ShortName: "7V", LongName: "Пермь — Екатеринбург", Mode: model.ModeFlight},
-		[]string{"a-apt", "b-apt"}, []int{65}, 480, 120, 1260)
+		[]string{"a-apt", "b-apt"}, []int{65}, 480, 120, 1260, dayBase)
 
 	sort.Slice(net.Connections, func(i, j int) bool {
 		return net.Connections[i].Departure.Before(net.Connections[j].Departure)
 	})
-	return net, nil
+	return net
 }
 
-func (s *Synth) addLine(net *model.Network, route model.Route, stops []string, travel []int, firstMin, stepMin, lastMin int) {
+func (s *Synth) addLine(net *model.Network, route model.Route, stops []string, travel []int, firstMin, stepMin, lastMin int, dayBase time.Time) {
 	net.Routes[route.ID] = &route
 	for dep := firstMin; dep <= lastMin; dep += stepMin {
 		tripID := fmt.Sprintf("%s-%02d%02d", route.ID, dep/60, dep%60)
 		stopTimes := make([]model.StopTime, 0, len(stops))
-		t := s.day.Add(time.Duration(dep) * time.Minute)
+		t := dayBase.Add(time.Duration(dep) * time.Minute)
 		for i, stop := range stops {
 			stopTimes = append(stopTimes, model.StopTime{StopID: stop, Sequence: i, Arrival: t, Departure: t})
 			if i < len(travel) {

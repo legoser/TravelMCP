@@ -69,12 +69,10 @@ type reestrBlock struct {
 
 type Intercity struct {
 	reestrPath string
-	day        time.Time
 }
 
 func NewIntercity(reestrPath string, now time.Time) *Intercity {
-	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	return &Intercity{reestrPath: reestrPath, day: day}
+	return &Intercity{reestrPath: reestrPath}
 }
 
 func (p *Intercity) ID() string {
@@ -90,11 +88,16 @@ func (p *Intercity) Health() HealthStatus {
 }
 
 func (p *Intercity) Network() (*model.Network, error) {
+	return p.NetworkForDay(time.Now())
+}
+
+// NetworkForDay строит сеть с рейсами, привязанными к указанному дню (UTC).
+func (p *Intercity) NetworkForDay(day time.Time) (*model.Network, error) {
 	ds, err := p.load()
 	if err != nil {
 		return nil, err
 	}
-	return p.build(ds), nil
+	return p.build(ds, day), nil
 }
 
 func (p *Intercity) load() (*reestrDataset, error) {
@@ -109,7 +112,7 @@ func (p *Intercity) load() (*reestrDataset, error) {
 	return &ds, nil
 }
 
-func (p *Intercity) build(ds *reestrDataset) *model.Network {
+func (p *Intercity) build(ds *reestrDataset, day time.Time) *model.Network {
 	net := model.NewNetwork()
 
 	for i := range ds.Stops {
@@ -136,7 +139,7 @@ func (p *Intercity) build(ds *reestrDataset) *model.Network {
 	}
 
 	for _, sched := range ds.Schedules {
-		p.addSchedule(net, sched)
+		p.addSchedule(net, sched, day)
 	}
 
 	p.addTransferLinks(net)
@@ -261,23 +264,24 @@ func scheduleDays(sched reestrSched) string {
 	return ""
 }
 
-func (p *Intercity) addSchedule(net *model.Network, sched reestrSched) {
+func (p *Intercity) addSchedule(net *model.Network, sched reestrSched, day time.Time) {
 	period := pickPeriod(sched)
 	if period == "" {
 		return
 	}
 	runs := runsCount(sched, period)
 	for r := 0; r < runs; r++ {
-		p.addRun(net, sched, period, r)
+		p.addRun(net, sched, period, r, day)
 	}
 }
 
-func (p *Intercity) addRun(net *model.Network, sched reestrSched, period string, run int) {
+func (p *Intercity) addRun(net *model.Network, sched reestrSched, period string, run int, day time.Time) {
+	dayBase := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC)
 	var (
 		times   []model.StopTime
-		dayBase = 0
-		prevEff = -1
+		prevEff int // minutes since dayBase
 	)
+	prevEff = -1
 	for i := range sched.Stops {
 		b := blockOf(sched.Stops[i], period)
 		if b == nil {
@@ -295,7 +299,7 @@ func (p *Intercity) addRun(net *model.Network, sched reestrSched, period string,
 			depMin = arrMin
 		}
 
-		arrOff := dayBase
+		arrOff := 0
 		for arrMin+arrOff*1440 < prevEff {
 			arrOff++
 		}
@@ -306,13 +310,12 @@ func (p *Intercity) addRun(net *model.Network, sched reestrSched, period string,
 		}
 		effDep := depMin + depOff*1440
 		prevEff = effDep
-		dayBase = depOff
 
 		times = append(times, model.StopTime{
 			StopID:    sched.Stops[i].Stop,
 			Sequence:  len(times),
-			Arrival:   p.day.Add(time.Duration(eff) * time.Minute),
-			Departure: p.day.Add(time.Duration(effDep) * time.Minute),
+			Arrival:   dayBase.Add(time.Duration(eff) * time.Minute),
+			Departure: dayBase.Add(time.Duration(effDep) * time.Minute),
 		})
 	}
 	if len(times) < 2 {

@@ -9,10 +9,11 @@ import (
 )
 
 func TestIntercityReestr(t *testing.T) {
-	p := NewIntercity(filepath.Join("..", "..", "testdata", "reestr", "mini.json"), time.Date(2026, 5, 10, 8, 0, 0, 0, time.UTC))
-	net, err := p.Network()
+	day := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC)
+	p := NewIntercity(filepath.Join("..", "..", "testdata", "reestr", "mini.json"), day)
+	net, err := p.NetworkForDay(day)
 	if err != nil {
-		t.Fatalf("Network: %v", err)
+		t.Fatalf("NetworkForDay: %v", err)
 	}
 	if got, want := len(net.Routes), 4; got != want {
 		t.Errorf("routes = %d, want %d", got, want)
@@ -42,13 +43,13 @@ func TestIntercityReestr(t *testing.T) {
 		if first.StopID != c.from || last.StopID != c.to {
 			t.Errorf("%s: endpoints %s→%s, want %s→%s", c.trip, first.StopID, last.StopID, c.from, c.to)
 		}
-		if got := first.Departure.Sub(p.day); got != c.dep {
+		if got := first.Departure.Sub(day); got != c.dep {
 			t.Errorf("%s: departure offset %v, want %v", c.trip, got, c.dep)
 		}
-		if got := first.Arrival.Sub(p.day); got != c.firstArr {
+		if got := first.Arrival.Sub(day); got != c.firstArr {
 			t.Errorf("%s: arrival of first stop %v, want %v", c.trip, got, c.firstArr)
 		}
-		if got := last.Arrival.Sub(p.day); got != c.lastArr {
+		if got := last.Arrival.Sub(day); got != c.lastArr {
 			t.Errorf("%s: final arrival %v, want %v", c.trip, got, c.lastArr)
 		}
 	}
@@ -59,5 +60,41 @@ func TestIntercityReestr(t *testing.T) {
 	}
 	if got := len(trip.StopTimes); got != 7 {
 		t.Errorf("stop times = %d, want 7", got)
+	}
+}
+
+func TestIntercityDifferentDay(t *testing.T) {
+	day1 := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC)
+	day2 := time.Date(2026, 5, 17, 0, 0, 0, 0, time.UTC)
+	p := NewIntercity(filepath.Join("..", "..", "testdata", "reestr", "mini.json"), day1)
+
+	net1, err := p.NetworkForDay(day1)
+	if err != nil {
+		t.Fatalf("NetworkForDay day1: %v", err)
+	}
+	net2, err := p.NetworkForDay(day2)
+	if err != nil {
+		t.Fatalf("NetworkForDay day2: %v", err)
+	}
+
+	// Рейсы должны быть привязаны к разным дням
+	trip1 := net1.Trips["54.22.078-forward-0"]
+	trip2 := net2.Trips["54.22.078-forward-0"]
+	if trip1 == nil || trip2 == nil {
+		t.Fatal("trips not found")
+	}
+
+	dep1 := trip1.StopTimes[0].Departure
+	dep2 := trip2.StopTimes[0].Departure
+
+	// Разница во времени отправления должна быть ровно 7 дней
+	diff := dep2.Sub(dep1)
+	if diff != 7*24*time.Hour {
+		t.Errorf("departure diff = %v, want %v", diff, 7*24*time.Hour)
+	}
+
+	// Одинаковое время суток
+	if dep1.Hour() != dep2.Hour() || dep1.Minute() != dep2.Minute() {
+		t.Errorf("time of day mismatch: %02d:%02d vs %02d:%02d", dep1.Hour(), dep1.Minute(), dep2.Hour(), dep2.Minute())
 	}
 }

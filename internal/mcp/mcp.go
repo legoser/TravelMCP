@@ -71,11 +71,11 @@ func (a *App) Server() *server.MCPServer {
 }
 
 func (a *App) handleFindRoute(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	from, err := a.resolvePoint(req.GetArguments(), "from")
+	from, fromPlace, err := a.resolvePointWithPlace(req.GetArguments(), "from")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	to, err := a.resolvePoint(req.GetArguments(), "to")
+	to, toPlace, err := a.resolvePointWithPlace(req.GetArguments(), "to")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -99,12 +99,24 @@ func (a *App) handleFindRoute(ctx context.Context, req mcp.CallToolRequest) (*mc
 		params.MaxTransfers = int(v)
 	}
 
-	net, err := a.network()
+	net, err := a.networkForDay(params.Departure)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	journey, err := a.plan.Plan(net, from, to, params)
+	var journey *model.Journey
+	if fromPlace != nil || toPlace != nil {
+		var fp, tp *planner.PlaceHint
+		if fromPlace != nil {
+			fp = &planner.PlaceHint{Name: *fromPlace}
+		}
+		if toPlace != nil {
+			tp = &planner.PlaceHint{Name: *toPlace}
+		}
+		journey, err = a.plan.PlanWithPlaces(net, from, to, params, fp, tp)
+	} else {
+		journey, err = a.plan.Plan(net, from, to, params)
+	}
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -113,28 +125,33 @@ func (a *App) handleFindRoute(ctx context.Context, req mcp.CallToolRequest) (*mc
 }
 
 func (a *App) resolvePoint(args map[string]any, kind string) (model.Coords, error) {
+	coords, _, err := a.resolvePointWithPlace(args, kind)
+	return coords, err
+}
+
+func (a *App) resolvePointWithPlace(args map[string]any, kind string) (model.Coords, *string, error) {
 	place, hasPlace := argString(args, kind+"_place")
 	hasPlace = hasPlace && strings.TrimSpace(place) != ""
 	lat, hasLat := argFloat(args, kind+"_lat")
 	lon, hasLon := argFloat(args, kind+"_lon")
 
 	if hasPlace && (hasLat || hasLon) {
-		return model.Coords{}, fmt.Errorf("%s: укажите либо %s_place, либо %s_lat/%s_lon", kind, kind, kind, kind)
+		return model.Coords{}, nil, fmt.Errorf("%s: укажите либо %s_place, либо %s_lat/%s_lon", kind, kind, kind, kind)
 	}
 	if hasPlace {
 		if a.gazetteer == nil {
-			return model.Coords{}, fmt.Errorf("%s: газетир недоступен", kind)
+			return model.Coords{}, nil, fmt.Errorf("%s: газетир недоступен", kind)
 		}
 		c, ok := a.gazetteer.Resolve(place)
 		if !ok {
-			return model.Coords{}, fmt.Errorf("%s: населённый пункт %q не найден", kind, place)
+			return model.Coords{}, nil, fmt.Errorf("%s: населённый пункт %q не найден", kind, place)
 		}
-		return c, nil
+		return c, &place, nil
 	}
 	if !hasLat || !hasLon {
-		return model.Coords{}, fmt.Errorf("%s: укажите %s_place или координаты %s_lat/%s_lon", kind, kind, kind, kind)
+		return model.Coords{}, nil, fmt.Errorf("%s: укажите %s_place или координаты %s_lat/%s_lon", kind, kind, kind, kind)
 	}
-	return model.Coords{Lat: lat, Lon: lon}, nil
+	return model.Coords{Lat: lat, Lon: lon}, nil, nil
 }
 
 func (a *App) handleListProviders(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -143,9 +160,22 @@ func (a *App) handleListProviders(ctx context.Context, req mcp.CallToolRequest) 
 }
 
 func (a *App) network() (*model.Network, error) {
+	return a.networkForDay(time.Now())
+}
+
+func (a *App) networkForDay(day time.Time) (*model.Network, error) {
 	net := model.NewNetwork()
 	for _, p := range a.registry.List() {
-		n, err := p.Network()
+		var n *model.Network
+		var err error
+		switch prov := p.(type) {
+		case *providers.Intercity:
+			n, err = prov.NetworkForDay(day)
+		case *providers.Synth:
+			n, err = prov.NetworkForDay(day)
+		default:
+			n, err = p.Network()
+		}
 		if err != nil {
 			return nil, fmt.Errorf("provider %s: %w", p.ID(), err)
 		}

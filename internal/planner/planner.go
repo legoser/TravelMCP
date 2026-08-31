@@ -3,6 +3,7 @@ package planner
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"travelmcp/internal/geo"
@@ -19,18 +20,50 @@ func New(metrics *telemetry.Metrics) *Planner {
 }
 
 func (p *Planner) Plan(net *model.Network, from, to model.Coords, params model.SearchParams) (*model.Journey, error) {
+	return p.planWithStops(net, from, to, params, nil, nil)
+}
+
+// PlanWithPlaces планирует маршрут, разрешая названия мест в стопы напрямую.
+// Если fromPlace/toPlace заданы, ищется стоп с точным совпадением имени/координат
+// из газетира — это позволяет избежать «лишнего» пешего участка до ближайшего стопа.
+func (p *Planner) PlanWithPlaces(net *model.Network, from, to model.Coords, params model.SearchParams, fromPlace, toPlace *PlaceHint) (*model.Journey, error) {
+	return p.planWithStops(net, from, to, params, fromPlace, toPlace)
+}
+
+type PlaceHint struct {
+	Name string
+}
+
+func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, params model.SearchParams, fromPlace, toPlace *PlaceHint) (*model.Journey, error) {
 	maxWalk := params.MaxWalkMinutes
 	if maxWalk <= 0 {
 		maxWalk = 30
 	}
-	fromStops := geo.NearestStops(net.Stops, from, maxWalk, 1)
-	toStops := geo.NearestStops(net.Stops, to, maxWalk, 1)
-	if len(fromStops) == 0 || len(toStops) == 0 {
-		return nil, fmt.Errorf("planner: нет остановок, достижимых пешком (лимит %d мин) от точки отправления или назначения", maxWalk)
+
+	var fromStop, toStop *model.Stop
+	var foundFrom, foundTo bool
+
+	if fromPlace != nil {
+		fromStop, foundFrom = findStopByPlace(net.Stops, fromPlace.Name, from, maxWalk)
+	}
+	if !foundFrom {
+		fromStops := geo.NearestStops(net.Stops, from, maxWalk, 1)
+		if len(fromStops) == 0 {
+			return nil, fmt.Errorf("planner: нет остановок, достижимых пешком (лимит %d мин) от точки отправления", maxWalk)
+		}
+		fromStop = fromStops[0]
 	}
 
-	fromStop := fromStops[0]
-	toStop := toStops[0]
+	if toPlace != nil {
+		toStop, foundTo = findStopByPlace(net.Stops, toPlace.Name, to, maxWalk)
+	}
+	if !foundTo {
+		toStops := geo.NearestStops(net.Stops, to, maxWalk, 1)
+		if len(toStops) == 0 {
+			return nil, fmt.Errorf("planner: нет остановок, достижимых пешком (лимит %d мин) от точки назначения", maxWalk)
+		}
+		toStop = toStops[0]
+	}
 
 	accessMin := geo.WalkTimeMinutes(geo.Haversine(from, fromStop.Coordinates()))
 	egressMin := geo.WalkTimeMinutes(geo.Haversine(to, toStop.Coordinates()))
@@ -76,6 +109,34 @@ func (p *Planner) Plan(net *model.Network, from, to model.Coords, params model.S
 
 func legPoint(stop *model.Stop) model.LegPoint {
 	return model.LegPoint{StopID: stop.ID, Name: stop.Name, Lat: stop.Lat, Lon: stop.Lon}
+}
+
+// findStopByPlace ищет стоп, связанный с названием места.
+// Сначала ищет по точному/частичному совпадению имени, затем по близости координат.
+func findStopByPlace(stops map[string]*model.Stop, placeName string, coords model.Coords, maxWalkMinutes int) (*model.Stop, bool) {
+	// 1. Ищем стоп с совпадающим или содержащим название
+	var nameMatch *model.Stop
+	var nameDist float64 = 1e9 // большой порог
+	for _, s := range stops {
+		if strings.Contains(strings.ToLower(s.Name), strings.ToLower(placeName)) ||
+			strings.Contains(strings.ToLower(placeName), strings.ToLower(s.Name)) {
+			d := geo.Haversine(coords, s.Coordinates())
+			if d < nameDist {
+				nameDist = d
+				nameMatch = s
+			}
+		}
+	}
+	if nameMatch != nil {
+		return nameMatch, true
+	}
+
+	// 2. Ищем ближайший стоп в пределах доступности
+	best := geo.NearestStops(stops, coords, maxWalkMinutes, 1)
+	if len(best) > 0 {
+		return best[0], true
+	}
+	return nil, false
 }
 
 type prev struct {
