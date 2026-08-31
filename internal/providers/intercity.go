@@ -19,12 +19,33 @@ const IntercityID = "intercity"
 // ——— JSON-схема датасета реестра (scripts/extract-minstran.py) ———
 
 type reestrDataset struct {
-	Source    string        `json:"source"`
-	Snapshot  string        `json:"snapshot"`
-	Regions   []string      `json:"regions"`
-	Routes    []reestrRoute `json:"routes"`
-	Stops     []reestrStop  `json:"stops"`
-	Schedules []reestrSched `json:"schedules"`
+	Source            string             `json:"source"`
+	Snapshot          string             `json:"snapshot"`
+	Regions           []string           `json:"regions"`
+	Routes            []reestrRoute      `json:"routes"`
+	Stops             []reestrStop       `json:"stops"`
+	Services          []reestrService    `json:"services"`
+	ServiceDays       []reestrServiceDay `json:"service_days"`
+	ServiceExceptions []reestrException  `json:"service_exceptions"`
+	Schedules         []reestrSched      `json:"schedules"`
+}
+
+type reestrService struct {
+	ID        int    `json:"id"`
+	Name      string `json:"name"`
+	StartDate string `json:"start_date"`
+	EndDate   string `json:"end_date"`
+}
+
+type reestrServiceDay struct {
+	ServiceID int `json:"service_id"`
+	Weekday   int `json:"weekday"`
+}
+
+type reestrException struct {
+	ServiceID     int    `json:"service_id"`
+	Date          string `json:"date"`
+	ExceptionType string `json:"exception_type"`
 }
 
 type reestrRoute struct {
@@ -47,6 +68,7 @@ type reestrStop struct {
 type reestrSched struct {
 	Route     string            `json:"route"`
 	Direction string            `json:"direction"`
+	ServiceID int               `json:"service_id"`
 	Stops     []reestrSchedStop `json:"stops"`
 }
 
@@ -84,7 +106,10 @@ func (p *Intercity) Health() HealthStatus {
 	if err != nil {
 		return HealthStatus{Up: false, LastError: err.Error()}
 	}
-	return HealthStatus{Up: true, LastImportTime: time.Now(), Records: len(ds.Schedules)}
+	net := p.build(ds, time.Now())
+	issues := model.ValidateNetwork(net)
+	excluded := model.FilterExcludedStops(net, issues)
+	return HealthStatus{Up: true, LastImportTime: time.Now(), Records: len(ds.Schedules), Issues: len(issues), ExcludedStops: len(excluded)}
 }
 
 func (p *Intercity) Network() (*model.Network, error) {
@@ -124,7 +149,7 @@ func (p *Intercity) build(ds *reestrDataset, day time.Time) *model.Network {
 		if st.Lon != nil {
 			lon = *st.Lon
 		}
-		net.Stops[st.ID] = &model.Stop{ID: st.ID, ProviderID: IntercityID, Name: st.Name, Lat: lat, Lon: lon}
+		net.Stops[st.ID] = &model.Stop{ID: st.ID, ProviderID: IntercityID, Name: st.Name, Lat: lat, Lon: lon, Type: model.InferStopType(st.Name)}
 	}
 
 	for i := range ds.Routes {
@@ -138,7 +163,24 @@ func (p *Intercity) build(ds *reestrDataset, day time.Time) *model.Network {
 		}
 	}
 
+	for _, svc := range ds.Services {
+		sd, _ := time.Parse("2006-01-02", svc.StartDate)
+		ed, _ := time.Parse("2006-01-02", svc.EndDate)
+		net.Services[svc.ID] = &model.Service{ID: svc.ID, Name: svc.Name, StartDate: sd, EndDate: ed}
+	}
+	for _, sd := range ds.ServiceDays {
+		net.ServiceDays[sd.ServiceID] = append(net.ServiceDays[sd.ServiceID], model.ServiceDay{ServiceID: sd.ServiceID, Weekday: sd.Weekday})
+	}
+	for _, ex := range ds.ServiceExceptions {
+		d, _ := time.Parse("2006-01-02", ex.Date)
+		et := model.ExceptionType(ex.ExceptionType)
+		net.ServiceExceptions[ex.ServiceID] = append(net.ServiceExceptions[ex.ServiceID], model.ServiceException{ServiceID: ex.ServiceID, Date: d, ExceptionType: et})
+	}
+
 	for _, sched := range ds.Schedules {
+		if !p.serviceActive(net, sched.ServiceID, day) {
+			continue
+		}
 		p.addSchedule(net, sched, day)
 	}
 
@@ -147,6 +189,7 @@ func (p *Intercity) build(ds *reestrDataset, day time.Time) *model.Network {
 	sort.Slice(net.Connections, func(i, j int) bool {
 		return net.Connections[i].Departure.Before(net.Connections[j].Departure)
 	})
+	net.BuildIndexes()
 	return net
 }
 
@@ -154,24 +197,15 @@ func (p *Intercity) build(ds *reestrDataset, day time.Time) *model.Network {
 // остановками (разные терминалы одного узла: вокзал/автостанция).
 func (p *Intercity) addTransferLinks(net *model.Network) {
 	const maxKm = 0.4
-	for aID, a := range net.Stops {
-		if a.Lat == 0 && a.Lon == 0 {
-			continue
-		}
-		for bID, b := range net.Stops {
-			if aID >= bID || (b.Lat == 0 && b.Lon == 0) {
-				continue
-			}
-			d := geo.Haversine(a.Coordinates(), b.Coordinates())
-			if d > maxKm {
-				continue
-			}
-			minutes := geo.WalkTimeMinutes(d)
-			net.Transfers = append(net.Transfers,
-				model.Transfer{FromStopID: aID, ToStopID: bID, Minutes: minutes},
-				model.Transfer{FromStopID: bID, ToStopID: aID, Minutes: minutes},
-			)
-		}
+	for _, pair := range geo.NearbyPairs(net.Stops, maxKm) {
+		a, b := pair[0], pair[1]
+		d := geo.Haversine(a.Coordinates(), b.Coordinates())
+		minutes := geo.WalkTimeMinutes(d)
+		dist := int(d * 1000)
+		net.Transfers = append(net.Transfers,
+			model.Transfer{FromStopID: a.ID, ToStopID: b.ID, Minutes: minutes, MinTransferTime: minutes, DistanceM: dist},
+			model.Transfer{FromStopID: b.ID, ToStopID: a.ID, Minutes: minutes, MinTransferTime: minutes, DistanceM: dist},
+		)
 	}
 }
 
@@ -264,6 +298,45 @@ func scheduleDays(sched reestrSched) string {
 	return ""
 }
 
+func (p *Intercity) serviceActive(net *model.Network, serviceID int, day time.Time) bool {
+	if serviceID == 0 {
+		return true
+	}
+	svc, ok := net.Services[serviceID]
+	if !ok {
+		return true
+	}
+	d := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC)
+	if !svc.StartDate.IsZero() && d.Before(time.Date(svc.StartDate.Year(), svc.StartDate.Month(), svc.StartDate.Day(), 0, 0, 0, 0, time.UTC)) {
+		return false
+	}
+	if !svc.EndDate.IsZero() && d.After(time.Date(svc.EndDate.Year(), svc.EndDate.Month(), svc.EndDate.Day(), 0, 0, 0, 0, time.UTC)) {
+		return false
+	}
+	for _, ex := range net.ServiceExceptions[serviceID] {
+		ed := time.Date(ex.Date.Year(), ex.Date.Month(), ex.Date.Day(), 0, 0, 0, 0, time.UTC)
+		if ed.Equal(d) {
+			if ex.ExceptionType == model.ExceptionRemoved {
+				return false
+			}
+			if ex.ExceptionType == model.ExceptionAdded {
+				return true
+			}
+		}
+	}
+	days, ok := net.ServiceDays[serviceID]
+	if !ok || len(days) == 0 {
+		return true
+	}
+	wd := int(d.Weekday())
+	for _, sd := range days {
+		if sd.Weekday == wd {
+			return true
+		}
+	}
+	return false
+}
+
 func (p *Intercity) addSchedule(net *model.Network, sched reestrSched, day time.Time) {
 	period := pickPeriod(sched)
 	if period == "" {
@@ -312,26 +385,36 @@ func (p *Intercity) addRun(net *model.Network, sched reestrSched, period string,
 		prevEff = effDep
 
 		times = append(times, model.StopTime{
-			StopID:    sched.Stops[i].Stop,
-			Sequence:  len(times),
-			Arrival:   dayBase.Add(time.Duration(eff) * time.Minute),
-			Departure: dayBase.Add(time.Duration(effDep) * time.Minute),
+			StopID:       sched.Stops[i].Stop,
+			Sequence:     len(times),
+			ArrivalSec:   int((dayBase.Add(time.Duration(eff) * time.Minute)).Sub(dayBase).Seconds()),
+			DepartureSec: int((dayBase.Add(time.Duration(effDep) * time.Minute)).Sub(dayBase).Seconds()),
 		})
 	}
 	if len(times) < 2 {
 		return
 	}
 
+	svcID := sched.ServiceID
+	if svcID == 0 {
+		svcID = 1
+	}
 	tripID := fmt.Sprintf("%s-%s-%d", sched.Route, sched.Direction, run)
 	net.Trips[tripID] = &model.Trip{
 		ID:         tripID,
 		RouteID:    sched.Route,
 		ProviderID: IntercityID,
 		Mode:       model.ModeBus,
-		ServiceID:  scheduleDays(sched),
+		ServiceID:  svcID,
 		StopTimes:  times,
 	}
 	for i := 0; i < len(times)-1; i++ {
+		fromStop := net.Stops[times[i].StopID]
+		toStop := net.Stops[times[i+1].StopID]
+		dist := 0
+		if fromStop != nil && toStop != nil {
+			dist = int(geo.Haversine(fromStop.Coordinates(), toStop.Coordinates()) * 1000)
+		}
 		net.Connections = append(net.Connections, model.Connection{
 			TripID:     tripID,
 			ProviderID: IntercityID,
@@ -339,8 +422,9 @@ func (p *Intercity) addRun(net *model.Network, sched reestrSched, period string,
 			Mode:       model.ModeBus,
 			From:       times[i].StopID,
 			To:         times[i+1].StopID,
-			Departure:  times[i].Departure,
-			Arrival:    times[i+1].Arrival,
+			Departure:  dayBase.Add(time.Duration(times[i].DepartureSec) * time.Second),
+			Arrival:    dayBase.Add(time.Duration(times[i+1].ArrivalSec) * time.Second),
+			DistanceM:  dist,
 		})
 	}
 }

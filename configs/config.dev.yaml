@@ -1,0 +1,17 @@
+http:
+  addr: ":8080"
+
+database:
+  dsn: "memory"
+
+providers:
+  enabled: ["intercity", "synth"]
+  intercity:
+    reestr_path: "data/reestr/regions.json"
+
+auth:
+  admin_token: "dev-secret"
+
+yandex:
+  rasp_key: ""
+  geocode_key: ""

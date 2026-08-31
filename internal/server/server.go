@@ -13,6 +13,7 @@ import (
 	"travelmcp/internal/mcp"
 	"travelmcp/internal/planner"
 	"travelmcp/internal/providers"
+	"travelmcp/internal/store"
 	"travelmcp/internal/telemetry"
 )
 
@@ -25,6 +26,10 @@ type Server struct {
 }
 
 func New(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Metrics, registry *providers.Registry) http.Handler {
+	return NewWithStore(cfg, logger, metrics, registry, nil)
+}
+
+func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Metrics, registry *providers.Registry, st store.Store) http.Handler {
 	s := &Server{
 		cfg:      cfg,
 		metrics:  metrics,
@@ -33,7 +38,7 @@ func New(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Metrics, re
 		started:  time.Now(),
 	}
 
-	app := mcp.New(planner.New(metrics), registry)
+	app := mcp.NewWithStore(planner.New(metrics), registry, st)
 	mcpHandler := mcpserver.NewStreamableHTTPServer(app.Server(), mcpserver.WithStateLess(true))
 
 	token := cfg.Auth.AdminToken

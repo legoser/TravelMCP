@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"travelmcp/internal/geo"
 	"travelmcp/internal/model"
 )
 
@@ -28,6 +29,9 @@ func (s *Synth) Health() HealthStatus {
 	status := HealthStatus{Up: err == nil, LastImportTime: time.Now()}
 	if err == nil {
 		status.Records = len(net.Stops) + len(net.Trips)
+		issues := model.ValidateNetwork(net)
+		status.Issues = len(issues)
+		status.ExcludedStops = len(model.FilterExcludedStops(net, issues))
 	}
 	return status
 }
@@ -39,7 +43,7 @@ func (s *Synth) NetworkForDay(day time.Time) (*model.Network, error) {
 }
 
 func (s *Synth) addStop(net *model.Network, id, name string, lat, lon float64) {
-	net.Stops[id] = &model.Stop{ID: id, ProviderID: SynthID, Name: name, Lat: lat, Lon: lon}
+	net.Stops[id] = &model.Stop{ID: id, ProviderID: SynthID, Name: name, Lat: lat, Lon: lon, Type: model.InferStopType(name)}
 }
 
 func (s *Synth) Network() (*model.Network, error) {
@@ -48,6 +52,10 @@ func (s *Synth) Network() (*model.Network, error) {
 
 func (s *Synth) build(dayBase time.Time) *model.Network {
 	net := model.NewNetwork()
+	net.Services[1] = &model.Service{ID: 1, Name: "ежедневно"}
+	for wd := 0; wd < 7; wd++ {
+		net.ServiceDays[1] = append(net.ServiceDays[1], model.ServiceDay{ServiceID: 1, Weekday: wd})
+	}
 
 	s.addStop(net, "a-cen", "Пермь, Центральная площадь", 58.0135, 56.2495)
 	s.addStop(net, "a-bus", "Пермь, Автовокзал", 58.0050, 56.2470)
@@ -62,10 +70,10 @@ func (s *Synth) build(dayBase time.Time) *model.Network {
 	s.addStop(net, "b-apt", "Екатеринбург, аэропорт Кольцово", 56.7431, 60.8028)
 
 	net.Transfers = append(net.Transfers,
-		model.Transfer{FromStopID: "c2", ToStopID: "c2x", Minutes: 5},
-		model.Transfer{FromStopID: "c2x", ToStopID: "c2", Minutes: 5},
-		model.Transfer{FromStopID: "b-bus", ToStopID: "b-mkt", Minutes: 6},
-		model.Transfer{FromStopID: "b-mkt", ToStopID: "b-bus", Minutes: 6},
+		model.Transfer{FromStopID: "c2", ToStopID: "c2x", Minutes: 5, MinTransferTime: 5, DistanceM: 300},
+		model.Transfer{FromStopID: "c2x", ToStopID: "c2", Minutes: 5, MinTransferTime: 5, DistanceM: 300},
+		model.Transfer{FromStopID: "b-bus", ToStopID: "b-mkt", Minutes: 6, MinTransferTime: 6, DistanceM: 350},
+		model.Transfer{FromStopID: "b-mkt", ToStopID: "b-bus", Minutes: 6, MinTransferTime: 6, DistanceM: 350},
 	)
 
 	s.addLine(net, model.Route{ID: "a", ShortName: "1", LongName: "Центральная площадь — Автовокзал", Mode: model.ModeBus},
@@ -90,6 +98,7 @@ func (s *Synth) build(dayBase time.Time) *model.Network {
 	sort.Slice(net.Connections, func(i, j int) bool {
 		return net.Connections[i].Departure.Before(net.Connections[j].Departure)
 	})
+	net.BuildIndexes()
 	return net
 }
 
@@ -100,7 +109,7 @@ func (s *Synth) addLine(net *model.Network, route model.Route, stops []string, t
 		stopTimes := make([]model.StopTime, 0, len(stops))
 		t := dayBase.Add(time.Duration(dep) * time.Minute)
 		for i, stop := range stops {
-			stopTimes = append(stopTimes, model.StopTime{StopID: stop, Sequence: i, Arrival: t, Departure: t})
+			stopTimes = append(stopTimes, model.StopTime{StopID: stop, Sequence: i, ArrivalSec: int(t.Sub(dayBase).Seconds()), DepartureSec: int(t.Sub(dayBase).Seconds())})
 			if i < len(travel) {
 				t = t.Add(time.Duration(travel[i]) * time.Minute)
 			}
@@ -110,10 +119,16 @@ func (s *Synth) addLine(net *model.Network, route model.Route, stops []string, t
 			RouteID:    route.ID,
 			ProviderID: SynthID,
 			Mode:       route.Mode,
-			ServiceID:  "everyday",
+			ServiceID:  1, // Changed from "everyday" to 1 as placeholder
 			StopTimes:  stopTimes,
 		}
 		for i := 0; i < len(stops)-1; i++ {
+			fromStop := net.Stops[stops[i]]
+			toStop := net.Stops[stops[i+1]]
+			dist := 0
+			if fromStop != nil && toStop != nil {
+				dist = int(geo.Haversine(fromStop.Coordinates(), toStop.Coordinates()) * 1000)
+			}
 			net.Connections = append(net.Connections, model.Connection{
 				TripID:     tripID,
 				ProviderID: SynthID,
@@ -121,8 +136,9 @@ func (s *Synth) addLine(net *model.Network, route model.Route, stops []string, t
 				Mode:       route.Mode,
 				From:       stops[i],
 				To:         stops[i+1],
-				Departure:  stopTimes[i].Departure,
-				Arrival:    stopTimes[i+1].Arrival,
+				Departure:  dayBase.Add(time.Duration(stopTimes[i].DepartureSec) * time.Second),
+				Arrival:    dayBase.Add(time.Duration(stopTimes[i+1].ArrivalSec) * time.Second),
+				DistanceM:  dist,
 			})
 		}
 	}

@@ -93,6 +93,83 @@ def period_block(d, base):
     }
 
 
+WEEKDAY_MAP = {
+    "пн": 1, "пон": 1, "понедельник": 1,
+    "вт": 2, "вторник": 2,
+    "ср": 3, "среда": 3,
+    "чт": 4, "четверг": 4,
+    "пт": 5, "пятница": 5,
+    "сб": 6, "суббота": 6,
+    "вс": 0, "воскресенье": 0, "вск": 0,
+}
+
+
+def parse_days(days_str):
+    if not days_str:
+        return list(range(7))
+    s = days_str.strip().lower().replace("\u0451", "\u0435")
+    if s in ("ежедневно", "ежедневн", "ежедневный"):
+        return list(range(7))
+    if s in ("через день", "1 через 1", "1через1"):
+        return list(range(7))
+    if s in ("нет", "нет отправлений", "нет отправлении"):
+        return []
+    s = s.replace(";", ",").replace(" ", ",")
+    weekdays = set()
+    for tok in s.split(","):
+        tok = tok.strip().strip(".")
+        if not tok:
+            continue
+        if "-" in tok and not tok[0].isdigit():
+            parts = tok.split("-")
+            if len(parts) == 2:
+                a = WEEKDAY_MAP.get(parts[0].strip())
+                b = WEEKDAY_MAP.get(parts[1].strip())
+                if a is not None and b is not None:
+                    cur = a
+                    while True:
+                        weekdays.add(cur % 7)
+                        if cur % 7 == b % 7:
+                            break
+                        cur = (cur + 1) % 7
+                        if len(weekdays) > 7:
+                            break
+                    continue
+        if tok.isdigit():
+            try:
+                n = int(tok)
+                if 1 <= n <= 31:
+                    continue
+            except ValueError:
+                pass
+        wd = WEEKDAY_MAP.get(tok)
+        if wd is not None:
+            weekdays.add(wd)
+            continue
+        m = re.match(r"^(\d+)\s*через\s*(\d+)$", tok)
+        if m:
+            weekdays.update(range(7))
+            continue
+    if not weekdays:
+        return list(range(7))
+    return sorted(weekdays)
+
+
+def parse_period(period_str, snapshot=""):
+    if not period_str or period_str.strip().lower() == "круглогодично":
+        year = snapshot[:4] if snapshot and len(snapshot) >= 4 and snapshot[:4].isdigit() else "2026"
+        return "{0}-01-01".format(year), "{0}-12-31".format(year)
+    m = re.search(r"(\d{2})\.(\d{2}).*?(\d{2})\.(\d{2})", period_str)
+    if m:
+        d1, m1, d2, m2 = m.groups()
+        year = snapshot[:4] if snapshot and len(snapshot) >= 4 and snapshot[:4].isdigit() else "2026"
+        start = "{0}-{1}-{2}".format(year, m1, d1)
+        end = "{0}-{1}-{2}".format(year, m2, d2)
+        return start, end
+    year = snapshot[:4] if snapshot and len(snapshot) >= 4 and snapshot[:4].isdigit() else "2026"
+    return "{0}-01-01".format(year), "{0}-12-31".format(year)
+
+
 STOPWORDS = set("""оп остановочный пункт автовокзал автостанция автобусная станция
 ас ав дкп г с п р.п рп пгт пов кассовый аэропорт межд города вокзал название
 транспортный остановка""".split())
@@ -462,17 +539,48 @@ def main():
             stop_id = stop_ref(d.get(STOP, ""), d.get(STOP_REGION, ""), d.get(OP_REG, ""))
             by_route.setdefault((rreg, direction), []).append((stop_id, d))
 
+    service_map = OrderedDict()
+    next_sid = 1
+
+    def get_service_id(days_str, period_str):
+        nonlocal next_sid
+        key = ((days_str or "").strip(), (period_str or "").strip())
+        if key not in service_map:
+            start, end = parse_period(period_str, args.snapshot)
+            weekdays = parse_days(days_str)
+            service_map[key] = {
+                "id": next_sid,
+                "name": days_str or "ежедневно",
+                "start_date": start,
+                "end_date": end,
+                "weekdays": weekdays,
+            }
+            next_sid += 1
+        return service_map[key]["id"]
+
     sched_out = []
     for (rreg, direction), entries in by_route.items():
         stops_list = []
+        svc_days = None
+        svc_period = None
         for stop_id, d in entries:
+            wb = period_block(d, W_DAYS)
+            sb = period_block(d, S_DAYS)
+            if svc_days is None:
+                if wb.get("days"):
+                    svc_days = wb["days"]
+                    svc_period = wb.get("period")
+                elif sb.get("days"):
+                    svc_days = sb["days"]
+                    svc_period = sb.get("period")
             stops_list.append({
                 "stop": stop_id,
                 "region": d.get(STOP_REGION, ""),
-                "winter": period_block(d, W_DAYS),
-                "summer": period_block(d, S_DAYS),
+                "winter": wb,
+                "summer": sb,
             })
-        sched_out.append({"route": rreg, "direction": direction, "stops": stops_list})
+        sid = get_service_id(svc_days, svc_period)
+        sched_out.append({"route": rreg, "direction": direction, "service_id": sid, "stops": stops_list})
 
     routes_out = []
     for reg in sorted(touched):
@@ -492,12 +600,27 @@ def main():
     if args.osm:
         stops_out = geocode_stops(stops_out, args.osm, args.gazetteer)
 
+    services_out = []
+    service_days_out = []
+    for key, svc in service_map.items():
+        services_out.append({
+            "id": svc["id"],
+            "name": svc["name"],
+            "start_date": svc["start_date"],
+            "end_date": svc["end_date"],
+        })
+        for wd in svc["weekdays"]:
+            service_days_out.append({"service_id": svc["id"], "weekday": wd})
+
     result = {
         "source": "minstran_reestr",
         "snapshot": args.snapshot,
         "regions": sorted(regions),
         "routes": routes_out,
         "stops": stops_out,
+        "services": services_out,
+        "service_days": service_days_out,
+        "service_exceptions": [],
         "schedules": sched_out,
     }
 

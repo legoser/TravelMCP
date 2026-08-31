@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 type Coords struct {
 	Lat float64 `json:"lat"`
@@ -20,16 +23,71 @@ const (
 	ModeFlight Mode = "flight"
 )
 
+type StopType string
+
+const (
+	StopTypeStation  StopType = "station"
+	StopTypePlatform StopType = "platform"
+	StopTypeHub      StopType = "hub"
+	StopTypePOI      StopType = "poi"
+	StopTypeAirport  StopType = "airport"
+)
+
 type Stop struct {
-	ID         string  `json:"id"`
-	ProviderID string  `json:"provider_id"`
-	Name       string  `json:"name"`
-	Lat        float64 `json:"lat"`
-	Lon        float64 `json:"lon"`
+	ID         string   `json:"id"`
+	ProviderID string   `json:"provider_id"`
+	Name       string   `json:"name"`
+	Lat        float64  `json:"lat"`
+	Lon        float64  `json:"lon"`
+	Type       StopType `json:"type"`
+	ZoneID     string   `json:"zone_id,omitempty"`
+	GeoCell    uint64   `json:"-"`
 }
 
 func (s *Stop) Coordinates() Coords {
 	return Coords{Lat: s.Lat, Lon: s.Lon}
+}
+
+func (s *Stop) IsHub() bool {
+	return s.Type == StopTypeHub
+}
+
+func InferStopType(name string) StopType {
+	lower := strings.ToLower(name)
+	if strings.Contains(lower, "аэропорт") {
+		return StopTypeAirport
+	}
+	for _, t := range strings.Fields(lower) {
+		if t == "ав" || t == "авт" || t == "а/в" || strings.Contains(t, "автовокзал") || strings.Contains(t, "автостанция") {
+			return StopTypeHub
+		}
+	}
+	if strings.Contains(lower, "автовокзал") || strings.Contains(lower, "автостанция") {
+		return StopTypeHub
+	}
+	if strings.Contains(lower, "вокзал") {
+		return StopTypeStation
+	}
+	return StopTypeStation
+}
+
+// Station — каноническая физическая станция (вокзал/терминал), не привязана к провайдеру.
+// Координаты принадлежат станции, timezone — IANA (напр. Asia/Novosibirsk), время в БД — UTC.
+type Station struct {
+	ID       string  `json:"id"`
+	Name     string  `json:"name"`
+	Lat      float64 `json:"lat"`
+	Lon      float64 `json:"lon"`
+	Timezone string  `json:"timezone"`
+}
+
+// ProviderStop — представление станции у конкретного провайдера.
+// Связь: provider_stops.station_id -> stations.id, provider_stops.stop_id -> stops.id.
+type ProviderStop struct {
+	StationID  string `json:"station_id"`
+	ProviderID string `json:"provider_id"`
+	Name       string `json:"name"`
+	StopID     string `json:"stop_id"`
 }
 
 type Route struct {
@@ -40,26 +98,68 @@ type Route struct {
 	Mode       Mode   `json:"mode"`
 }
 
+// StopTime — остановка рейса; времена — секунды от 00:00 UTC дня dayBase.
+// GTFS-подход: оба поля для индексов (stop_id, departure_sec) и (trip_id, seq).
 type StopTime struct {
-	StopID    string
-	Sequence  int
-	Arrival   time.Time
-	Departure time.Time
+	StopID       string
+	Sequence     int
+	ArrivalSec   int
+	DepartureSec int
+	PickupType   int `json:"pickup_type"`
+	DropOffType  int `json:"drop_off_type"`
 }
 
+// Service — календарь рейсов (будни/сезон). Даты — UTC, в БД — INTEGER YYYYMMDD.
+type Service struct {
+	ID        int       `json:"id"`
+	Name      string    `json:"name"`
+	StartDate time.Time `json:"start_date"`
+	EndDate   time.Time `json:"end_date"`
+}
+
+// ServiceDay — день недели сервиса; Weekday 0=Sunday..6=Saturday (как time.Weekday).
+type ServiceDay struct {
+	ServiceID int `json:"service_id"`
+	Weekday   int `json:"weekday"`
+}
+
+type ExceptionType string
+
+const (
+	ExceptionAdded   ExceptionType = "added"
+	ExceptionRemoved ExceptionType = "removed"
+)
+
+// ServiceException — исключения календаря на конкретную дату.
+type ServiceException struct {
+	ServiceID     int           `json:"service_id"`
+	Date          time.Time     `json:"date"`
+	ExceptionType ExceptionType `json:"exception_type"`
+}
+
+// Carrier — канонический перевозчик (ИНН опционально).
+type Carrier struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	INN  string `json:"inn,omitempty"`
+}
+
+// Trip — конкретный рейс; календарь вынесен в Service via ServiceID FK.
 type Trip struct {
 	ID         string
 	RouteID    string
 	ProviderID string
 	Mode       Mode
-	ServiceID  string
+	ServiceID  int
 	StopTimes  []StopTime
 }
 
 type Transfer struct {
-	FromStopID string
-	ToStopID   string
-	Minutes    int
+	FromStopID      string `json:"from_stop_id"`
+	ToStopID        string `json:"to_stop_id"`
+	Minutes         int    `json:"minutes"`
+	MinTransferTime int    `json:"min_transfer_time"`
+	DistanceM       int    `json:"distance_m"`
 }
 
 type Connection struct {
@@ -71,22 +171,85 @@ type Connection struct {
 	To         string
 	Departure  time.Time
 	Arrival    time.Time
+	DistanceM  int `json:"distance_m"`
 }
 
+// Network — in-memory граф: канон. станции + провайдерские стопы + расписание.
+// Connections — derived из StopTime (sorted), для CSA; в БД — stop_times с индексами.
+// Индексы B1 строятся build-time, а не per-request.
 type Network struct {
-	Stops       map[string]*Stop
-	Routes      map[string]*Route
-	Trips       map[string]*Trip
-	Connections []Connection
-	Transfers   []Transfer
+	Stops             map[string]*Stop
+	Routes            map[string]*Route
+	Trips             map[string]*Trip
+	Stations          map[string]*Station
+	ProviderStops     map[string]*ProviderStop
+	Carriers          map[string]*Carrier
+	Services          map[int]*Service
+	ServiceDays       map[int][]ServiceDay
+	ServiceExceptions map[int][]ServiceException
+	Connections       []Connection
+	Transfers         []Transfer
+
+	TransfersByStop map[string][]Transfer `json:"-"`
+	RouteStops      map[string][]string   `json:"-"`
+	TripStops       map[string][]string   `json:"-"`
+	MinTime         time.Time             `json:"-"`
+	MaxTime         time.Time             `json:"-"`
 }
 
 func NewNetwork() *Network {
 	return &Network{
-		Stops:  map[string]*Stop{},
-		Routes: map[string]*Route{},
-		Trips:  map[string]*Trip{},
+		Stops:             map[string]*Stop{},
+		Routes:            map[string]*Route{},
+		Trips:             map[string]*Trip{},
+		Stations:          map[string]*Station{},
+		ProviderStops:     map[string]*ProviderStop{},
+		Carriers:          map[string]*Carrier{},
+		Services:          map[int]*Service{},
+		ServiceDays:       map[int][]ServiceDay{},
+		ServiceExceptions: map[int][]ServiceException{},
+		TransfersByStop:   map[string][]Transfer{},
+		RouteStops:        map[string][]string{},
+		TripStops:         map[string][]string{},
 	}
+}
+
+func (n *Network) BuildIndexes() {
+	n.TransfersByStop = make(map[string][]Transfer, len(n.Transfers))
+	for _, tr := range n.Transfers {
+		n.TransfersByStop[tr.FromStopID] = append(n.TransfersByStop[tr.FromStopID], tr)
+	}
+	n.RouteStops = make(map[string][]string)
+	n.TripStops = make(map[string][]string)
+	for _, trip := range n.Trips {
+		ids := make([]string, len(trip.StopTimes))
+		for i, st := range trip.StopTimes {
+			ids[i] = st.StopID
+		}
+		n.TripStops[trip.ID] = ids
+		n.RouteStops[trip.RouteID] = append(n.RouteStops[trip.RouteID], ids...)
+	}
+	if len(n.Connections) > 0 {
+		n.MinTime = n.Connections[0].Departure
+		n.MaxTime = n.Connections[0].Arrival
+		for _, c := range n.Connections[1:] {
+			if c.Departure.Before(n.MinTime) {
+				n.MinTime = c.Departure
+			}
+			if c.Arrival.After(n.MaxTime) {
+				n.MaxTime = c.Arrival
+			}
+		}
+	}
+	for _, s := range n.Stops {
+		s.GeoCell = geoCell(s.Lat, s.Lon)
+	}
+}
+
+func geoCell(lat, lon float64) uint64 {
+	latI := int64((lat + 90) * 1e5)
+	lonI := int64((lon + 180) * 1e5)
+	return (uint64(latI) << 32) | uint64(uint32(lonI))
 }
 
 type SearchParams struct {

@@ -43,13 +43,13 @@ func TestIntercityReestr(t *testing.T) {
 		if first.StopID != c.from || last.StopID != c.to {
 			t.Errorf("%s: endpoints %s→%s, want %s→%s", c.trip, first.StopID, last.StopID, c.from, c.to)
 		}
-		if got := first.Departure.Sub(day); got != c.dep {
+		if got := time.Duration(first.DepartureSec) * time.Second; got != c.dep {
 			t.Errorf("%s: departure offset %v, want %v", c.trip, got, c.dep)
 		}
-		if got := first.Arrival.Sub(day); got != c.firstArr {
+		if got := time.Duration(first.ArrivalSec) * time.Second; got != c.firstArr {
 			t.Errorf("%s: arrival of first stop %v, want %v", c.trip, got, c.firstArr)
 		}
-		if got := last.Arrival.Sub(day); got != c.lastArr {
+		if got := time.Duration(last.ArrivalSec) * time.Second; got != c.lastArr {
 			t.Errorf("%s: final arrival %v, want %v", c.trip, got, c.lastArr)
 		}
 	}
@@ -84,8 +84,9 @@ func TestIntercityDifferentDay(t *testing.T) {
 		t.Fatal("trips not found")
 	}
 
-	dep1 := trip1.StopTimes[0].Departure
-	dep2 := trip2.StopTimes[0].Departure
+	// Восстанавливаем абсолютное время из dayBase + seconds
+	dep1 := day1.Add(time.Duration(trip1.StopTimes[0].DepartureSec) * time.Second)
+	dep2 := day2.Add(time.Duration(trip2.StopTimes[0].DepartureSec) * time.Second)
 
 	// Разница во времени отправления должна быть ровно 7 дней
 	diff := dep2.Sub(dep1)

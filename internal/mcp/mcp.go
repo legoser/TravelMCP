@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -15,16 +16,22 @@ import (
 	"travelmcp/internal/model"
 	"travelmcp/internal/planner"
 	"travelmcp/internal/providers"
+	"travelmcp/internal/store"
 )
 
 type App struct {
 	plan      *planner.Planner
 	registry  *providers.Registry
 	gazetteer *geo.Gazetteer
+	store     store.Store
 }
 
 func New(plan *planner.Planner, registry *providers.Registry) *App {
-	a := &App{plan: plan, registry: registry}
+	return NewWithStore(plan, registry, nil)
+}
+
+func NewWithStore(plan *planner.Planner, registry *providers.Registry, st store.Store) *App {
+	a := &App{plan: plan, registry: registry, store: st}
 	gz, err := geo.DefaultGazetteer()
 	if err == nil {
 		for _, p := range registry.List() {
@@ -164,6 +171,15 @@ func (a *App) network() (*model.Network, error) {
 }
 
 func (a *App) networkForDay(day time.Time) (*model.Network, error) {
+	if a.store != nil {
+		ids := make([]string, 0, len(a.registry.List()))
+		for _, p := range a.registry.List() {
+			ids = append(ids, p.ID())
+		}
+		if n, err := a.store.LoadNetwork(context.Background(), ids, day); err == nil && len(n.Stops) > 0 {
+			return n, nil
+		}
+	}
 	net := model.NewNetwork()
 	for _, p := range a.registry.List() {
 		var n *model.Network
@@ -179,27 +195,151 @@ func (a *App) networkForDay(day time.Time) (*model.Network, error) {
 		if err != nil {
 			return nil, fmt.Errorf("provider %s: %w", p.ID(), err)
 		}
-		for id, s := range n.Stops {
+		issues := model.ValidateNetwork(n)
+		excluded := model.FilterExcludedStops(n, issues)
+
+		stopRename := map[string]string{}
+		for id := range n.Stops {
 			if _, exists := net.Stops[id]; exists {
-				return nil, fmt.Errorf("providers: конфликт остановки %s между источниками", id)
+				stopRename[id] = p.ID() + ":" + id
 			}
-			net.Stops[id] = s
+		}
+		routeRename := map[string]string{}
+		for id := range n.Routes {
+			if _, exists := net.Routes[id]; exists {
+				routeRename[id] = p.ID() + ":" + id
+			}
+		}
+		tripRename := map[string]string{}
+		for id := range n.Trips {
+			if _, exists := net.Trips[id]; exists {
+				tripRename[id] = p.ID() + ":" + id
+			}
+		}
+
+		for id, s := range n.Stops {
+			if excluded[id] {
+				continue
+			}
+			newID := id
+			if rn, ok := stopRename[id]; ok {
+				newID = rn
+			}
+			cp := *s
+			cp.ID = newID
+			net.Stops[newID] = &cp
 		}
 		for id, r := range n.Routes {
-			if _, exists := net.Routes[id]; exists {
-				return nil, fmt.Errorf("providers: конфликт маршрута %s между источниками", id)
+			newID := id
+			if rn, ok := routeRename[id]; ok {
+				newID = rn
 			}
-			net.Routes[id] = r
+			cp := *r
+			cp.ID = newID
+			net.Routes[newID] = &cp
 		}
 		for id, t := range n.Trips {
-			if _, exists := net.Trips[id]; exists {
-				return nil, fmt.Errorf("providers: конфликт рейса %s между источниками", id)
+			skip := false
+			for _, st := range t.StopTimes {
+				if excluded[st.StopID] {
+					skip = true
+					break
+				}
+				if _, ok := stopRename[st.StopID]; ok {
+				}
 			}
-			net.Trips[id] = t
+			if skip {
+				continue
+			}
+			newID := id
+			if rn, ok := tripRename[id]; ok {
+				newID = rn
+			}
+			cp := *t
+			cp.ID = newID
+			if rn, ok := routeRename[t.RouteID]; ok {
+				cp.RouteID = rn
+			}
+			newST := make([]model.StopTime, len(t.StopTimes))
+			for i, st := range t.StopTimes {
+				ns := st
+				if rn, ok := stopRename[st.StopID]; ok {
+					ns.StopID = rn
+				}
+				newST[i] = ns
+			}
+			cp.StopTimes = newST
+			net.Trips[newID] = &cp
 		}
-		net.Connections = append(net.Connections, n.Connections...)
-		net.Transfers = append(net.Transfers, n.Transfers...)
+		for _, c := range n.Connections {
+			if excluded[c.From] || excluded[c.To] {
+				continue
+			}
+			nc := c
+			if rn, ok := tripRename[c.TripID]; ok {
+				nc.TripID = rn
+			}
+			if rn, ok := routeRename[c.RouteID]; ok {
+				nc.RouteID = rn
+			}
+			if rn, ok := stopRename[c.From]; ok {
+				nc.From = rn
+			}
+			if rn, ok := stopRename[c.To]; ok {
+				nc.To = rn
+			}
+			if c.Arrival.Before(c.Departure) {
+				continue
+			}
+			net.Connections = append(net.Connections, nc)
+		}
+		for _, tr := range n.Transfers {
+			if excluded[tr.FromStopID] || excluded[tr.ToStopID] {
+				continue
+			}
+			ntr := tr
+			if rn, ok := stopRename[tr.FromStopID]; ok {
+				ntr.FromStopID = rn
+			}
+			if rn, ok := stopRename[tr.ToStopID]; ok {
+				ntr.ToStopID = rn
+			}
+			net.Transfers = append(net.Transfers, ntr)
+		}
+		for id, st := range n.Stations {
+			if _, exists := net.Stations[id]; exists {
+				continue
+			}
+			cp := *st
+			net.Stations[id] = &cp
+		}
+		for id, svc := range n.Services {
+			if _, exists := net.Services[id]; !exists {
+				cp := *svc
+				net.Services[id] = &cp
+			}
+		}
+		for id, days := range n.ServiceDays {
+			net.ServiceDays[id] = append(net.ServiceDays[id], days...)
+		}
+		for id, exs := range n.ServiceExceptions {
+			net.ServiceExceptions[id] = append(net.ServiceExceptions[id], exs...)
+		}
+		for id, c := range n.Carriers {
+			if _, exists := net.Carriers[id]; !exists {
+				cp := *c
+				net.Carriers[id] = &cp
+			}
+		}
+		for id, ps := range n.ProviderStops {
+			if _, exists := net.ProviderStops[id]; !exists {
+				cp := *ps
+				net.ProviderStops[id] = &cp
+			}
+		}
 	}
+	sort.Slice(net.Connections, func(i, j int) bool { return net.Connections[i].Departure.Before(net.Connections[j].Departure) })
+	net.BuildIndexes()
 	return net, nil
 }
 

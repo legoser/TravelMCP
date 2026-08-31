@@ -11,6 +11,8 @@ type HealthStatus struct {
 	LastImportTime time.Time `json:"last_import_time,omitempty"`
 	Records        int       `json:"records"`
 	LastError      string    `json:"last_error,omitempty"`
+	Issues         int       `json:"issues"`
+	ExcludedStops  int       `json:"excluded_stops"`
 }
 
 type Provider interface {

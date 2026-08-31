@@ -3,6 +3,10 @@ bin/
 *.test
 *.out
 configs/config.local.yaml
+data/
+*.db
+*.sqlite
+travelmcp.db
 .idea/
 .vscode/data/
 **/*.pyc

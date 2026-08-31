@@ -53,8 +53,12 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 	if fromPlace != nil {
 		fromStop, foundFrom = findStopByPlace(net.Stops, fromPlace.Name, from, maxWalk, originStops)
 	}
+	idx := geo.NewSpatialIndex(net.Stops)
 	if !foundFrom {
-		fromStops := geo.NearestStops(net.Stops, from, maxWalk, 0)
+		fromStops := idx.Nearest(from, maxWalk, 0)
+		if len(fromStops) == 0 {
+			fromStops = geo.NearestStops(net.Stops, from, maxWalk, 0)
+		}
 		if len(fromStops) == 0 {
 			return nil, fmt.Errorf("planner: нет остановок, достижимых пешком (лимит %d мин) от точки отправления", maxWalk)
 		}
@@ -71,7 +75,10 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 		toStop, foundTo = findStopByPlace(net.Stops, toPlace.Name, to, maxWalk, nil)
 	}
 	if !foundTo {
-		toStops := geo.NearestStops(net.Stops, to, maxWalk, 1)
+		toStops := idx.Nearest(to, maxWalk, 1)
+		if len(toStops) == 0 {
+			toStops = geo.NearestStops(net.Stops, to, maxWalk, 1)
+		}
 		if len(toStops) == 0 {
 			return nil, fmt.Errorf("planner: нет остановок, достижимых пешком (лимит %d мин) от точки назначения", maxWalk)
 		}
@@ -124,19 +131,6 @@ func legPoint(stop *model.Stop) model.LegPoint {
 	return model.LegPoint{StopID: stop.ID, Name: stop.Name, Lat: stop.Lat, Lon: stop.Lon}
 }
 
-// isAutoStationStop определяет, является ли остановка автостанцией/автовокзалом
-// (терминалом отправления междугородних рейсов), в отличие от вокзала ЖД или
-// обычной «городской» остановки.
-func isAutoStationStop(name string) bool {
-	for _, t := range strings.Fields(strings.ToLower(name)) {
-		if t == "ав" || t == "авт" || t == "а/в" ||
-			strings.Contains(t, "автовокзал") || strings.Contains(t, "автостанция") {
-			return true
-		}
-	}
-	return false
-}
-
 // findStopByPlace ищет стоп, связанный с названием места.
 // Сначала ищет по точному/частичному совпадению имени, затем по близости координат.
 // Среди подходящих остановок предпочтение отдаётся автовокзалу (терминалу
@@ -155,7 +149,7 @@ func findStopByPlace(stops map[string]*model.Stop, placeName string, coords mode
 			continue
 		}
 		d := geo.Haversine(coords, s.Coordinates())
-		if isAutoStationStop(s.Name) && d < avDist {
+		if s.IsHub() && d < avDist {
 			avDist = d
 			nameAV = s
 		}
@@ -185,8 +179,8 @@ func findStopByPlace(stops map[string]*model.Stop, placeName string, coords mode
 		if nameOrigin != nil {
 			return nameOrigin, true
 		}
-		if !isAutoStationStop(nameMatch.Name) {
-			if av := nearestWith(func(s *model.Stop) bool { return isAutoStationStop(s.Name) }); av != nil {
+		if !nameMatch.IsHub() {
+			if av := nearestWith(func(s *model.Stop) bool { return s.IsHub() }); av != nil {
 				return av, true
 			}
 		}
@@ -202,7 +196,7 @@ func findStopByPlace(stops map[string]*model.Stop, placeName string, coords mode
 	// затем терминал отправления
 	best := geo.NearestStops(stops, coords, maxWalkMinutes, 0)
 	if len(best) > 0 {
-		if av := nearestWith(func(s *model.Stop) bool { return isAutoStationStop(s.Name) }); av != nil {
+		if av := nearestWith(func(s *model.Stop) bool { return s.IsHub() }); av != nil {
 			return av, true
 		}
 		if origin != nil {
@@ -239,18 +233,25 @@ func (p *Planner) csa(net *model.Network, fromStop, toStop string, depart time.T
 		allowed[m] = true
 	}
 
-	conns := make([]model.Connection, len(net.Connections))
-	copy(conns, net.Connections)
-	sort.Slice(conns, func(i, j int) bool {
-		if conns[i].Departure.Equal(conns[j].Departure) {
-			return conns[i].Arrival.Before(conns[j].Arrival)
-		}
-		return conns[i].Departure.Before(conns[j].Departure)
-	})
+	conns := net.Connections
+	if len(conns) == 0 || conns[0].Departure.After(conns[len(conns)-1].Departure) {
+		tmp := make([]model.Connection, len(net.Connections))
+		copy(tmp, net.Connections)
+		sort.Slice(tmp, func(i, j int) bool {
+			if tmp[i].Departure.Equal(tmp[j].Departure) {
+				return tmp[i].Arrival.Before(tmp[j].Arrival)
+			}
+			return tmp[i].Departure.Before(tmp[j].Departure)
+		})
+		conns = tmp
+	}
 
-	transfersFrom := map[string][]model.Transfer{}
-	for _, tr := range net.Transfers {
-		transfersFrom[tr.FromStopID] = append(transfersFrom[tr.FromStopID], tr)
+	transfersFrom := net.TransfersByStop
+	if len(transfersFrom) == 0 && len(net.Transfers) > 0 {
+		transfersFrom = map[string][]model.Transfer{}
+		for _, tr := range net.Transfers {
+			transfersFrom[tr.FromStopID] = append(transfersFrom[tr.FromStopID], tr)
+		}
 	}
 
 	arr := map[string]time.Time{fromStop: depart}

@@ -1,0 +1,17 @@
+http:
+  addr: ":8080"
+
+database:
+  dsn: "postgres://postgres:postgres@localhost:5432/travelmcp?sslmode=disable"
+
+providers:
+  enabled: ["intercity"]
+  intercity:
+    reestr_path: "data/reestr/regions.json"
+
+auth:
+  admin_token: "${ADMIN_TOKEN}"
+
+yandex:
+  rasp_key: "${YANDEX_RASP_KEY}"
+  geocode_key: "${YANDEX_GEOCODE_KEY}"

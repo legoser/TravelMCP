@@ -1,0 +1,114 @@
+package store
+
+type StationRow struct {
+	ID              int64
+	Name            string
+	Lat, Lon        float64
+	GeoCell         int64
+	RegionCode      string
+	Timezone        string
+	QualityFlags    int
+	PrimaryProvider string
+}
+
+type StopRow struct {
+	ID            int64
+	StationID     int64
+	ProviderID    string
+	ExternalCode  string
+	StopType      string
+	TransportType string
+	Name          string
+	RawName       string
+}
+
+type StationCodeRow struct {
+	StationID  int64
+	ProviderID string
+	CodeType   string
+	Code       string
+	NameForm   string
+	Address    string
+}
+
+type CarrierRow struct {
+	ID         int64
+	ProviderID string
+	Name       string
+	Code       string
+	INN        string
+	Address    string
+	IATA       string
+	ICAO       string
+	Sirena     string
+}
+
+type RouteRow struct {
+	ID           int64
+	ProviderID   string
+	CarrierID    int64
+	ExternalCode string
+	ShortName    string
+	LongName     string
+	Mode         string
+	ExternalUID  string
+	Ord          int
+}
+
+type TripRow struct {
+	ID            int64
+	RouteID       int64
+	ProviderID    string
+	Direction     string
+	ServiceDays   string
+	FrequencyFlag int
+	Period        string
+	ServiceID     int
+}
+
+type FrequencyRow struct {
+	TripID     int64
+	StartMin   int
+	EndMin     int
+	HeadwayMin int
+	Count      int
+	ExactTimes int
+}
+
+type StopTimeRow struct {
+	TripID      int64
+	StopID      int64
+	Seq         int
+	Arrival     int
+	Departure   int
+	PickupType  int
+	DropOffType int
+	Dwell       int
+}
+
+type TransferRow struct {
+	FromStopID      int64
+	ToStopID        int64
+	Minutes         int
+	MinTransferTime int
+	DistanceM       int
+	WithinStation   int
+}
+
+type QualityRow struct {
+	ProviderID string
+	Entity     string
+	EntityID   string
+	Level      string
+	Msg        string
+	At         int64
+}
+
+type FareRow struct {
+	ProviderID string
+	FromZone   string
+	ToZone     string
+	Amount     float64
+	Currency   string
+	Basis      string
+}

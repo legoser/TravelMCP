@@ -13,6 +13,7 @@ import (
 	"travelmcp/internal/config"
 	"travelmcp/internal/providers"
 	"travelmcp/internal/server"
+	"travelmcp/internal/store"
 	"travelmcp/internal/telemetry"
 )
 
@@ -32,9 +33,34 @@ func main() {
 	metrics := telemetry.New()
 	registry := providers.NewRegistryWith(cfg.Providers.Enabled, cfg.Providers.Intercity.ReestrPath)
 
+	var st store.Store
+	if cfg.Database.DSN != "" {
+		var err error
+		st, err = store.New(context.Background(), cfg.Database.DSN)
+		if err != nil {
+			logger.Error("store init failed", "error", err)
+			os.Exit(1)
+		}
+		if st != nil {
+			if err := st.Migrate(context.Background()); err != nil {
+				logger.Error("store migrate failed", "error", err)
+				os.Exit(1)
+			}
+			for _, id := range cfg.Providers.Enabled {
+				if id == providers.IntercityID {
+					if err := store.ImportIntercity(context.Background(), st, cfg.Providers.Intercity.ReestrPath); err != nil {
+						logger.Warn("intercity import failed", "error", err)
+					} else {
+						logger.Info("intercity imported", "path", cfg.Providers.Intercity.ReestrPath)
+					}
+				}
+			}
+		}
+	}
+
 	srv := &http.Server{
 		Addr:              cfg.HTTP.Addr,
-		Handler:           server.New(cfg, logger, metrics, registry),
+		Handler:           server.NewWithStore(cfg, logger, metrics, registry, st),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

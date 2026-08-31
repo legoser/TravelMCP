@@ -1,0 +1,13 @@
+http:
+  addr: ":8080"
+
+database:
+  dsn: "memory"
+
+providers:
+  enabled: ["synth"]
+  intercity:
+    reestr_path: "testdata/reestr/mini.json"
+
+auth:
+  admin_token: "test-secret"
