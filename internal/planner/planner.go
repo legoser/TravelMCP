@@ -43,19 +43,32 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 	var fromStop, toStop *model.Stop
 	var foundFrom, foundTo bool
 
+	originStops := map[string]bool{}
+	for _, trip := range net.Trips {
+		if len(trip.StopTimes) > 0 {
+			originStops[trip.StopTimes[0].StopID] = true
+		}
+	}
+
 	if fromPlace != nil {
-		fromStop, foundFrom = findStopByPlace(net.Stops, fromPlace.Name, from, maxWalk)
+		fromStop, foundFrom = findStopByPlace(net.Stops, fromPlace.Name, from, maxWalk, originStops)
 	}
 	if !foundFrom {
-		fromStops := geo.NearestStops(net.Stops, from, maxWalk, 1)
+		fromStops := geo.NearestStops(net.Stops, from, maxWalk, 0)
 		if len(fromStops) == 0 {
 			return nil, fmt.Errorf("planner: нет остановок, достижимых пешком (лимит %d мин) от точки отправления", maxWalk)
 		}
 		fromStop = fromStops[0]
+		for _, s := range fromStops {
+			if originStops[s.ID] {
+				fromStop = s
+				break
+			}
+		}
 	}
 
 	if toPlace != nil {
-		toStop, foundTo = findStopByPlace(net.Stops, toPlace.Name, to, maxWalk)
+		toStop, foundTo = findStopByPlace(net.Stops, toPlace.Name, to, maxWalk, nil)
 	}
 	if !foundTo {
 		toStops := geo.NearestStops(net.Stops, to, maxWalk, 1)
@@ -111,29 +124,94 @@ func legPoint(stop *model.Stop) model.LegPoint {
 	return model.LegPoint{StopID: stop.ID, Name: stop.Name, Lat: stop.Lat, Lon: stop.Lon}
 }
 
-// findStopByPlace ищет стоп, связанный с названием места.
-// Сначала ищет по точному/частичному совпадению имени, затем по близости координат.
-func findStopByPlace(stops map[string]*model.Stop, placeName string, coords model.Coords, maxWalkMinutes int) (*model.Stop, bool) {
-	// 1. Ищем стоп с совпадающим или содержащим название
-	var nameMatch *model.Stop
-	var nameDist float64 = 1e9 // большой порог
-	for _, s := range stops {
-		if strings.Contains(strings.ToLower(s.Name), strings.ToLower(placeName)) ||
-			strings.Contains(strings.ToLower(placeName), strings.ToLower(s.Name)) {
-			d := geo.Haversine(coords, s.Coordinates())
-			if d < nameDist {
-				nameDist = d
-				nameMatch = s
-			}
+// isAutoStationStop определяет, является ли остановка автостанцией/автовокзалом
+// (терминалом отправления междугородних рейсов), в отличие от вокзала ЖД или
+// обычной «городской» остановки.
+func isAutoStationStop(name string) bool {
+	for _, t := range strings.Fields(strings.ToLower(name)) {
+		if t == "ав" || t == "авт" || t == "а/в" ||
+			strings.Contains(t, "автовокзал") || strings.Contains(t, "автостанция") {
+			return true
 		}
 	}
+	return false
+}
+
+// findStopByPlace ищет стоп, связанный с названием места.
+// Сначала ищет по точному/частичному совпадению имени, затем по близости координат.
+// Среди подходящих остановок предпочтение отдаётся автовокзалу (терминалу
+// отправления), затем терминалу отправления рейса (origin), и лишь затем —
+// «городской»/промежуточной остановке (например, вокзалу ЖД).
+func findStopByPlace(stops map[string]*model.Stop, placeName string, coords model.Coords, maxWalkMinutes int, origin map[string]bool) (*model.Stop, bool) {
+	lowerPlace := strings.ToLower(placeName)
+
+	// 1. Ищем стопы с совпадающим или содержащим название
+	var nameMatch, nameAV, nameOrigin *model.Stop
+	nameDist := 1e9
+	avDist, originDist := 1e9, 1e9
+	for _, s := range stops {
+		if !(strings.Contains(strings.ToLower(s.Name), lowerPlace) ||
+			strings.Contains(lowerPlace, strings.ToLower(s.Name))) {
+			continue
+		}
+		d := geo.Haversine(coords, s.Coordinates())
+		if isAutoStationStop(s.Name) && d < avDist {
+			avDist = d
+			nameAV = s
+		}
+		if origin != nil && origin[s.ID] && d < originDist {
+			originDist = d
+			nameOrigin = s
+		}
+		if d < nameDist {
+			nameDist = d
+			nameMatch = s
+		}
+	}
+
+	nearestWith := func(pred func(*model.Stop) bool) *model.Stop {
+		for _, s := range geo.NearestStops(stops, coords, maxWalkMinutes, 0) {
+			if pred(s) {
+				return s
+			}
+		}
+		return nil
+	}
+
 	if nameMatch != nil {
+		if nameAV != nil {
+			return nameAV, true
+		}
+		if nameOrigin != nil {
+			return nameOrigin, true
+		}
+		if !isAutoStationStop(nameMatch.Name) {
+			if av := nearestWith(func(s *model.Stop) bool { return isAutoStationStop(s.Name) }); av != nil {
+				return av, true
+			}
+		}
+		if origin != nil && !origin[nameMatch.ID] {
+			if o := nearestWith(func(s *model.Stop) bool { return origin[s.ID] }); o != nil {
+				return o, true
+			}
+		}
 		return nameMatch, true
 	}
 
-	// 2. Ищем ближайший стоп в пределах доступности
-	best := geo.NearestStops(stops, coords, maxWalkMinutes, 1)
+	// 2. Ищем ближайший стоп в пределах доступности, предпочитая автовокзал,
+	// затем терминал отправления
+	best := geo.NearestStops(stops, coords, maxWalkMinutes, 0)
 	if len(best) > 0 {
+		if av := nearestWith(func(s *model.Stop) bool { return isAutoStationStop(s.Name) }); av != nil {
+			return av, true
+		}
+		if origin != nil {
+			for _, s := range best {
+				if origin[s.ID] {
+					return s, true
+				}
+			}
+		}
 		return best[0], true
 	}
 	return nil, false

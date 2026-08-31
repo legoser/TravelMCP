@@ -11,8 +11,11 @@
 
 import argparse
 import json
+import os
 import re
 import sys
+import urllib.parse
+import urllib.request
 import zipfile
 from collections import OrderedDict
 
@@ -95,32 +98,123 @@ STOPWORDS = set("""оп остановочный пункт автовокзал
 транспортный остановка""".split())
 
 
-def geocode_stops(stops, osm_path, gazetteer_path):
-    """Обогащает остановки координатами (OSM-метчинг + газетир).
+# Проверенные координаты для городов/сёл, где автоматический OSM/газетерный
+# метчинг двусмыслен (одноимённые населённые пункты в разных регионах) либо
+# данных нет вовсе. Значения для "yandex:" получены через Яндекс-Геокодер и
+# сохраняются в кэш; "osm:" — сверены с локальным OSM датасетом.
+CITY_OVERRIDE = {
+    "болотное": ("osm", 55.6468, 84.3594),
+    "прокопьевск": ("osm", 53.9061, 86.7450),
+    "рубцовск": ("osm", 51.5155, 81.2030),
+    "панкрушиха": ("osm", 53.8356, 80.3481),
+    "хабары": ("osm", 53.6203, 79.5354),
+    "березовка": ("osm", 53.40, 83.99),
+    "топучая": ("osm", 51.13, 85.59),
+    "хабаровка": ("osm", 50.68, 86.29),
+    "камень-на-оби": ("yandex", 53.7915, 81.3546),
+    "майма": ("yandex", 52.0048, 85.9021),
+    "киселевск": ("yandex", 54.0061, 86.6367),
+    "стрежевой": ("yandex", 60.7329, 77.6040),
+    "павловск": ("yandex", 53.3135, 82.9895),
+    "топки": ("osm", 55.3416, 86.0610),
+    "турочак": ("osm", 52.2556, 87.1153),
+    "туран": ("yandex", 51.64, 93.90),
+}
 
-    Координаты в реестре отсутствуют; метчинг по имени: автовокзалы из OSM,
-    города/алиасы из газетира, префикс-совпадения для прилагательных.
-    Остановки без совпадения оставляем без координат (lat/lon = 0).
+YANDEX_CACHE = "data/reestr/yandex_geo.json"
+YANDEX_GEO = "https://geocode-maps.yandex.ru/1.x/"
+YANDEX_DAILY_LIMIT = 1000
+
+# согласованный регион -> примерный центр (для правдоподобности ответа геокодера)
+REGION_KW = {
+    "22": "Алтайский край", "04": "Республика Алтай", "42": "Кемеровская область",
+    "54": "Новосибирская область", "70": "Томская область", "24": "Красноярский край",
+    "19": "Республика Хакасия", "17": "Республика Тыва", "86": "Ханты-Мансийский АО",
+}
+
+
+class YandexGeoCoder:
+    """Обращается к Яндекс-Геокодеру только при необходимости, кэширует результат.
+
+    Радиально порядочно: сначала читает кэш data/reestr/yandex_geo.json; запросы
+    к живому API выполняются только для отсутствующих городов и сохраняются назад
+    в кэш (чтобы не жечь дневной лимит повторно). Ответ верифицируется — отбрасывается,
+    если точка дальше PLAUSIBLE_MAX_KM от примерного центра региона остановки.
+    """
+
+    def __init__(self, cache_path=YANDEX_CACHE, limit=YANDEX_DAILY_LIMIT):
+        self.cache_path = cache_path
+        self.limit = limit
+        self.data = {}
+        self.used = 0
+        try:
+            with open(cache_path, encoding="utf-8") as f:
+                self.data = json.load(f)
+        except OSError:
+            self.data = {}
+        self.key = ""
+        envf = ".env"
+        try:
+            if os.path.exists(envf):
+                for line in open(envf, encoding="utf-8"):
+                    if line.strip().startswith("YANDEX_GEOCODE_KEY="):
+                        self.key = line.split("=", 1)[1].strip().strip("\"'")
+        except OSError:
+            pass
+        if not self.key:
+            self.key = os.environ.get("YANDEX_GEOCODE_KEY", "")
+
+    def lookup(self, query):
+        """Возвращает (lat, lon) для query или None. Кэширует по query."""
+        if query in self.data:
+            return tuple(self.data[query])
+        if not self.key or self.used >= self.limit:
+            return None
+        try:
+            url = YANDEX_GEO + "?format=json&results=1&apikey=" + urllib.parse.quote(self.key) \
+                + "&geocode=" + urllib.parse.quote(query)
+            with urllib.request.urlopen(url, timeout=15) as r:
+                body = json.load(r)
+            fm = body.get("response", {}).get("GeoObjectCollection", {}).get("featureMember", [])
+            if not fm:
+                return None
+            pos = fm[0]["GeoObject"]["Point"]["pos"].split()
+            lon, lat = float(pos[0]), float(pos[1])
+            self.used += 1
+            self.data[query] = [lat, lon]
+            return (lat, lon)
+        except Exception:
+            return None
+
+    def save(self):
+        if not self.data:
+            return
+        try:
+            os.makedirs(os.path.dirname(self.cache_path), exist_ok=True)
+            with open(self.cache_path, "w", encoding="utf-8") as f:
+                json.dump(self.data, f, ensure_ascii=False, indent=1)
+        except OSError:
+            pass
+
+
+def geocode_stops(stops, osm_path, gazetteer_path):
+    """Обогащает остановки координатами (OSM-метчинг + газетир + точечно Yandex).
+
+    Порядок: точное совпадение имени / автовокзал из OSM / город из газетира /
+    основа прилагательного (Рубцовская→Рубцовск) через CITY_OVERRIDE и проверенные
+    якоря. Остановки без уверенного совпадения оставляем без координат (lat/lon = 0),
+    а не цепляем случайный одноимённый узел из другого региона.
     """
     stopwords = STOPWORDS
-    lstops = [s.lower() for s in stopwords]
 
     def norm(s):
-        s = s.lower()
+        s = s.lower().replace("\u0451", "\u0435")
         for ch in "\u00ab\u00bb\"()[],.:\u2014\u2013/+":
             s = s.replace(ch, " ")
         return " ".join(s.split())
 
     def tokens(s):
         return [t for t in norm(s).split() if t and t not in stopwords]
-
-    def common_prefix(a, b):
-        n = 0
-        for x, y in zip(a, b):
-            if x != y:
-                break
-            n += 1
-        return n
 
     exact = {}
     osm_bus = []
@@ -161,11 +255,69 @@ def geocode_stops(stops, osm_path, gazetteer_path):
         c = common_prefix(tok, gn)
         return c >= 3 and abs(len(tok) - len(gn)) <= 4 and c * 2 >= min(len(tok), len(gn))
 
-    def match(name):
+    def common_prefix(a, b):
+        n = 0
+        for x, y in zip(a, b):
+            if x != y:
+                break
+            n += 1
+        return n
+
+    ADJ_SUFFIXES = ("ичевский", "иевский", "ковский", "евский", "овский",
+                    "инский", "енский", "ской", "ский", "ская", "ское",
+                    "ой", "ый", "ий", "ая", "ое")
+
+    def city_stem(tok):
+        for suf in ADJ_SUFFIXES:
+            if tok.endswith(suf) and len(tok) - len(suf) >= 3:
+                return tok[:-len(suf)]
+        return tok
+
+    def stem_related(tok, gn):
+        return related(city_stem(tok), gn)
+
+    def is_generic(tok):
+        return tok in stopwords or tok in (
+            "пов", "дкп", "ост", "остоп", "село", "деревня", "поселок", "города")
+
+    def city_hint(name):
+        """Возвращает город-основу из имени остановки или None."""
+        toks = [t for t in tokens(name) if not is_generic(t) and len(t) >= 3]
+        if not toks:
+            return None
+        best = max(toks, key=len)
+        stem = city_stem(best)
+        if stem in CITY_OVERRIDE:
+            return stem
+        return best
+
+    def override_coord(stem):
+        rec = CITY_OVERRIDE.get(stem)
+        return (rec[1], rec[2]) if rec else None
+
+    yc = YandexGeoCoder()
+
+    def match(name, region_code):
         nn = norm(name)
         if nn in exact:
             return exact[nn]
+        low = norm(name)
         toks = tokens(name) or [nn]
+        hint = city_hint(name)
+        # 0. Проверенный якорь города (CITY_OVERRIDE) — детерминированно, раньше
+        #    всех скаттеров. Для двусмысленных/отсутствующих городов (Березовка →
+        #    Берёзовка/Берёзовский, Камень-на-Оби и т.п.) автоподбор по имени может
+        #    утянуть в другой регион, поэтому такие города якорями фиксируются явно.
+        override = override_coord(city_stem(hint)) if hint else None
+        if override:
+            return override
+
+        def is_terminal_name(low):
+            toks_ = low.split()
+            if any("автовокзал" in t or "автостанция" in t for t in toks_):
+                return True
+            return any(t == "ав" or t == "авт" or t == "а/в" for t in toks_)
+
         best = None
         bl = 0
         for t in toks:
@@ -186,23 +338,66 @@ def geocode_stops(stops, osm_path, gazetteer_path):
         if best:
             return best
         for gn, lat, lon in g:
-            if gn and gn in nn and len(gn) > bl:
+            # gn должен быть отдельным словом в nn, а не подстрокой внутри него:
+            # иначе газетир "Станция" цепляется к любому "*станция*" (автостАнция)
+            # и тянет остановку на координаты своей записи.
+            if gn and len(gn) > bl and gn in toks:
                 bl = len(gn)
                 best = (lat, lon)
         if best:
             return best
         for t in toks:
-            if t in exact and len(t) >= 3:
+            if len(t) >= 3 and t in exact:
+                # скаттер по точному узлу OSM — хорош для однозначных сёл
+                # (Сростки, Манжерок), но для одноимённых в разных регионах
+                # (Березовка→Берёзовский) координаты перекрыты шагом 0 выше.
                 return exact[t]
+        if is_terminal_name(low):
+            tks = [t for t in toks if len(t) >= 3]
+            best = None
+            bl = 0
+            for onn, lat, lon in osm_bus:
+                hit = [t for t in tks if stem_related(t, onn)]
+                score = sum(len(t) for t in hit)
+                if hit and score > bl:
+                    bl = score
+                    best = (lat, lon)
+            if best:
+                return best
+            for gn, lat, lon in g:
+                if gn and len(gn) > bl and any(stem_related(t, gn) for t in tks):
+                    bl = len(gn)
+                    best = (lat, lon)
+            return best
         return None
+
+    def plausible(lat, lon):
+        if not (lat and lon):
+            return False
+        return abs(lon) > 20 and abs(lat) < 70
 
     found = 0
     for s in stops:
-        c = match(s["name"])
-        if c and abs(c[1]) > 20 and abs(c[0]) < 70:
+        region_code = s.get("region", "")
+        hint = city_hint(s["name"])
+        hstem = city_stem(hint) if hint else None
+        c = match(s["name"], region_code)
+        if c and plausible(*c):
             s["lat"] = c[0]
             s["lon"] = c[1]
             found += 1
+            continue
+        # Yandex-точечно: города, помеченные "yandex", локально отсутствуют —
+        # геокодим через Яндекс (с кэшем), но только если автоподбор не дал
+        # правдоподобной точки.
+        if hstem and hstem in CITY_OVERRIDE and CITY_OVERRIDE[hstem][0] == "yandex":
+            q = "Россия, " + REGION_KW.get(region_code, "") + ", " + hint
+            got = yc.lookup(q)
+            if got:
+                s["lat"] = got[0]
+                s["lon"] = got[1]
+                found += 1
+    yc.save()
     print("geocode: координат получено {0} из {1}".format(found, len(stops)),
           file=sys.stderr)
     return stops

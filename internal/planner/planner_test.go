@@ -1,6 +1,7 @@
 package planner
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -150,5 +151,61 @@ func TestPlanNoRoute(t *testing.T) {
 	)
 	if err == nil {
 		t.Fatal("expected error: c-cluster is not connected to the A/B cluster")
+	}
+}
+
+func TestFindStopByPlacePrefersAutoStation(t *testing.T) {
+	day := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC)
+	net, err := providers.NewIntercity(filepath.Join("..", "..", "testdata", "reestr", "mini.json"), day).NetworkForDay(day)
+	if err != nil {
+		t.Fatalf("network: %v", err)
+	}
+
+	origin := map[string]bool{}
+	for _, trip := range net.Trips {
+		if len(trip.StopTimes) > 0 {
+			origin[trip.StopTimes[0].StopID] = true
+		}
+	}
+
+	// В mini.json автовокзал и вокзал ЖД Новосибирска лежат в одной точке
+	// (55.0410573, 83.0273816): op:54:54099 «АВ «Новосибирский автовокзал-Главный»
+	// и op:54:54098 «ОП «Вокзал «Новосибирск-Главный». По месту «Новосибирск»
+	// должен выбираться автовокзал, а не вокзал ЖД.
+	nsk := model.Coords{Lat: 55.0410573, Lon: 83.0273816}
+	st, ok := findStopByPlace(net.Stops, "Новосибирск", nsk, 30, origin)
+	if !ok {
+		t.Fatal("findStopByPlace failed for Новосибирск")
+	}
+	if st.ID != "op:54:54099" {
+		t.Fatalf("selected stop = %s (%q), want автовокзал op:54:54099", st.ID, st.Name)
+	}
+}
+
+func TestPlaceJourneyStartsAtAutoStation(t *testing.T) {
+	day := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC)
+	p := New(nil)
+	net, err := providers.NewIntercity(filepath.Join("..", "..", "testdata", "reestr", "mini.json"), day).NetworkForDay(day)
+	if err != nil {
+		t.Fatalf("network: %v", err)
+	}
+
+	journey, err := p.PlanWithPlaces(net,
+		model.Coords{Lat: 55.0410573, Lon: 83.0273816},
+		model.Coords{Lat: 56.4613482, Lon: 84.9914307},
+		model.SearchParams{Departure: day.Add(8 * time.Hour), MaxTransfers: -1},
+		&PlaceHint{Name: "Новосибирск"},
+		&PlaceHint{Name: "Томск"},
+	)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	// Стартовая точка маршрута (после пешего подхода) должна быть автовокзалом
+	// Новосибирска, а не вокзалом ЖД.
+	if len(journey.Legs) == 0 {
+		t.Fatal("no legs")
+	}
+	if first := journey.Legs[0]; first.To.StopID != "op:54:54099" {
+		t.Fatalf("first leg To = %s (%q), want автовокзал op:54:54099", first.To.StopID, first.To.Name)
 	}
 }

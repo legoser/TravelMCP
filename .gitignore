@@ -6,3 +6,6 @@ configs/config.local.yaml
 .idea/
 .vscode/data/
 **/*.pyc
+.kilo
+.opencode
+.qwen
