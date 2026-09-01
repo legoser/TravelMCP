@@ -82,6 +82,19 @@ func (t *txStore) MarkImported(ctx context.Context, providerID string, at time.T
 	_, err := t.tx.ExecContext(ctx, `INSERT INTO imports(provider_id, at, records, status) VALUES(?,?,?,?) ON CONFLICT(provider_id) DO UPDATE SET at=excluded.at, records=excluded.records`, providerID, at.Unix(), records, "ok")
 	return err
 }
+func (t *txStore) MarkImportedVersion(ctx context.Context, providerID, snapshot, checksum string, at time.Time, records, issues int) error {
+	_, err := t.tx.ExecContext(ctx, `INSERT INTO imports(provider_id, at, records, status, snapshot, checksum, issues) VALUES(?,?,?,?,?,?,?) ON CONFLICT(provider_id) DO UPDATE SET at=excluded.at, records=excluded.records, snapshot=excluded.snapshot, checksum=excluded.checksum, issues=excluded.issues`, providerID, at.Unix(), records, "ok", snapshot, checksum, issues)
+	return err
+}
+func (t *txStore) GetImport(ctx context.Context, providerID string) (ImportRow, bool) {
+	var r ImportRow
+	err := t.tx.QueryRowContext(ctx, `SELECT provider_id, at, records, status, snapshot, checksum, issues FROM imports WHERE provider_id=?`, providerID).Scan(&r.ProviderID, &r.At, &r.Records, &r.Status, &r.Snapshot, &r.Checksum, &r.Issues)
+	if err != nil {
+		// fallback to parent
+		return t.parent.GetImport(ctx, providerID)
+	}
+	return r, true
+}
 func (t *txStore) SaveQualityIssue(ctx context.Context, q QualityRow) error { return nil }
 func (t *txStore) UpsertFare(ctx context.Context, f FareRow) error { return nil }
 func (t *txStore) UpsertStation(ctx context.Context, r StationRow) (int64, error) {
@@ -220,7 +233,7 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 			provider_id TEXT, entity TEXT, entity_id TEXT, level TEXT, msg TEXT, at INTEGER
 		)`,
 		`CREATE TABLE IF NOT EXISTS imports (
-			provider_id TEXT PRIMARY KEY, at INTEGER, records INTEGER, status TEXT
+			provider_id TEXT PRIMARY KEY, at INTEGER, records INTEGER, status TEXT, snapshot TEXT, checksum TEXT, issues INTEGER
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_stops_station ON stops(station_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_routes_external ON routes(external_code)`,
@@ -238,6 +251,18 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 func (s *SQLiteStore) MarkImported(ctx context.Context, providerID string, at time.Time, records int) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO imports(provider_id, at, records, status) VALUES(?,?,?,?) ON CONFLICT(provider_id) DO UPDATE SET at=excluded.at, records=excluded.records`, providerID, at.Unix(), records, "ok")
 	return err
+}
+func (s *SQLiteStore) MarkImportedVersion(ctx context.Context, providerID, snapshot, checksum string, at time.Time, records, issues int) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO imports(provider_id, at, records, status, snapshot, checksum, issues) VALUES(?,?,?,?,?,?,?) ON CONFLICT(provider_id) DO UPDATE SET at=excluded.at, records=excluded.records, snapshot=excluded.snapshot, checksum=excluded.checksum, issues=excluded.issues`, providerID, at.Unix(), records, "ok", snapshot, checksum, issues)
+	return err
+}
+func (s *SQLiteStore) GetImport(ctx context.Context, providerID string) (ImportRow, bool) {
+	var r ImportRow
+	err := s.db.QueryRowContext(ctx, `SELECT provider_id, at, records, status, snapshot, checksum, issues FROM imports WHERE provider_id=?`, providerID).Scan(&r.ProviderID, &r.At, &r.Records, &r.Status, &r.Snapshot, &r.Checksum, &r.Issues)
+	if err != nil {
+		return ImportRow{}, false
+	}
+	return r, true
 }
 func (s *SQLiteStore) SaveQualityIssue(ctx context.Context, q QualityRow) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO quality_issues(provider_id, entity, entity_id, level, msg, at) VALUES(?,?,?,?,?,?)`, q.ProviderID, q.Entity, q.EntityID, q.Level, q.Msg, q.At)

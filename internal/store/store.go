@@ -23,6 +23,8 @@ type Store interface {
 	LoadNetwork(ctx context.Context, providers []string, day time.Time) (*model.Network, error)
 
 	MarkImported(ctx context.Context, providerID string, at time.Time, records int) error
+	MarkImportedVersion(ctx context.Context, providerID, snapshot, checksum string, at time.Time, records, issues int) error
+	GetImport(ctx context.Context, providerID string) (ImportRow, bool)
 	Migrate(ctx context.Context) error
 	Close() error
 	WithTx(ctx context.Context, fn func(Store) error) error
@@ -79,6 +81,12 @@ func (p *pgStub) LoadNetwork(ctx context.Context, providers []string, day time.T
 }
 func (p *pgStub) MarkImported(ctx context.Context, providerID string, at time.Time, records int) error {
 	return nil
+}
+func (p *pgStub) MarkImportedVersion(ctx context.Context, providerID, snapshot, checksum string, at time.Time, records, issues int) error {
+	return nil
+}
+func (p *pgStub) GetImport(ctx context.Context, providerID string) (ImportRow, bool) {
+	return ImportRow{}, false
 }
 func (p *pgStub) Migrate(ctx context.Context) error { return nil }
 func (p *pgStub) Close() error                      { return nil }

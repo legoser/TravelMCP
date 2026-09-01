@@ -112,3 +112,13 @@ type FareRow struct {
 	Currency   string
 	Basis      string
 }
+
+type ImportRow struct {
+	ProviderID string
+	At         int64
+	Records    int
+	Status     string
+	Snapshot   string
+	Checksum   string
+	Issues     int
+}

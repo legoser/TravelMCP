@@ -58,6 +58,21 @@ func (m *MemoryStore) MarkImported(ctx context.Context, providerID string, at ti
 	m.mu.Unlock()
 	return nil
 }
+func (m *MemoryStore) MarkImportedVersion(ctx context.Context, providerID, snapshot, checksum string, at time.Time, records, issues int) error {
+	m.mu.Lock()
+	m.imports[providerID] = at
+	m.mu.Unlock()
+	return nil
+}
+func (m *MemoryStore) GetImport(ctx context.Context, providerID string) (ImportRow, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	at, ok := m.imports[providerID]
+	if !ok {
+		return ImportRow{}, false
+	}
+	return ImportRow{ProviderID: providerID, At: at.Unix()}, true
+}
 func (m *MemoryStore) SaveQualityIssue(ctx context.Context, q QualityRow) error {
 	m.mu.Lock()
 	m.quality = append(m.quality, q)

@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
-		"encoding/json"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -77,14 +79,23 @@ func ImportIntercity(ctx context.Context, s Store, path string, logger *slog.Log
 	if err := json.Unmarshal(raw, &ds); err != nil {
 		return err
 	}
-	logger.Info("dataset loaded", "routes", len(ds.Routes), "stops", len(ds.Stops), "schedules", len(ds.Schedules), "elapsed_ms", time.Since(t0).Milliseconds())
+	sum := sha256.Sum256(raw)
+	checksum := hex.EncodeToString(sum[:])
+	snapshot := ds.Snapshot
+	if snapshot == "" {
+		snapshot = time.Now().Format("2006-01-02")
+	}
+	if imp, ok := s.GetImport(ctx, "intercity"); ok && imp.Checksum == checksum {
+		logger.Info("import skipped - same checksum", "snapshot", snapshot, "checksum", checksum[:8])
+		return nil
+	}
+	logger.Info("dataset loaded", "routes", len(ds.Routes), "stops", len(ds.Stops), "schedules", len(ds.Schedules), "snapshot", snapshot, "checksum", checksum[:8], "elapsed_ms", time.Since(t0).Milliseconds())
 	if err := s.Migrate(ctx); err != nil {
 		return err
 	}
 	// Use transaction for batch insert - Store.WithTx hides sqlite details
 	var importErr error
 	importErr = s.WithTx(ctx, func(tx Store) error {
-		s = tx
 		logger.Info("station grouping started")
 	// Station grouping: stops with same coords within 0.4km -> same station
 	type stationKey struct{ id int64 }
@@ -114,7 +125,7 @@ func ImportIntercity(ctx context.Context, s Store, path string, logger *slog.Log
 		if found == 0 {
 			sr := StationRow{Name: st.Name, Lat: lat, Lon: lon, RegionCode: st.Region, PrimaryProvider: "intercity"}
 			if lat == 0 && lon == 0 {
-				if cached, ok := s.FindStation(ctx, st.Name, st.Region); ok {
+				if cached, ok := tx.FindStation(ctx, st.Name, st.Region); ok {
 					sr.Lat, sr.Lon = cached.Lat, cached.Lon
 					sr.QualityFlags = 0
 				} else {
@@ -127,7 +138,7 @@ func ImportIntercity(ctx context.Context, s Store, path string, logger *slog.Log
 					}
 				}
 			}
-			id, _ := s.UpsertStation(ctx, sr)
+			id, _ := tx.UpsertStation(ctx, sr)
 			// memory store allocs ID inside; need to capture actual ID
 			// For memory store, Upsert returns allocated ID; we need to store it
 			// Use returned id as station id
@@ -149,7 +160,7 @@ func ImportIntercity(ctx context.Context, s Store, path string, logger *slog.Log
 		if _, ok := carrierMap[key]; ok {
 			continue
 		}
-		id, _ := s.UpsertCarrier(ctx, CarrierRow{ProviderID: "intercity", Name: r.Carrier, Code: r.CarrierINN, INN: r.CarrierINN})
+		id, _ := tx.UpsertCarrier(ctx, CarrierRow{ProviderID: "intercity", Name: r.Carrier, Code: r.CarrierINN, INN: r.CarrierINN})
 		carrierMap[key] = id
 	}
 	logger.Info("carriers ready", "count", len(carrierMap), "elapsed_ms", time.Since(t0).Milliseconds())
@@ -159,9 +170,9 @@ func ImportIntercity(ctx context.Context, s Store, path string, logger *slog.Log
 	for _, st := range ds.Stops {
 		stationID := stopToStation[st.ID]
 		sr := StopRow{StationID: stationID, ProviderID: "intercity", ExternalCode: st.ID, StopType: string(model.InferStopType(st.Name)), Name: st.Name, RawName: st.Name}
-		id, _ := s.UpsertStop(ctx, sr)
+		id, _ := tx.UpsertStop(ctx, sr)
 		stopIDMap[st.ID] = id
-		_ = s.UpsertStationCode(ctx, StationCodeRow{StationID: stationID, ProviderID: "intercity", CodeType: "op_reg", Code: st.OpReg, NameForm: st.Name})
+		_ = tx.UpsertStationCode(ctx, StationCodeRow{StationID: stationID, ProviderID: "intercity", CodeType: "op_reg", Code: st.OpReg, NameForm: st.Name})
 	}
 	logger.Info("stops ready", "count", len(stopIDMap), "elapsed_ms", time.Since(t0).Milliseconds())
 
@@ -171,7 +182,7 @@ func ImportIntercity(ctx context.Context, s Store, path string, logger *slog.Log
 		carrierKey := r.Carrier + "|" + r.CarrierINN
 		cid := carrierMap[carrierKey]
 		rr := RouteRow{ProviderID: "intercity", CarrierID: cid, ExternalCode: r.Reg, ShortName: r.Reg, LongName: r.Name, Mode: string(model.ModeBus)}
-		id, _ := s.UpsertRoute(ctx, rr)
+		id, _ := tx.UpsertRoute(ctx, rr)
 		routeIDMap[r.Reg] = id
 	}
 	logger.Info("routes ready", "count", len(routeIDMap), "elapsed_ms", time.Since(t0).Milliseconds())
@@ -262,20 +273,17 @@ func ImportIntercity(ctx context.Context, s Store, path string, logger *slog.Log
 	sort.Slice(pending, func(i, j int) bool { return pending[i].row.RouteID < pending[j].row.RouteID })
 	logger.Info("trips prepared", "count", len(pending), "workers", numCPU, "elapsed_ms", time.Since(tripStart).Milliseconds())
 	for _, pt := range pending {
-		tid, _ := s.UpsertTrip(ctx, pt.row)
+		tid, _ := tx.UpsertTrip(ctx, pt.row)
 		for seq, tm := range pt.times {
 			sid, ok := stopIDMap[tm.stopID]
 			if !ok {
 				continue
 			}
-			_ = s.UpsertStopTime(ctx, StopTimeRow{TripID: tid, StopID: sid, Seq: seq, Arrival: tm.arrMin * 60, Departure: tm.depMin * 60})
+			_ = tx.UpsertStopTime(ctx, StopTimeRow{TripID: tid, StopID: sid, Seq: seq, Arrival: tm.arrMin * 60, Departure: tm.depMin * 60})
 		}
 	}
 	logger.Info("trips stored", "elapsed_ms", time.Since(tripStart).Milliseconds())
 
-	if ms, ok := s.(*MemoryStore); ok {
-		_ = ms
-		// add transfers between stations within 0.4km (already grouped, but keep as within_station transfers)
 		for i := 0; i < len(stationRows); i++ {
 			for j := i + 1; j < len(stationRows); j++ {
 				a := stationRows[i]
@@ -285,7 +293,6 @@ func ImportIntercity(ctx context.Context, s Store, path string, logger *slog.Log
 				}
 				d := geo.Haversine(model.Coords{Lat: a.Lat, Lon: a.Lon}, model.Coords{Lat: b.Lat, Lon: b.Lon})
 				if d < 0.4 {
-					// find any stop per station
 					var from, to int64
 					for sid, stID := range stopToStation {
 						if stID == a.ID {
@@ -300,21 +307,29 @@ func ImportIntercity(ctx context.Context, s Store, path string, logger *slog.Log
 						}
 					}
 					if from != 0 && to != 0 {
-						_ = s.UpsertTransfer(ctx, TransferRow{FromStopID: from, ToStopID: to, Minutes: geo.WalkTimeMinutes(d), WithinStation: 1})
-						_ = s.UpsertTransfer(ctx, TransferRow{FromStopID: to, ToStopID: from, Minutes: geo.WalkTimeMinutes(d), WithinStation: 1})
+						_ = tx.UpsertTransfer(ctx, TransferRow{FromStopID: from, ToStopID: to, Minutes: geo.WalkTimeMinutes(d), WithinStation: 1})
+						_ = tx.UpsertTransfer(ctx, TransferRow{FromStopID: to, ToStopID: from, Minutes: geo.WalkTimeMinutes(d), WithinStation: 1})
 					}
 				}
 			}
-		}
-	}
-
-		if err := s.MarkImported(ctx, "intercity", time.Now(), len(ds.Routes)); err != nil {
-			return err
 		}
 		return nil
 	})
 	if importErr != nil {
 		return importErr
+	}
+	// Quality analysis - post-commit
+	issues := 0
+	if net, err := s.LoadNetwork(ctx, []string{"intercity"}, time.Now()); err == nil {
+		vals := model.ValidateNetwork(net)
+		issues = len(vals)
+		for _, iss := range vals {
+			_ = s.SaveQualityIssue(ctx, QualityRow{ProviderID: iss.ProviderID, Entity: iss.Entity, EntityID: iss.Entity, Level: string(iss.Level), Msg: iss.Message, At: time.Now().Unix()})
+		}
+		logger.Info("quality analyzed", "issues", issues)
+	}
+	if err := s.MarkImportedVersion(ctx, "intercity", snapshot, checksum, time.Now(), len(ds.Routes), issues); err != nil {
+		return s.MarkImported(ctx, "intercity", time.Now(), len(ds.Routes))
 	}
 	return nil
 }
