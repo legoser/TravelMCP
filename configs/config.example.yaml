@@ -21,6 +21,9 @@ providers:
 auth:
   admin_token: "dev-secret"
 
+planner:
+  engine: "csa" # csa|raptor (RAPTOR frequency-based для межгорода)
+
 # Секреты — только через env (или .env, gitignored); в YAML не заполняются.
 yandex:
   rasp_key: ""

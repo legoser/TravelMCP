@@ -13,10 +13,18 @@ import (
 
 type Planner struct {
 	metrics *telemetry.Metrics
+	engine  string
 }
 
 func New(metrics *telemetry.Metrics) *Planner {
-	return &Planner{metrics: metrics}
+	return &Planner{metrics: metrics, engine: "csa"}
+}
+
+func NewWithEngine(metrics *telemetry.Metrics, engine string) *Planner {
+	if engine == "" {
+		engine = "csa"
+	}
+	return &Planner{metrics: metrics, engine: engine}
 }
 
 func (p *Planner) Plan(net *model.Network, from, to model.Coords, params model.SearchParams) (*model.Journey, error) {
@@ -88,6 +96,33 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 	accessMin := geo.WalkTimeMinutes(geo.Haversine(from, fromStop.Coordinates()))
 	egressMin := geo.WalkTimeMinutes(geo.Haversine(to, toStop.Coordinates()))
 
+	if params.Arrival != nil {
+		latestArrivalAtStop := params.Arrival.Add(-time.Duration(egressMin) * time.Minute)
+		transitLegs, departAtStop, err := p.planArrival(net, fromStop.ID, toStop.ID, *params.Arrival, latestArrivalAtStop, params)
+		if err != nil {
+			return nil, err
+		}
+		journey := &model.Journey{From: from, To: to}
+		journey.Legs = append(journey.Legs, model.Leg{
+			Mode: model.ModeWalk, From: model.LegPoint{Name: "Точка отправления", Lat: from.Lat, Lon: from.Lon},
+			To: legPoint(fromStop), Departure: departAtStop.Add(-time.Duration(accessMin) * time.Minute), Arrival: departAtStop,
+		})
+		journey.Legs = append(journey.Legs, transitLegs...)
+		journey.Transfers = len(transitLegs) - 1
+		transitEnd := transitLegs[len(transitLegs)-1].Arrival
+		journey.Legs = append(journey.Legs, model.Leg{
+			Mode: model.ModeWalk, From: legPoint(toStop), To: model.LegPoint{Name: "Точка назначения", Lat: to.Lat, Lon: to.Lon},
+			Departure: transitEnd, Arrival: transitEnd.Add(time.Duration(egressMin) * time.Minute),
+		})
+		journey.Departure = journey.Legs[0].Departure
+		journey.Arrival = journey.Legs[len(journey.Legs)-1].Arrival
+		journey.Alternatives = p.paretoAlternatives(net, from, to, params, fromStop, toStop, journey)
+		if p.metrics != nil {
+			p.metrics.Inc("planner.planned")
+		}
+		return journey, nil
+	}
+
 	journey := &model.Journey{
 		From: from,
 		To:   to,
@@ -103,7 +138,13 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 
 	departAtStop := journey.Legs[len(journey.Legs)-1].Arrival
 
-	transitLegs, err := p.csa(net, fromStop.ID, toStop.ID, departAtStop, params)
+	var transitLegs []model.Leg
+	var err error
+	if p.engine == "raptor" {
+		transitLegs, err = p.raptor(net, fromStop.ID, toStop.ID, departAtStop, params)
+	} else {
+		transitLegs, err = p.csa(net, fromStop.ID, toStop.ID, departAtStop, params)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -120,11 +161,94 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 	})
 
 	journey.Arrival = journey.Legs[len(journey.Legs)-1].Arrival
+	journey.Alternatives = p.paretoAlternatives(net, from, to, params, fromStop, toStop, journey)
 
 	if p.metrics != nil {
 		p.metrics.Inc("planner.planned")
 	}
 	return journey, nil
+}
+
+func (p *Planner) paretoAlternatives(net *model.Network, from, to model.Coords, params model.SearchParams, fromStop, toStop *model.Stop, best *model.Journey) []model.Journey {
+	candidates := []*model.Journey{best}
+	// Generate alternative departures within 6h window
+	for offset := 60; offset <= 360; offset += 60 {
+		var candParams model.SearchParams = params
+		if params.Arrival != nil {
+			altArrival := params.Arrival.Add(time.Duration(offset) * time.Minute)
+			candParams.Arrival = &altArrival
+		} else {
+			candParams.Departure = params.Departure.Add(time.Duration(offset) * time.Minute)
+		}
+		// Run single journey without Pareto to avoid recursion: use raw csa/raptor
+		accessMin := geo.WalkTimeMinutes(geo.Haversine(from, fromStop.Coordinates()))
+		egressMin := geo.WalkTimeMinutes(geo.Haversine(to, toStop.Coordinates()))
+		var legs []model.Leg
+		var err error
+		if candParams.Arrival != nil {
+			latest := candParams.Arrival.Add(-time.Duration(egressMin) * time.Minute)
+			var dep time.Time
+			legs, dep, err = p.planArrival(net, fromStop.ID, toStop.ID, *candParams.Arrival, latest, candParams)
+			if err != nil {
+				continue
+			}
+			_ = dep
+			_ = accessMin
+		} else {
+			depAtStop := candParams.Departure.Add(time.Duration(accessMin) * time.Minute)
+			if p.engine == "raptor" {
+				legs, err = p.raptor(net, fromStop.ID, toStop.ID, depAtStop, candParams)
+			} else {
+				legs, err = p.csa(net, fromStop.ID, toStop.ID, depAtStop, candParams)
+			}
+			if err != nil {
+				continue
+			}
+		}
+		if len(legs) == 0 {
+			continue
+		}
+		j := &model.Journey{From: from, To: to, Legs: legs, Transfers: len(legs) - 1}
+		// Estimate departure/arrival from legs
+		if len(legs) > 0 {
+			j.Departure = legs[0].Departure.Add(-time.Duration(accessMin) * time.Minute)
+			j.Arrival = legs[len(legs)-1].Arrival.Add(time.Duration(egressMin) * time.Minute)
+		}
+		candidates = append(candidates, j)
+	}
+	// Deduplicate by arrival+transfers
+	uniq := map[string]*model.Journey{}
+	for _, c := range candidates {
+		key := c.Arrival.Format(time.RFC3339) + fmt.Sprintf("-%d", c.Transfers)
+		if _, ok := uniq[key]; !ok {
+			uniq[key] = c
+		}
+	}
+	list := make([]*model.Journey, 0, len(uniq))
+	for _, v := range uniq {
+		list = append(list, v)
+	}
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].Arrival.Equal(list[j].Arrival) {
+			return list[i].Transfers < list[j].Transfers
+		}
+		return list[i].Arrival.Before(list[j].Arrival)
+	})
+	// Keep top 3 by arrival as Pareto front for now (ensure alternatives exist)
+	if len(list) > 3 {
+		list = list[:3]
+	}
+	var alts []model.Journey
+	for _, f := range list {
+		if f.Arrival.Equal(best.Arrival) && f.Transfers == best.Transfers {
+			continue
+		}
+		alts = append(alts, *f)
+		if len(alts) >= 2 {
+			break
+		}
+	}
+	return alts
 }
 
 func legPoint(stop *model.Stop) model.LegPoint {
@@ -309,6 +433,68 @@ func (p *Planner) csa(net *model.Network, fromStop, toStop string, depart time.T
 		return nil, fmt.Errorf("planner: маршрут требует пересадок, а лимит — без пересадок")
 	}
 	return legs, nil
+}
+
+func (p *Planner) planArrival(net *model.Network, fromStop, toStop string, arrival, latestArrivalAtStop time.Time, params model.SearchParams) ([]model.Leg, time.Time, error) {
+	windowStart := arrival.Add(-24 * time.Hour)
+	if windowStart.After(latestArrivalAtStop) {
+		windowStart = latestArrivalAtStop
+	}
+	// Collect candidate departures from trips that depart from fromStop
+	candidates := []time.Time{}
+	for _, trip := range net.Trips {
+		for _, st := range trip.StopTimes {
+			if st.StopID != fromStop {
+				continue
+			}
+			dep := time.Date(latestArrivalAtStop.Year(), latestArrivalAtStop.Month(), latestArrivalAtStop.Day(), 0, 0, 0, 0, time.UTC).Add(time.Duration(st.DepartureSec) * time.Second)
+			for dep.After(latestArrivalAtStop) {
+				dep = dep.Add(-24 * time.Hour)
+			}
+			for dep.Before(windowStart) {
+				dep = dep.Add(24 * time.Hour)
+			}
+			if dep.After(windowStart) && !dep.After(latestArrivalAtStop) {
+				candidates = append(candidates, dep)
+			}
+			break
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].After(candidates[j]) })
+	// fallback to 30m grid if no candidates
+	if len(candidates) == 0 {
+		for d := latestArrivalAtStop; !d.Before(windowStart); d = d.Add(-30 * time.Minute) {
+			candidates = append(candidates, d)
+		}
+	}
+	bestLegs := []model.Leg{}
+	var bestDep time.Time
+	for _, dep := range candidates {
+		var legs []model.Leg
+		var err error
+		if p.engine == "raptor" {
+			legs, err = p.raptor(net, fromStop, toStop, dep, params)
+		} else {
+			legs, err = p.csa(net, fromStop, toStop, dep, params)
+		}
+		if err != nil {
+			continue
+		}
+		if len(legs) == 0 {
+			continue
+		}
+		arr := legs[len(legs)-1].Arrival
+		if arr.After(latestArrivalAtStop) {
+			continue
+		}
+		bestLegs = legs
+		bestDep = dep
+		break
+	}
+	if len(bestLegs) == 0 {
+		return nil, time.Time{}, fmt.Errorf("planner: маршрут между %s и %s не найден (нет рейсов до %s)", fromStop, toStop, arrival.Format(time.RFC3339))
+	}
+	return bestLegs, bestDep, nil
 }
 
 func (p *Planner) reconstruct(pred map[string]*prev, fromStop, toStop string) []step {

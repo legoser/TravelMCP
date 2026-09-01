@@ -9,6 +9,9 @@ providers:
   intercity:
     reestr_path: "data/reestr/regions.json"
 
+planner:
+  engine: "raptor"
+
 auth:
   admin_token: "${ADMIN_TOKEN}"
 

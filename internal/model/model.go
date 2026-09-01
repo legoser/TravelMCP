@@ -254,6 +254,7 @@ func geoCell(lat, lon float64) uint64 {
 
 type SearchParams struct {
 	Departure      time.Time
+	Arrival        *time.Time
 	MaxTransfers   int
 	AllowedModes   []Mode
 	MaxWalkMinutes int
@@ -295,10 +296,11 @@ type Leg struct {
 }
 
 type Journey struct {
-	From      Coords    `json:"from"`
-	To        Coords    `json:"to"`
-	Departure time.Time `json:"departure"`
-	Arrival   time.Time `json:"arrival"`
-	Legs      []Leg     `json:"legs"`
-	Transfers int       `json:"transfers"`
+	From         Coords    `json:"from"`
+	To           Coords    `json:"to"`
+	Departure    time.Time `json:"departure"`
+	Arrival      time.Time `json:"arrival"`
+	Legs         []Leg     `json:"legs"`
+	Transfers    int       `json:"transfers"`
+	Alternatives []Journey `json:"alternatives,omitempty"`
 }

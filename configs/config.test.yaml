@@ -9,5 +9,8 @@ providers:
   intercity:
     reestr_path: "testdata/reestr/mini.json"
 
+planner:
+  engine: "csa"
+
 auth:
   admin_token: "test-secret"

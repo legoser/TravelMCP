@@ -63,6 +63,7 @@ func (a *App) Server() *server.MCPServer {
 		mcp.WithString("from_place", mcp.Description("Населённый пункт отправления, например «Юрга» или «Пермь». Взамен from_lat/from_lon.")),
 		mcp.WithString("to_place", mcp.Description("Населённый пункт назначения, например «Барнаул». Взамен to_lat/to_lon.")),
 		mcp.WithString("departure", mcp.Description("Время отправления в формате RFC3339; по умолчанию — сейчас")),
+		mcp.WithString("arrival", mcp.Description("Время прибытия в формате RFC3339 (альтернатива departure — быть в точке к этому времени)")),
 		mcp.WithNumber("max_walk_minutes", mcp.Description("Максимальная пешая доступность до остановки, мин. По умолчанию 30")),
 		mcp.WithNumber("max_transfers", mcp.Description("Лимит пересадок; -1 — без ограничения. По умолчанию -1")),
 	)
@@ -98,6 +99,13 @@ func (a *App) handleFindRoute(ctx context.Context, req mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError("departure: ожидается RFC3339"), nil
 		}
 		params.Departure = t
+	}
+	if v, ok := argString(req.GetArguments(), "arrival"); ok {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			return mcp.NewToolResultError("arrival: ожидается RFC3339"), nil
+		}
+		params.Arrival = &t
 	}
 	if v, ok := argFloat(req.GetArguments(), "max_walk_minutes"); ok {
 		params.MaxWalkMinutes = int(v)

@@ -35,12 +35,17 @@ type Yandex struct {
 	GeocodeKey string `yaml:"geocode_key"`
 }
 
+type Planner struct {
+	Engine string `yaml:"engine"`
+}
+
 type Config struct {
 	HTTP      HTTP      `yaml:"http"`
 	Database  Database  `yaml:"database"`
 	Providers Providers `yaml:"providers"`
 	Auth      Auth      `yaml:"auth"`
 	Yandex    Yandex    `yaml:"yandex"`
+	Planner   Planner   `yaml:"planner"`
 }
 
 func Defaults() *Config {
@@ -53,6 +58,7 @@ func Defaults() *Config {
 				ReestrPath: "data/reestr/regions.json",
 			},
 		},
+		Planner: Planner{Engine: "csa"},
 	}
 }
 
@@ -99,6 +105,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("YANDEX_GEOCODE_KEY"); v != "" {
 		cfg.Yandex.GeocodeKey = v
+	}
+	if v := os.Getenv("PLANNER_ENGINE"); v != "" {
+		cfg.Planner.Engine = v
 	}
 }
 
