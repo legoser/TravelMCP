@@ -38,7 +38,7 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 		started:  time.Now(),
 	}
 
-	app := mcp.NewWithStore(planner.NewWithEngine(metrics, cfg.Planner.Engine), registry, st)
+	app := mcp.NewWithStore(planner.NewWithLogger(metrics, cfg.Planner.Engine, logger), registry, st, logger)
 	mcpHandler := mcpserver.NewStreamableHTTPServer(app.Server(), mcpserver.WithStateLess(true))
 
 	token := cfg.Auth.AdminToken

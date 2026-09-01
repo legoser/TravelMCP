@@ -39,6 +39,10 @@ type Planner struct {
 	Engine string `yaml:"engine"`
 }
 
+type Log struct {
+	Level string `yaml:"level"`
+}
+
 type Config struct {
 	HTTP      HTTP      `yaml:"http"`
 	Database  Database  `yaml:"database"`
@@ -46,6 +50,7 @@ type Config struct {
 	Auth      Auth      `yaml:"auth"`
 	Yandex    Yandex    `yaml:"yandex"`
 	Planner   Planner   `yaml:"planner"`
+	Log       Log       `yaml:"log"`
 }
 
 func Defaults() *Config {
@@ -59,6 +64,7 @@ func Defaults() *Config {
 			},
 		},
 		Planner: Planner{Engine: "csa"},
+		Log:     Log{Level: "info"},
 	}
 }
 
@@ -108,6 +114,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("PLANNER_ENGINE"); v != "" {
 		cfg.Planner.Engine = v
+	}
+	if v := os.Getenv("LOG_LEVEL"); v != "" {
+		cfg.Log.Level = v
 	}
 }
 

@@ -24,6 +24,9 @@ auth:
 planner:
   engine: "csa" # csa|raptor (RAPTOR frequency-based для межгорода)
 
+log:
+  level: "info" # debug|info|warn|error — переключение без пересборки (LOG_LEVEL env)
+
 # Секреты — только через env (или .env, gitignored); в YAML не заполняются.
 yandex:
   rasp_key: ""

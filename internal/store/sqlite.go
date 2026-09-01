@@ -33,6 +33,11 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("sqlite ping: %w", err)
 	}
+	db.SetMaxOpenConns(1)
+	db.Exec(`PRAGMA journal_mode=WAL`)
+	db.Exec(`PRAGMA synchronous=NORMAL`)
+	db.Exec(`PRAGMA cache_size=-64000`)
+	db.Exec(`PRAGMA temp_store=MEMORY`)
 	return &SQLiteStore{db: db}, nil
 }
 
@@ -274,30 +279,38 @@ func (s *SQLiteStore) LoadNetwork(ctx context.Context, providers []string, day t
 	}
 	tripRows.Close()
 
+	tripByID := map[int64]TripRow{}
 	for _, t := range trips {
-		code := routeIDToCode[t.RouteID]
-		mode := routeIDToMode[t.RouteID]
-		stRows, err := s.db.QueryContext(ctx, `SELECT stop_id, seq, arrival, departure FROM stop_times WHERE trip_id=? ORDER BY seq`, t.ID)
-		if err != nil {
-			continue
-		}
-		var times []model.StopTime
-		for stRows.Next() {
-			var r StopTimeRow
-			stRows.Scan(&r.StopID, &r.Seq, &r.Arrival, &r.Departure)
-			sid, ok := stopIDMap[r.StopID]
+		tripByID[t.ID] = t
+	}
+	allST, err := s.db.QueryContext(ctx, `SELECT trip_id, stop_id, seq, arrival, departure FROM stop_times ORDER BY trip_id, seq`)
+	if err == nil {
+		grouped := map[int64][]model.StopTime{}
+		for allST.Next() {
+			var tripID, stopID int64
+			var seq, arr, dep int
+			allST.Scan(&tripID, &stopID, &seq, &arr, &dep)
+			sid, ok := stopIDMap[stopID]
 			if !ok {
 				continue
 			}
-			times = append(times, model.StopTime{StopID: sid, Sequence: r.Seq, ArrivalSec: r.Arrival, DepartureSec: r.Departure})
+			if _, ok := tripByID[tripID]; !ok {
+				continue
+			}
+			grouped[tripID] = append(grouped[tripID], model.StopTime{StopID: sid, Sequence: seq, ArrivalSec: arr, DepartureSec: dep})
 		}
-		stRows.Close()
-		sort.Slice(times, func(i, j int) bool { return times[i].Sequence < times[j].Sequence })
-		if len(times) == 0 {
-			continue
+		allST.Close()
+		for _, t := range trips {
+			times := grouped[t.ID]
+			if len(times) == 0 {
+				continue
+			}
+			sort.Slice(times, func(i, j int) bool { return times[i].Sequence < times[j].Sequence })
+			code := routeIDToCode[t.RouteID]
+			mode := routeIDToMode[t.RouteID]
+			mt := &model.Trip{ID: code + ":" + t.Direction, RouteID: code, ProviderID: t.ProviderID, Mode: model.Mode(mode), ServiceID: t.ServiceID, StopTimes: times}
+			net.Trips[mt.ID] = mt
 		}
-		mt := &model.Trip{ID: code + ":" + t.Direction, RouteID: code, ProviderID: t.ProviderID, Mode: model.Mode(mode), ServiceID: t.ServiceID, StopTimes: times}
-		net.Trips[mt.ID] = mt
 	}
 	// transfers
 	trRows, err := s.db.QueryContext(ctx, `SELECT from_stop_id, to_stop_id, minutes FROM transfers`)

@@ -193,7 +193,7 @@ func TestPlaceJourneyStartsAtAutoStation(t *testing.T) {
 	journey, err := p.PlanWithPlaces(net,
 		model.Coords{Lat: 55.0410573, Lon: 83.0273816},
 		model.Coords{Lat: 56.4613482, Lon: 84.9914307},
-		model.SearchParams{Departure: day.Add(8 * time.Hour), MaxTransfers: -1},
+		model.SearchParams{Departure: day.Add(8 * time.Hour), MaxTransfers: -1, Preference: model.PreferenceArrival},
 		&PlaceHint{Name: "Новосибирск"},
 		&PlaceHint{Name: "Томск"},
 	)

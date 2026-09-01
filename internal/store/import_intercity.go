@@ -4,12 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
 	"regexp"
+	"runtime"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"travelmcp/internal/geo"
@@ -60,6 +64,8 @@ type reestrBlock struct {
 }
 
 func ImportIntercity(ctx context.Context, s Store, path string) error {
+	t0 := time.Now()
+	slog.Info("import intercity: чтение датасета", "path", path)
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -68,6 +74,7 @@ func ImportIntercity(ctx context.Context, s Store, path string) error {
 	if err := json.Unmarshal(raw, &ds); err != nil {
 		return err
 	}
+	slog.Info("import intercity: датасет загружен", "routes", len(ds.Routes), "stops", len(ds.Stops), "schedules", len(ds.Schedules), "elapsed", time.Since(t0).String())
 	if err := s.Migrate(ctx); err != nil {
 		return err
 	}
@@ -150,68 +157,102 @@ func ImportIntercity(ctx context.Context, s Store, path string) error {
 		routeIDMap[r.Reg] = id
 	}
 
-	// trips + stopTimes: разворачиваем все runs как в providers/intercity.go
-	for _, sched := range ds.Schedules {
-		routeID := routeIDMap[sched.Route]
-		period := pickPeriod(sched)
+	tripStart := time.Now()
+	type pendingTrip struct {
+		row   TripRow
+		times []struct {
+			stopID string
+			arrMin int
+			depMin int
+		}
+	}
+	var pending []pendingTrip
+	var mu sync.Mutex
+	numCPU := runtime.NumCPU()
+	sem := make(chan struct{}, numCPU*2)
+	var wg sync.WaitGroup
+	for _, sc := range ds.Schedules {
+		routeID := routeIDMap[sc.Route]
+		period := pickPeriod(sc)
 		if period == "" {
 			continue
 		}
-		runs := runsCount(sched, period)
+		runs := runsCount(sc, period)
 		for run := 0; run < runs; run++ {
-			times := []struct {
-				stopID string
-				arrMin int
-				depMin int
-			}{}
-			prevEff := -1
-			for i := range sched.Stops {
-				b := blockOf(sched.Stops[i], period)
-				if b == nil {
-					continue
-				}
-				arrMin, hasArr := timeAt(b.Arr, run)
-				depMin, hasDep := timeAt(b.Dep, run)
-				if !hasArr && !hasDep {
-					continue
-				}
-				if !hasArr {
-					arrMin = depMin
-				}
-				if !hasDep {
-					depMin = arrMin
-				}
-				arrOff := 0
-				for arrMin+arrOff*1440 < prevEff {
-					arrOff++
-				}
-				eff := arrMin + arrOff*1440
-				depOff := arrOff
-				for depMin+depOff*1440 < eff {
-					depOff++
-				}
-				effDep := depMin + depOff*1440
-				prevEff = effDep
-				times = append(times, struct {
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(sched reestrSched, routeID int64, period string, run int) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				times := []struct {
 					stopID string
 					arrMin int
 					depMin int
-				}{stopID: sched.Stops[i].Stop, arrMin: eff, depMin: effDep})
-			}
-			if len(times) < 2 {
-				continue
-			}
-			tr := TripRow{RouteID: routeID, ProviderID: "intercity", Direction: sched.Direction, ServiceID: sched.ServiceID}
-			tid, _ := s.UpsertTrip(ctx, tr)
-			for seq, tm := range times {
-				sid, ok := stopIDMap[tm.stopID]
-				if !ok {
-					continue
+				}{}
+				prevEff := -1
+				for i := range sched.Stops {
+					if len(times) > 0 {
+						prevStation := stopToStation[times[len(times)-1].stopID]
+						curStation := stopToStation[sched.Stops[i].Stop]
+						if prevStation != 0 && curStation != 0 && prevStation == curStation {
+							continue
+						}
+					}
+					b := blockOf(sched.Stops[i], period)
+					if b == nil {
+						continue
+					}
+					arrMin, hasArr := timeAt(b.Arr, run)
+					depMin, hasDep := timeAt(b.Dep, run)
+					if !hasArr && !hasDep {
+						continue
+					}
+					if !hasArr {
+						arrMin = depMin
+					}
+					if !hasDep {
+						depMin = arrMin
+					}
+					arrOff := 0
+					for arrMin+arrOff*1440 < prevEff {
+						arrOff++
+					}
+					eff := arrMin + arrOff*1440
+					depOff := arrOff
+					for depMin+depOff*1440 < eff {
+						depOff++
+					}
+					effDep := depMin + depOff*1440
+					prevEff = effDep
+					times = append(times, struct {
+						stopID string
+						arrMin int
+						depMin int
+					}{stopID: sched.Stops[i].Stop, arrMin: eff, depMin: effDep})
 				}
-				_ = s.UpsertStopTime(ctx, StopTimeRow{TripID: tid, StopID: sid, Seq: seq, Arrival: tm.arrMin * 60, Departure: tm.depMin * 60})
-			}
+				if len(times) < 2 {
+					return
+				}
+				mu.Lock()
+				pending = append(pending, pendingTrip{row: TripRow{RouteID: routeID, ProviderID: "intercity", Direction: sched.Direction, ServiceID: sched.ServiceID}, times: times})
+				mu.Unlock()
+			}(sc, routeID, period, run)
 		}
 	}
+	wg.Wait()
+	sort.Slice(pending, func(i, j int) bool { return pending[i].row.RouteID < pending[j].row.RouteID })
+	slog.Info("import intercity: trips подготовлены", "count", len(pending), "workers", numCPU, "elapsed", time.Since(tripStart).String())
+	for _, pt := range pending {
+		tid, _ := s.UpsertTrip(ctx, pt.row)
+		for seq, tm := range pt.times {
+			sid, ok := stopIDMap[tm.stopID]
+			if !ok {
+				continue
+			}
+			_ = s.UpsertStopTime(ctx, StopTimeRow{TripID: tid, StopID: sid, Seq: seq, Arrival: tm.arrMin * 60, Departure: tm.depMin * 60})
+		}
+	}
+	slog.Info("import intercity: trips записаны", "elapsed", time.Since(tripStart).String())
 
 	if ms, ok := s.(*MemoryStore); ok {
 		_ = ms

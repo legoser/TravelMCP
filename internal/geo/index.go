@@ -2,7 +2,9 @@ package geo
 
 import (
 	"math"
+	"runtime"
 	"sort"
+	"sync"
 
 	"travelmcp/internal/model"
 )
@@ -72,32 +74,93 @@ func (idx *SpatialIndex) Nearest(p model.Coords, maxWalkMinutes, limit int) []*m
 
 func NearbyPairs(stops map[string]*model.Stop, maxKm float64) [][2]*model.Stop {
 	idx := NewSpatialIndex(stops)
-	var pairs [][2]*model.Stop
-	seen := make(map[string]bool)
-	for _, a := range stops {
-		if a.Lat == 0 && a.Lon == 0 {
-			continue
-		}
-		cx := int(math.Floor(a.Lon / idx.cellSize))
-		cy := int(math.Floor(a.Lat / idx.cellSize))
-		r := int(math.Ceil(maxKm/1.11)) + 1
-		for dx := -r; dx <= r; dx++ {
-			for dy := -r; dy <= r; dy++ {
-				key := (int64(cx+dx) << 32) ^ int64(int32(cy+dy))
-				for _, b := range idx.cells[key] {
-					if a.ID >= b.ID {
-						continue
-					}
-					pairKey := a.ID + "|" + b.ID
-					if seen[pairKey] {
-						continue
-					}
-					seen[pairKey] = true
-					if Haversine(a.Coordinates(), b.Coordinates()) <= maxKm {
-						pairs = append(pairs, [2]*model.Stop{a, b})
+	if len(stops) < 500 {
+		var pairs [][2]*model.Stop
+		seen := make(map[string]bool)
+		for _, a := range stops {
+			if a.Lat == 0 && a.Lon == 0 {
+				continue
+			}
+			cx := int(math.Floor(a.Lon / idx.cellSize))
+			cy := int(math.Floor(a.Lat / idx.cellSize))
+			r := int(math.Ceil(maxKm/1.11)) + 1
+			for dx := -r; dx <= r; dx++ {
+				for dy := -r; dy <= r; dy++ {
+					key := (int64(cx+dx) << 32) ^ int64(int32(cy+dy))
+					for _, b := range idx.cells[key] {
+						if a.ID >= b.ID {
+							continue
+						}
+						pairKey := a.ID + "|" + b.ID
+						if seen[pairKey] {
+							continue
+						}
+						seen[pairKey] = true
+						if Haversine(a.Coordinates(), b.Coordinates()) <= maxKm {
+							pairs = append(pairs, [2]*model.Stop{a, b})
+						}
 					}
 				}
 			}
+		}
+		return pairs
+	}
+	keys := make([]string, 0, len(stops))
+	for k := range stops {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	type chunkResult [][2]*model.Stop
+	chunks := make([]chunkResult, len(keys))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, runtime.NumCPU()*2)
+	for i, id := range keys {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(idxPos int, sid string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			a := stops[sid]
+			if a.Lat == 0 && a.Lon == 0 {
+				return
+			}
+			cx := int(math.Floor(a.Lon / idx.cellSize))
+			cy := int(math.Floor(a.Lat / idx.cellSize))
+			r := int(math.Ceil(maxKm/1.11)) + 1
+			var local [][2]*model.Stop
+			seenLocal := make(map[string]bool)
+			for dx := -r; dx <= r; dx++ {
+				for dy := -r; dy <= r; dy++ {
+					key := (int64(cx+dx) << 32) ^ int64(int32(cy+dy))
+					for _, b := range idx.cells[key] {
+						if a.ID >= b.ID {
+							continue
+						}
+						pairKey := a.ID + "|" + b.ID
+						if seenLocal[pairKey] {
+							continue
+						}
+						seenLocal[pairKey] = true
+						if Haversine(a.Coordinates(), b.Coordinates()) <= maxKm {
+							local = append(local, [2]*model.Stop{a, b})
+						}
+					}
+				}
+			}
+			chunks[idxPos] = local
+		}(i, id)
+	}
+	wg.Wait()
+	seen := make(map[string]bool)
+	var pairs [][2]*model.Stop
+	for _, c := range chunks {
+		for _, pr := range c {
+			k := pr[0].ID + "|" + pr[1].ID
+			if seen[k] {
+				continue
+			}
+			seen[k] = true
+			pairs = append(pairs, pr)
 		}
 	}
 	return pairs

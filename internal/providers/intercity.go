@@ -3,11 +3,14 @@ package providers
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"travelmcp/internal/geo"
@@ -177,14 +180,52 @@ func (p *Intercity) build(ds *reestrDataset, day time.Time) *model.Network {
 		net.ServiceExceptions[ex.ServiceID] = append(net.ServiceExceptions[ex.ServiceID], model.ServiceException{ServiceID: ex.ServiceID, Date: d, ExceptionType: et})
 	}
 
+	t0 := time.Now()
+	active := 0
 	for _, sched := range ds.Schedules {
-		if !p.serviceActive(net, sched.ServiceID, day) {
-			continue
+		if p.serviceActive(net, sched.ServiceID, day) {
+			active++
 		}
-		p.addSchedule(net, sched, day)
+	}
+	slog.Info("intercity build: расписания", "total", len(ds.Schedules), "active", active, "day", day.Format("2006-01-02"))
+
+	if active > 50 {
+		numCPU := runtime.NumCPU()
+		sem := make(chan struct{}, numCPU*2)
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		for _, sched := range ds.Schedules {
+			if !p.serviceActive(net, sched.ServiceID, day) {
+				continue
+			}
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(sc reestrSched) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				local := model.NewNetwork()
+				p.addSchedule(local, sc, day)
+				mu.Lock()
+				for k, v := range local.Trips {
+					net.Trips[k] = v
+				}
+				net.Connections = append(net.Connections, local.Connections...)
+				mu.Unlock()
+			}(sched)
+		}
+		wg.Wait()
+		slog.Info("intercity build: trips параллельно", "trips", len(net.Trips), "connections", len(net.Connections), "elapsed", time.Since(t0).String())
+	} else {
+		for _, sched := range ds.Schedules {
+			if !p.serviceActive(net, sched.ServiceID, day) {
+				continue
+			}
+			p.addSchedule(net, sched, day)
+		}
 	}
 
 	p.addTransferLinks(net)
+	slog.Info("intercity build: готово", "stops", len(net.Stops), "trips", len(net.Trips), "connections", len(net.Connections), "transfers", len(net.Transfers), "elapsed", time.Since(t0).String())
 
 	sort.Slice(net.Connections, func(i, j int) bool {
 		return net.Connections[i].Departure.Before(net.Connections[j].Departure)

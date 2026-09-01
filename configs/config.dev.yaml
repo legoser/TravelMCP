@@ -9,6 +9,9 @@ providers:
   intercity:
     reestr_path: "data/reestr/regions.json"
 
+log:
+  level: "debug"
+
 planner:
   engine: "raptor"
 

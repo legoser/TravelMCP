@@ -2,6 +2,7 @@ package planner
 
 import (
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 type Planner struct {
 	metrics *telemetry.Metrics
 	engine  string
+	logger  *slog.Logger
 }
 
 func New(metrics *telemetry.Metrics) *Planner {
@@ -25,6 +27,13 @@ func NewWithEngine(metrics *telemetry.Metrics, engine string) *Planner {
 		engine = "csa"
 	}
 	return &Planner{metrics: metrics, engine: engine}
+}
+
+func NewWithLogger(metrics *telemetry.Metrics, engine string, logger *slog.Logger) *Planner {
+	if engine == "" {
+		engine = "csa"
+	}
+	return &Planner{metrics: metrics, engine: engine, logger: logger}
 }
 
 func (p *Planner) Plan(net *model.Network, from, to model.Coords, params model.SearchParams) (*model.Journey, error) {
@@ -46,6 +55,10 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 	maxWalk := params.MaxWalkMinutes
 	if maxWalk <= 0 {
 		maxWalk = 30
+	}
+	if p.logger != nil {
+		p.logger.Debug("plan start", "from", from, "to", to, "departure", params.Departure, "arrival", params.Arrival, "engine", p.engine, "maxWalk", maxWalk, "allowGap", params.AllowGap)
+		p.logger.Debug("network", "stops", len(net.Stops), "trips", len(net.Trips), "connections", len(net.Connections), "transfers", len(net.Transfers))
 	}
 
 	var fromStop, toStop *model.Stop
@@ -100,7 +113,18 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 		latestArrivalAtStop := params.Arrival.Add(-time.Duration(egressMin) * time.Minute)
 		transitLegs, departAtStop, err := p.planArrival(net, fromStop.ID, toStop.ID, *params.Arrival, latestArrivalAtStop, params)
 		if err != nil {
-			return nil, err
+			if !params.AllowGap {
+				return nil, err
+			}
+			distKm := geo.Haversine(fromStop.Coordinates(), toStop.Coordinates())
+			mins := geo.WalkTimeMinutes(distKm)
+			departAtStop = latestArrivalAtStop.Add(-time.Duration(mins) * time.Minute)
+			transitLegs = []model.Leg{{
+				Mode: model.ModeWalk, ProviderID: fromStop.ProviderID,
+				From: legPoint(fromStop), To: legPoint(toStop),
+				Departure: departAtStop, Arrival: latestArrivalAtStop,
+				SelfProvided: true,
+			}}
 		}
 		journey := &model.Journey{From: from, To: to}
 		journey.Legs = append(journey.Legs, model.Leg{
@@ -117,6 +141,34 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 		journey.Departure = journey.Legs[0].Departure
 		journey.Arrival = journey.Legs[len(journey.Legs)-1].Arrival
 		journey.Alternatives = p.paretoAlternatives(net, from, to, params, fromStop, toStop, journey)
+		pref := params.Preference
+		if pref == "" {
+			pref = model.PreferenceTransfers
+		}
+		if pref == model.PreferenceTransfers && len(journey.Alternatives) > 0 {
+			bestIdx := -1
+			bestTransfers := journey.Transfers
+			for i, alt := range journey.Alternatives {
+				if alt.Transfers < bestTransfers || (alt.Transfers == bestTransfers && alt.Arrival.Before(journey.Arrival)) {
+					bestTransfers = alt.Transfers
+					bestIdx = i
+				}
+			}
+			if bestIdx >= 0 {
+				newBest := journey.Alternatives[bestIdx]
+				newAlts := []model.Journey{*journey}
+				for i, a := range journey.Alternatives {
+					if i != bestIdx {
+						newAlts = append(newAlts, a)
+					}
+				}
+				if len(newAlts) > 2 {
+					newAlts = newAlts[:2]
+				}
+				journey = &newBest
+				journey.Alternatives = newAlts
+			}
+		}
 		if p.metrics != nil {
 			p.metrics.Inc("planner.planned")
 		}
@@ -146,7 +198,18 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 		transitLegs, err = p.csa(net, fromStop.ID, toStop.ID, departAtStop, params)
 	}
 	if err != nil {
-		return nil, err
+		if !params.AllowGap {
+			return nil, err
+		}
+		distKm := geo.Haversine(fromStop.Coordinates(), toStop.Coordinates())
+		mins := geo.WalkTimeMinutes(distKm)
+		gapLeg := model.Leg{
+			Mode: model.ModeWalk, ProviderID: fromStop.ProviderID,
+			From: legPoint(fromStop), To: legPoint(toStop),
+			Departure: departAtStop, Arrival: departAtStop.Add(time.Duration(mins) * time.Minute),
+			SelfProvided: true,
+		}
+		transitLegs = []model.Leg{gapLeg}
 	}
 	journey.Legs = append(journey.Legs, transitLegs...)
 	journey.Transfers = len(transitLegs) - 1
@@ -162,6 +225,34 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 
 	journey.Arrival = journey.Legs[len(journey.Legs)-1].Arrival
 	journey.Alternatives = p.paretoAlternatives(net, from, to, params, fromStop, toStop, journey)
+	pref := params.Preference
+	if pref == "" {
+		pref = model.PreferenceTransfers
+	}
+	if pref == model.PreferenceTransfers && len(journey.Alternatives) > 0 {
+		bestIdx := -1
+		bestTransfers := journey.Transfers
+		for i, alt := range journey.Alternatives {
+			if alt.Transfers < bestTransfers || (alt.Transfers == bestTransfers && alt.Arrival.Before(journey.Arrival)) {
+				bestTransfers = alt.Transfers
+				bestIdx = i
+			}
+		}
+		if bestIdx >= 0 {
+			newBest := journey.Alternatives[bestIdx]
+			newAlts := []model.Journey{*journey}
+			for i, a := range journey.Alternatives {
+				if i != bestIdx {
+					newAlts = append(newAlts, a)
+				}
+			}
+			if len(newAlts) > 2 {
+				newAlts = newAlts[:2]
+			}
+			journey = &newBest
+			journey.Alternatives = newAlts
+		}
+	}
 
 	if p.metrics != nil {
 		p.metrics.Inc("planner.planned")
@@ -228,12 +319,25 @@ func (p *Planner) paretoAlternatives(net *model.Network, from, to model.Coords, 
 	for _, v := range uniq {
 		list = append(list, v)
 	}
-	sort.Slice(list, func(i, j int) bool {
-		if list[i].Arrival.Equal(list[j].Arrival) {
-			return list[i].Transfers < list[j].Transfers
-		}
-		return list[i].Arrival.Before(list[j].Arrival)
-	})
+	pref := params.Preference
+	if pref == "" {
+		pref = model.PreferenceTransfers
+	}
+	if pref == model.PreferenceTransfers {
+		sort.Slice(list, func(i, j int) bool {
+			if list[i].Transfers != list[j].Transfers {
+				return list[i].Transfers < list[j].Transfers
+			}
+			return list[i].Arrival.Before(list[j].Arrival)
+		})
+	} else {
+		sort.Slice(list, func(i, j int) bool {
+			if list[i].Arrival.Equal(list[j].Arrival) {
+				return list[i].Transfers < list[j].Transfers
+			}
+			return list[i].Arrival.Before(list[j].Arrival)
+		})
+	}
 	// Keep top 3 by arrival as Pareto front for now (ensure alternatives exist)
 	if len(list) > 3 {
 		list = list[:3]
@@ -347,6 +451,9 @@ type step struct {
 }
 
 func (p *Planner) csa(net *model.Network, fromStop, toStop string, depart time.Time, params model.SearchParams) ([]model.Leg, error) {
+	if p.logger != nil {
+		p.logger.Debug("csa start", "from", fromStop, "to", toStop, "depart", depart, "connections", len(net.Connections))
+	}
 	maxTransfers := params.MaxTransfers
 	if maxTransfers < 0 {
 		maxTransfers = -1

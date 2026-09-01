@@ -9,6 +9,9 @@ providers:
   intercity:
     reestr_path: "testdata/reestr/mini.json"
 
+log:
+  level: "warn"
+
 planner:
   engine: "csa"
 

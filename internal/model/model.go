@@ -252,12 +252,21 @@ func geoCell(lat, lon float64) uint64 {
 	return (uint64(latI) << 32) | uint64(uint32(lonI))
 }
 
+type Preference string
+
+const (
+	PreferenceArrival   Preference = "arrival"
+	PreferenceTransfers Preference = "transfers"
+)
+
 type SearchParams struct {
 	Departure      time.Time
 	Arrival        *time.Time
 	MaxTransfers   int
 	AllowedModes   []Mode
 	MaxWalkMinutes int
+	AllowGap       bool
+	Preference     Preference
 }
 
 type CostBasis string
