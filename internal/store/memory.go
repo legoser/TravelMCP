@@ -41,6 +41,17 @@ func (m *MemoryStore) allocID() int64 { id := m.nextID; m.nextID++; return id }
 
 func (m *MemoryStore) Migrate(ctx context.Context) error { return nil }
 func (m *MemoryStore) Close() error                      { return nil }
+func (m *MemoryStore) WithTx(ctx context.Context, fn func(Store) error) error { return fn(m) }
+func (m *MemoryStore) FindStation(ctx context.Context, name, region string) (StationRow, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, s := range m.stations {
+		if s.Name == name && s.RegionCode == region && s.Lat != 0 {
+			return s, true
+		}
+	}
+	return StationRow{}, false
+}
 func (m *MemoryStore) MarkImported(ctx context.Context, providerID string, at time.Time, records int) error {
 	m.mu.Lock()
 	m.imports[providerID] = at

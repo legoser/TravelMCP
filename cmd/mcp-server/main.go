@@ -29,47 +29,48 @@ func main() {
 		slog.New(slog.NewJSONHandler(os.Stdout, nil)).Error("config load failed", "error", err)
 		os.Exit(1)
 	}
-	logger := newLogger(cfg.Log.Level)
-	logger.Info("конфиг загружен", "path", configPath, "addr", cfg.HTTP.Addr, "providers", strings.Join(cfg.Providers.Enabled, ","), "dsn", cfg.Database.DSN, "reestr", cfg.Providers.Intercity.ReestrPath, "log_level", cfg.Log.Level)
+	logger := newLogger(cfg.Log.Level, cfg.Log.Format, cfg.Log.AddSource)
+	slog.SetDefault(logger)
+	logger.Info("config loaded", "path", configPath, "addr", cfg.HTTP.Addr, "providers", strings.Join(cfg.Providers.Enabled, ","), "dsn", cfg.Database.DSN, "reestr", cfg.Providers.Intercity.ReestrPath, "log_level", cfg.Log.Level, "log_format", cfg.Log.Format)
 
 	metrics := telemetry.New()
 	regStart := time.Now()
 	registry := providers.NewRegistryWith(cfg.Providers.Enabled, cfg.Providers.Intercity.ReestrPath)
-	logger.Info("реестр провайдеров инициализирован", "enabled", cfg.Providers.Enabled, "elapsed", time.Since(regStart).String())
+	logger.Info("provider registry initialized", "enabled", cfg.Providers.Enabled, "elapsed", time.Since(regStart).String())
 
 	var st store.Store
 	if cfg.Database.DSN != "" {
 		s := time.Now()
-		logger.Info("инициализация хранилища", "dsn", cfg.Database.DSN)
+		logger.Info("storage init", "dsn", cfg.Database.DSN)
 		var err error
 		st, err = store.New(context.Background(), cfg.Database.DSN)
 		if err != nil {
-			logger.Error("store init failed", "error", err)
+			logger.Error("storage init failed", "error", err)
 			os.Exit(1)
 		}
-		logger.Info("хранилище подключено", "elapsed", time.Since(s).String())
+		logger.Info("storage connected", "elapsed_ms", time.Since(s).Milliseconds())
 		if st != nil {
 			ms := time.Now()
-			logger.Info("миграция схемы БД")
+			logger.Info("db migration started")
 			if err := st.Migrate(context.Background()); err != nil {
-				logger.Error("store migrate failed", "error", err)
+				logger.Error("db migration failed", "error", err)
 				os.Exit(1)
 			}
-			logger.Info("миграция завершена", "elapsed", time.Since(ms).String())
+			logger.Info("db migration completed", "elapsed_ms", time.Since(ms).Milliseconds())
 			for _, id := range cfg.Providers.Enabled {
 				if id == providers.IntercityID {
 					is := time.Now()
-					logger.Info("импорт intercity", "path", cfg.Providers.Intercity.ReestrPath)
-					if err := store.ImportIntercity(context.Background(), st, cfg.Providers.Intercity.ReestrPath); err != nil {
-						logger.Warn("intercity import failed", "error", err, "elapsed", time.Since(is).String())
+					logger.Info("import started", "provider", id, "path", cfg.Providers.Intercity.ReestrPath)
+					if err := store.ImportIntercity(context.Background(), st, cfg.Providers.Intercity.ReestrPath, logger); err != nil {
+						logger.Warn("import failed", "provider", id, "error", err, "elapsed_ms", time.Since(is).Milliseconds())
 					} else {
-						logger.Info("intercity импортирован", "path", cfg.Providers.Intercity.ReestrPath, "elapsed", time.Since(is).String())
+						logger.Info("import completed", "provider", id, "path", cfg.Providers.Intercity.ReestrPath, "elapsed_ms", time.Since(is).Milliseconds())
 					}
 				}
 			}
 		}
 	} else {
-		logger.Info("хранилище не настроено (DATABASE_DSN пуст) — работа без БД")
+		logger.Info("storage disabled", "reason", "DATABASE_DSN empty")
 	}
 
 	srv := &http.Server{
@@ -77,7 +78,7 @@ func main() {
 		Handler:           server.NewWithStore(cfg, logger, metrics, registry, st),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	logger.Info("подготовка HTTP завершена", "total_startup", time.Since(totalStart).String())
+	logger.Info("http setup completed", "total_startup_ms", time.Since(totalStart).Milliseconds())
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -104,7 +105,7 @@ func main() {
 	}
 }
 
-func newLogger(level string) *slog.Logger {
+func newLogger(level, format string, addSource bool) *slog.Logger {
 	lvl := slog.LevelInfo
 	switch strings.ToLower(strings.TrimSpace(level)) {
 	case "debug":
@@ -116,5 +117,8 @@ func newLogger(level string) *slog.Logger {
 	case "error":
 		lvl = slog.LevelError
 	}
-	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl, AddSource: lvl == slog.LevelDebug}))
+	if strings.ToLower(strings.TrimSpace(format)) == "text" {
+		return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: lvl, AddSource: addSource || lvl == slog.LevelDebug}))
+	}
+	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl, AddSource: addSource}))
 }

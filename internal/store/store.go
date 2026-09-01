@@ -25,6 +25,8 @@ type Store interface {
 	MarkImported(ctx context.Context, providerID string, at time.Time, records int) error
 	Migrate(ctx context.Context) error
 	Close() error
+	WithTx(ctx context.Context, fn func(Store) error) error
+	FindStation(ctx context.Context, name, region string) (StationRow, bool)
 }
 
 func New(ctx context.Context, dsn string) (Store, error) {
@@ -80,6 +82,10 @@ func (p *pgStub) MarkImported(ctx context.Context, providerID string, at time.Ti
 }
 func (p *pgStub) Migrate(ctx context.Context) error { return nil }
 func (p *pgStub) Close() error                      { return nil }
+func (p *pgStub) WithTx(ctx context.Context, fn func(Store) error) error { return fn(p) }
+func (p *pgStub) FindStation(ctx context.Context, name, region string) (StationRow, bool) {
+	return StationRow{}, false
+}
 
 var errNotImplemented = errStr("postgres store not implemented: use sqlite DSN")
 

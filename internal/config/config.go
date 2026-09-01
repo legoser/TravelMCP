@@ -40,7 +40,9 @@ type Planner struct {
 }
 
 type Log struct {
-	Level string `yaml:"level"`
+	Level     string `yaml:"level"`
+	Format    string `yaml:"format"`
+	AddSource bool   `yaml:"add_source"`
 }
 
 type Config struct {
@@ -64,7 +66,7 @@ func Defaults() *Config {
 			},
 		},
 		Planner: Planner{Engine: "csa"},
-		Log:     Log{Level: "info"},
+		Log:     Log{Level: "info", Format: "json"},
 	}
 }
 
@@ -117,6 +119,12 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("LOG_LEVEL"); v != "" {
 		cfg.Log.Level = v
+	}
+	if v := os.Getenv("LOG_FORMAT"); v != "" {
+		cfg.Log.Format = v
+	}
+	if v := os.Getenv("LOG_ADD_SOURCE"); v != "" {
+		cfg.Log.AddSource = v == "1" || v == "true"
 	}
 }
 
