@@ -240,8 +240,19 @@ func (t *txStore) UpdateUserStatus(ctx context.Context, id int64, status string)
 	_, err := t.tx.ExecContext(ctx, `UPDATE users SET status=? WHERE id=?`, status, id)
 	return err
 }
+func (t *txStore) UpdateUserRole(ctx context.Context, id int64, role string) error {
+	_, err := t.tx.ExecContext(ctx, `UPDATE users SET role=? WHERE id=?`, role, id)
+	return err
+}
 func (t *txStore) UpdateUserConfig(ctx context.Context, id int64, config string) error {
 	_, err := t.tx.ExecContext(ctx, `UPDATE users SET config=? WHERE id=?`, config, id)
+	return err
+}
+func (t *txStore) DeleteUser(ctx context.Context, id int64) error {
+	if _, err := t.tx.ExecContext(ctx, `DELETE FROM api_keys WHERE user_id=?`, id); err != nil {
+		return err
+	}
+	_, err := t.tx.ExecContext(ctx, `DELETE FROM users WHERE id=?`, id)
 	return err
 }
 func (t *txStore) CreateApiKey(ctx context.Context, userID int64, scopes string) (ApiKeyRow, error) {
@@ -419,12 +430,54 @@ func (s *SQLiteStore) ListUsers(ctx context.Context) ([]UserRow, error) {
 	return out, nil
 }
 func (s *SQLiteStore) UpdateUserStatus(ctx context.Context, id int64, status string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE users SET status=? WHERE id=?`, status, id)
-	return err
+	res, err := s.db.ExecContext(ctx, `UPDATE users SET status=? WHERE id=?`, status, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("not found")
+	}
+	return nil
+}
+func (s *SQLiteStore) UpdateUserRole(ctx context.Context, id int64, role string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE users SET role=? WHERE id=?`, role, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("not found")
+	}
+	return nil
 }
 func (s *SQLiteStore) UpdateUserConfig(ctx context.Context, id int64, config string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE users SET config=? WHERE id=?`, config, id)
-	return err
+	res, err := s.db.ExecContext(ctx, `UPDATE users SET config=? WHERE id=?`, config, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("not found")
+	}
+	return nil
+}
+func (s *SQLiteStore) DeleteUser(ctx context.Context, id int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM api_keys WHERE user_id=?`, id); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id=?`, id)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		_ = tx.Rollback()
+		return fmt.Errorf("not found")
+	}
+	return tx.Commit()
 }
 func generateApiKey() string {
 	b := make([]byte, 32)

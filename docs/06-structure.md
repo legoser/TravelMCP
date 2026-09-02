@@ -18,6 +18,7 @@ Travel_MCP/
 │   ├── store/                 # Store (memory/sqlite modernc, pg stub) + ImportIntercity (station-группировка, no_geo обогащение)
 │   ├── mcp/                   # MCP-сервер: find_route (departure/arrival, allow_gap), list_providers (Issues)
 │   ├── server/                # http-роутер: /healthz, /readyz, /api/v1/*, монтаж /mcp (Store)
+│   │   └── web/               # статика админки: index.html + style.css + app.js (embed, /admin)
 │   ├── telemetry/             # потокобезопасные счётчики метрик
 │   └── config/                # конфиг: default → YAML → env (planner.engine, database.dsn)
 ├── test/
@@ -95,9 +96,11 @@ mcp.NewToolResultJSON(Journey) → ответ клиенту
 | `Planner.Plan`, `csa/raptor`, `planArrival`, `paretoAlternatives`, `gap` | `internal/planner/planner.go`, `internal/planner/raptor.go` | CSA/RAPTOR, arrival-by, Pareto ≤2, gap/self-leg |
 | `Store` (memory/sqlite modernc, pg stub), `ImportIntercity` | `internal/store/store.go`, `internal/store/sqlite.go`, `internal/store/memory.go`, `internal/store/import_intercity.go` | station-группировка, no_geo обогащение (Yandex) |
 | `App.Server`, `handleFindRoute` (departure/arrival/allow_gap), `networkForDay` | `internal/mcp/mcp.go` | валидация, суффикс коллизий, Store.LoadNetwork(day) |
-| `Server.New/NewWithStore` | `internal/server/server.go` | `NewStreamableHTTPServer` + Store |
+| `Server.New/NewWithStore` | `internal/server/server.go` | `NewStreamableHTTPServer` + Store + `webFS embed` `/admin` |
+| `web` статика | `internal/server/web/{index.html,style.css,app.js}` | админка (users/keys/config/dashboard), `embed`, `/admin/*` |
 | `Metrics.Inc`, `Snapshot`, `Named` | `internal/telemetry/telemetry.go` | мутекс-защищённые счётчики |
 | `Load` (default → YAML → env, planner.engine) | `internal/config/config.go` | env: `HTTP_ADDR`, `DATABASE_DSN`, `PROVIDERS_ENABLED`, `INTERCITY_REESTR_PATH`, `ADMIN_TOKEN`, `PLANNER_ENGINE`, `YANDEX_*` |
+| `Admin API` | `internal/server/server.go:67` | `GET /users`, `PATCH /users/{id}`, `DELETE`, `GET/POST/DELETE /users/{id}/keys`, `GET/PUT /config`, `GET /admin` (web) |
 | main: конфиг → Store(Migrate/Import) → реестр → server → graceful shutdown | `cmd/mcp-server/main.go` | `signal.NotifyContext` + `http.Server.Shutdown` |
 
 ## 5. Жизненный цикл процесса

@@ -29,6 +29,9 @@ fmt:
 	gofmt -w .
 
 run:
+	go run ./cmd/mcp-server -config configs/config.dev.yaml
+
+run-example:
 	go run ./cmd/mcp-server -config configs/config.example.yaml
 
 clean:

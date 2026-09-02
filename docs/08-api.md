@@ -40,10 +40,30 @@ curl -X POST http://localhost:8080/api/v1/register \
 ### GET /api/v1/users — admin
 ```sh
 curl http://localhost:8080/api/v1/users -H "Authorization: Bearer secret"
-# [{"id":1,"email":"alice@test.com","status":"pending","role":"user"}]
+# [{"id":1,"email":"alice@test.com","status":"pending","role":"user","created_at":...,"config":""}]
 ```
 
-### POST /api/v1/users/{id}/moderate — admin
+### GET /api/v1/users/{id} — admin
+```sh
+curl http://localhost:8080/api/v1/users/1 -H "Authorization: Bearer secret"
+# {"id":1,"email":"alice@test.com","status":"active","role":"user","created_at":...,"config":""}
+```
+
+### PATCH /api/v1/users/{id} — admin (универсальное обновление)
+```sh
+curl -X PATCH http://localhost:8080/api/v1/users/1 \
+  -H "Authorization: Bearer secret" -H "Content-Type: application/json" \
+  -d '{"status":"active","role":"admin","config":"{\"max_walk\":30}"}'
+# частично: любое из status|role|config; role=user|admin, status=pending|active|blocked
+```
+
+### DELETE /api/v1/users/{id} — admin (каскад — удаляет ключи)
+```sh
+curl -X DELETE http://localhost:8080/api/v1/users/1 -H "Authorization: Bearer secret"
+# {"deleted":1}
+```
+
+### POST /api/v1/users/{id}/moderate — admin (legacy)
 ```sh
 curl -X POST http://localhost:8080/api/v1/users/1/moderate \
   -H "Authorization: Bearer secret" -H "Content-Type: application/json" \
@@ -90,6 +110,39 @@ curl -X POST http://localhost:8080/api/v1/keys \
 ### DELETE /api/v1/keys/{id} — mcp:read
 ```sh
 curl -X DELETE http://localhost:8080/api/v1/keys/2 -H "Authorization: Bearer tm_1_..."
+```
+
+### GET /api/v1/users/{id}/keys — admin (ключи пользователя)
+```sh
+curl http://localhost:8080/api/v1/users/1/keys -H "Authorization: Bearer secret"
+# [{"ID":2,"Key":"tm_...","Scopes":"mcp:read",...}]
+```
+
+### POST /api/v1/users/{id}/keys — admin
+```sh
+curl -X POST http://localhost:8080/api/v1/users/1/keys \
+  -H "Authorization: Bearer secret" -H "Content-Type: application/json" \
+  -d '{"scopes":"mcp:read"}' # mcp:read|admin
+# 201 {"ID":3,"Key":"tm_...","Scopes":"mcp:read"}
+```
+
+### DELETE /api/v1/users/{id}/keys/{keyId} — admin
+```sh
+curl -X DELETE http://localhost:8080/api/v1/users/1/keys/2 -H "Authorization: Bearer secret"
+```
+
+### GET /api/v1/config — admin (snapshot hot-конфига)
+```sh
+curl http://localhost:8080/api/v1/config -H "Authorization: Bearer secret"
+# {"providers":{"enabled":["synth"],"intercity":{...}},"planner":{"engine":"csa"},...} DSN маскирован
+```
+
+### PUT /api/v1/config — admin (hot-reload без рестарта)
+```sh
+curl -X PUT http://localhost:8080/api/v1/config \
+  -H "Authorization: Bearer secret" -H "Content-Type: application/json" \
+  -d '{"providers":{"enabled":["synth","intercity"]},"planner":{"engine":"raptor"},"log":{"level":"debug","levels":{"http":"debug"}}}'
+# {"status":"ok","providers":["synth","intercity"],"planner":{"engine":"raptor"},"log":{...}}
 ```
 
 ## 5. Providers и дашборд — mcp:read

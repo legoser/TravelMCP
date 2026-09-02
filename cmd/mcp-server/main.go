@@ -39,9 +39,11 @@ func main() {
 	factory := logger.NewFactory(cfg.Log)
 	logger := factory.For("main")
 	slog.SetDefault(logger)
-	logger.Info("config loaded", "path", configPath, "addr", cfg.HTTP.Addr, "providers", strings.Join(cfg.Providers.Enabled, ","), "dsn", maskDSN(cfg.Database.DSN), "reestr", cfg.Providers.Intercity.ReestrPath, "log_level", cfg.Log.Level, "log_format", cfg.Log.Format)
+	logger.Info("config loaded", "path", configPath, "addr", cfg.HTTP.Addr, "providers", strings.Join(cfg.Providers.Enabled, ","), "dsn", maskDSN(cfg.Database.DSN), "reestr", cfg.Providers.Intercity.ReestrPath, "log_level", cfg.Log.Level, "log_format", cfg.Log.Format, "log_levels", cfg.Log.Levels)
 
-	httpxClient := httpx.New(logger, "geocoder")
+	httpLogger := factory.For("http")
+	httpxLogger := factory.For("httpx")
+	httpxClient := httpx.New(httpxLogger, "geocoder")
 	if g, err := geocoder.New(*cfg, httpxClient); err != nil {
 		logger.Warn("geocoder init", "error", err)
 	} else {
@@ -93,7 +95,7 @@ func main() {
 	shutdownTimeout := parseDuration(cfg.HTTP.ShutdownTimeout, 10*time.Second)
 	srv := &http.Server{
 		Addr:              cfg.HTTP.Addr,
-		Handler:           server.NewWithStore(cfg, logger, metrics, registry, st),
+		Handler:           server.NewWithStore(cfg, httpLogger, metrics, registry, st),
 		ReadHeaderTimeout: readTimeout,
 	}
 	_ = shutdownTimeout

@@ -1,16 +1,20 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
+	"embed"
 	"encoding/json"
 	"fmt"
-	"html"
+	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/mail"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,6 +31,9 @@ import (
 	"travelmcp/internal/telemetry"
 )
 
+//go:embed web
+var webFS embed.FS
+
 type Server struct {
 	cfg      *config.Config
 	metrics  *telemetry.Metrics
@@ -34,6 +41,7 @@ type Server struct {
 	logger   *slog.Logger
 	started  time.Time
 	store    store.Store
+	mu       sync.RWMutex
 }
 
 func New(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Metrics, registry *providers.Registry) http.Handler {
@@ -61,18 +69,29 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 	mux.Handle("POST /api/v1/login", http.HandlerFunc(s.handleLogin))
 	mux.Handle("GET /api/v1/providers", s.auth(http.HandlerFunc(s.handleProviders), "mcp:read"))
 	mux.Handle("GET /api/v1/dashboard", s.auth(http.HandlerFunc(s.handleDashboard), "mcp:read"))
+	mux.Handle("GET /api/v1/me", s.auth(http.HandlerFunc(s.handleMe), "mcp:read"))
 	mux.Handle("GET /api/v1/users", s.auth(http.HandlerFunc(s.handleListUsers), "admin"))
+	mux.Handle("GET /api/v1/users/{id}", s.auth(http.HandlerFunc(s.handleGetUser), "admin"))
+	mux.Handle("PATCH /api/v1/users/{id}", s.auth(http.HandlerFunc(s.handlePatchUser), "admin"))
+	mux.Handle("DELETE /api/v1/users/{id}", s.auth(http.HandlerFunc(s.handleDeleteUser), "admin"))
 	mux.Handle("POST /api/v1/users/{id}/moderate", s.auth(http.HandlerFunc(s.handleModerateUser), "admin"))
+	mux.Handle("PUT /api/v1/users/{id}/config", s.auth(http.HandlerFunc(s.handleUpdateUserConfig), "admin"))
+	mux.Handle("GET /api/v1/users/{id}/keys", s.auth(http.HandlerFunc(s.handleListUserKeys), "admin"))
+	mux.Handle("POST /api/v1/users/{id}/keys", s.auth(http.HandlerFunc(s.handleCreateUserKey), "admin"))
+	mux.Handle("DELETE /api/v1/users/{id}/keys/{keyId}", s.auth(http.HandlerFunc(s.handleDeleteUserKey), "admin"))
 	mux.Handle("GET /api/v1/keys", s.auth(http.HandlerFunc(s.handleListKeys), "mcp:read"))
 	mux.Handle("POST /api/v1/keys", s.auth(http.HandlerFunc(s.handleCreateKey), "mcp:read"))
 	mux.Handle("DELETE /api/v1/keys/{id}", s.auth(http.HandlerFunc(s.handleDeleteKey), "mcp:read"))
-	mux.Handle("GET /api/v1/me", s.auth(http.HandlerFunc(s.handleMe), "mcp:read"))
-	mux.Handle("PUT /api/v1/users/{id}/config", s.auth(http.HandlerFunc(s.handleUpdateUserConfig), "admin"))
-	mux.Handle("GET /admin", s.auth(http.HandlerFunc(s.handleAdminPage), "admin"))
+	mux.Handle("GET /api/v1/config", s.auth(http.HandlerFunc(s.handleGetConfig), "admin"))
+	mux.Handle("PUT /api/v1/config", s.auth(http.HandlerFunc(s.handlePutConfig), "admin"))
+	adminFS, _ := fs.Sub(webFS, "web")
+	mux.Handle("GET /admin", http.HandlerFunc(s.handleAdminPage))
+	mux.Handle("GET /admin/", http.StripPrefix("/admin/", http.FileServer(http.FS(adminFS))))
 	mux.Handle("/mcp", s.auth(mcpHandler, "mcp:read"))
 
 	rl := middleware.NewRateLimiter(cfg.HTTP)
 	handler := rl.Middleware(mux)
+	handler = s.loggingMiddleware(handler)
 	handler = requestIDMiddleware(handler)
 	handler = metricsMiddleware(handler)
 	return handler
@@ -84,8 +103,9 @@ const ctxUserKey ctxKey = "user"
 
 func (s *Server) auth(next http.Handler, requiredScope string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.logger.Debug("auth check", "path", r.URL.Path, "required", requiredScope, "remote", r.RemoteAddr)
 		if s.cfg.Auth.AdminToken == "" {
-			s.logger.Warn("auth open-mode: ADMIN_TOKEN empty")
+			s.logger.Warn("auth open-mode: ADMIN_TOKEN empty", "path", r.URL.Path)
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -96,38 +116,52 @@ func (s *Server) auth(next http.Handler, requiredScope string) http.Handler {
 			key = h
 		}
 		if s.cfg.Auth.AdminToken != "" && subtle.ConstantTimeCompare([]byte(key), []byte(s.cfg.Auth.AdminToken)) == 1 {
+			s.logger.Info("auth admin token", "path", r.URL.Path, "remote", r.RemoteAddr)
 			ctx := context.WithValue(r.Context(), ctxUserKey, &store.UserRow{ID: 0, Email: "admin", Role: "admin", Status: "active"})
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 		if key == "" {
+			s.logger.Warn("auth missing key", "path", r.URL.Path, "remote", r.RemoteAddr)
 			w.Header().Set("WWW-Authenticate", `Bearer realm="travelmcp"`)
-			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized", "message": "API key required: Authorization: Bearer <key> or X-API-Key"})
+			writeJSONResponse(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized", "message": "API key required: Authorization: Bearer <key> or X-API-Key"})
 			return
 		}
 		if s.store == nil {
+			s.logger.Warn("auth store disabled", "path", r.URL.Path)
 			w.Header().Set("WWW-Authenticate", `Bearer realm="travelmcp"`)
-			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized", "message": "invalid API key"})
+			writeJSONResponse(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized", "message": "invalid API key"})
 			return
 		}
 		ak, ok := s.store.GetApiKey(r.Context(), key)
 		if !ok {
-			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized", "message": "invalid API key"})
+			s.logger.Warn("auth invalid key", "path", r.URL.Path, "key_prefix", keyPrefix(key))
+			writeJSONResponse(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized", "message": "invalid API key"})
 			return
 		}
 		user, ok := s.store.GetUserByID(r.Context(), ak.UserID)
 		if !ok || user.Status != "active" {
-			writeJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden", "message": "user not active or pending moderation"})
+			s.logger.Warn("auth inactive user", "path", r.URL.Path, "user_id", ak.UserID, "status", user.Status)
+			writeJSONResponse(w, http.StatusForbidden, map[string]any{"error": "forbidden", "message": "user not active or pending moderation"})
 			return
 		}
 		if requiredScope != "" && !hasScope(ak.Scopes, requiredScope) && user.Role != "admin" {
-			writeJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden", "message": "insufficient scope"})
+			s.logger.Warn("auth insufficient scope", "path", r.URL.Path, "user", user.Email, "scopes", ak.Scopes, "required", requiredScope)
+			writeJSONResponse(w, http.StatusForbidden, map[string]any{"error": "forbidden", "message": "insufficient scope"})
 			return
 		}
+		s.logger.Debug("auth ok", "path", r.URL.Path, "user", user.Email, "role", user.Role, "scopes", ak.Scopes)
 		_ = s.store.TouchApiKey(r.Context(), key)
 		ctx := context.WithValue(r.Context(), ctxUserKey, &user)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func keyPrefix(k string) string {
+	if len(k) > 8 {
+		return k[:8] + "..."
+	}
+	return "***"
 }
 
 func hasScope(scopes, required string) bool {
@@ -152,10 +186,12 @@ func checkPassword(hash, pw string) bool {
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+	s.logger.Debug("healthz", "remote", r.RemoteAddr)
+	writeJSONResponse(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
+	s.logger.Debug("readyz check", "remote", r.RemoteAddr)
 	statuses := s.registry.HealthStatusesCached()
 	if len(statuses) == 0 {
 		statuses = s.registry.HealthStatuses()
@@ -168,27 +204,45 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !allUp {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "degraded"})
+		s.logger.Warn("readyz degraded", "providers", fmt.Sprint(statuses))
+		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"status": "degraded"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "uptime_seconds": int64(time.Since(s.started).Seconds())})
+	s.logger.Info("readyz ok", "uptime", int64(time.Since(s.started).Seconds()))
+	writeJSONResponse(w, http.StatusOK, map[string]any{"status": "ok", "uptime_seconds": int64(time.Since(s.started).Seconds())})
 }
 
 func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.registry.HealthStatuses())
+	user, _ := r.Context().Value(ctxUserKey).(*store.UserRow)
+	s.logger.Info("providers list", "user", userEmail(user), "remote", r.RemoteAddr)
+	s.logger.Debug("providers debug", "statuses", fmt.Sprint(s.registry.HealthStatuses()))
+	writeJSONResponse(w, http.StatusOK, s.registry.HealthStatuses())
 }
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
+	user, _ := r.Context().Value(ctxUserKey).(*store.UserRow)
+	s.logger.Info("dashboard", "user", userEmail(user))
+	s.logger.Debug("dashboard debug", "counters", fmt.Sprint(s.metrics.Named()))
+	writeJSONResponse(w, http.StatusOK, map[string]any{
 		"uptime_seconds": int64(time.Since(s.started).Seconds()),
 		"providers":      s.registry.HealthStatuses(),
 		"counters":       s.metrics.Named(),
 	})
 }
 
+func userEmail(u *store.UserRow) string {
+	if u == nil {
+		return ""
+	}
+	return u.Email
+}
+
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
+	s.logger.Info("register attempt", "remote", r.RemoteAddr)
+	s.logger.Debug("register debug", "headers", fmt.Sprint(r.Header))
 	if s.store == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
+		s.logger.Error("register failed: storage disabled")
+		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -198,36 +252,45 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		s.logger.Warn("register invalid json", "error", err)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
 		return
 	}
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
+	s.logger.Debug("register payload", "email", req.Email)
 	if _, err := mail.ParseAddress(req.Email); err != nil || req.Email == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "valid email required"})
+		s.logger.Warn("register invalid email", "email", req.Email)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "valid email required"})
 		return
 	}
 	if len(req.Password) < 8 || len(req.Password) > 72 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "password 8..72 required"})
+		s.logger.Warn("register bad password length", "email", req.Email)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "password 8..72 required"})
 		return
 	}
 	if _, ok := s.store.GetUserByEmail(r.Context(), req.Email); ok {
-		writeJSON(w, http.StatusConflict, map[string]any{"error": "user already exists"})
+		s.logger.Warn("register user exists", "email", req.Email)
+		writeJSONResponse(w, http.StatusConflict, map[string]any{"error": "user already exists"})
 		return
 	}
 	role := "user"
 	id, err := s.store.CreateUser(r.Context(), req.Email, hashPassword(req.Password), role)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "create failed"})
+		s.logger.Error("register create failed", "email", req.Email, "error", err)
+		writeJSONResponse(w, http.StatusInternalServerError, map[string]any{"error": "create failed"})
 		return
 	}
 	user, _ := s.store.GetUserByID(r.Context(), id)
 	s.logger.Info("user registered", "email", req.Email, "id", id, "status", user.Status)
-	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "email": req.Email, "status": user.Status, "message": "pending moderation"})
+	writeJSONResponse(w, http.StatusCreated, map[string]any{"id": id, "email": req.Email, "status": user.Status, "message": "pending moderation"})
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	s.logger.Info("login attempt", "remote", r.RemoteAddr)
+	s.logger.Debug("login debug", "headers", fmt.Sprint(r.Header))
 	if s.store == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
+		s.logger.Error("login failed: storage disabled")
+		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -237,55 +300,71 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		s.logger.Warn("login invalid json", "error", err)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
 		return
 	}
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
+	s.logger.Debug("login payload", "email", req.Email)
 	user, ok := s.store.GetUserByEmail(r.Context(), req.Email)
 	if !ok || !checkPassword(user.PassHash, req.Password) {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid credentials"})
+		s.logger.Warn("login invalid credentials", "email", req.Email)
+		writeJSONResponse(w, http.StatusUnauthorized, map[string]any{"error": "invalid credentials"})
 		return
 	}
 	if user.Status != "active" {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": "user not active", "status": user.Status})
+		s.logger.Warn("login inactive", "email", req.Email, "status", user.Status)
+		writeJSONResponse(w, http.StatusForbidden, map[string]any{"error": "user not active", "status": user.Status})
 		return
 	}
-	// create or reuse key
 	keys, _ := s.store.ListApiKeys(r.Context(), user.ID)
 	var ak store.ApiKeyRow
 	if len(keys) > 0 {
 		ak = keys[0]
+		s.logger.Info("login reuse key", "email", req.Email, "user_id", user.ID, "key_id", ak.ID)
 	} else {
 		var err error
 		ak, err = s.store.CreateApiKey(r.Context(), user.ID, "mcp:read")
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "key create failed"})
+			s.logger.Error("login key create failed", "email", req.Email, "error", err)
+			writeJSONResponse(w, http.StatusInternalServerError, map[string]any{"error": "key create failed"})
 			return
 		}
+		s.logger.Info("login created key", "email", req.Email, "user_id", user.ID, "key_id", ak.ID)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"token": ak.Key, "scopes": ak.Scopes, "user_id": user.ID})
+	writeJSONResponse(w, http.StatusOK, map[string]any{"token": ak.Key, "scopes": ak.Scopes, "user_id": user.ID})
 }
 
 func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
+	actor, _ := r.Context().Value(ctxUserKey).(*store.UserRow)
+	s.logger.Info("list users", "actor", userEmail(actor), "remote", r.RemoteAddr)
 	if s.store == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
+		s.logger.Error("list users failed: storage disabled")
+		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
 		return
 	}
 	users, err := s.store.ListUsers(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "list failed"})
+		s.logger.Error("list users failed", "error", err)
+		writeJSONResponse(w, http.StatusInternalServerError, map[string]any{"error": "list failed"})
 		return
 	}
+	s.logger.Info("list users ok", "count", len(users), "actor", userEmail(actor))
+	s.logger.Debug("list users debug", "users", fmt.Sprint(users))
 	out := make([]map[string]any, 0, len(users))
 	for _, u := range users {
-		out = append(out, map[string]any{"id": u.ID, "email": u.Email, "status": u.Status, "role": u.Role, "created_at": u.CreatedAt})
+		uu := u
+		out = append(out, userPublic(&uu))
 	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSONResponse(w, http.StatusOK, out)
 }
 
 func (s *Server) handleModerateUser(w http.ResponseWriter, r *http.Request) {
+	actor, _ := r.Context().Value(ctxUserKey).(*store.UserRow)
+	s.logger.Info("moderate user", "actor", userEmail(actor), "path", r.URL.Path)
 	if s.store == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
+		s.logger.Error("moderate failed: storage disabled")
+		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -293,45 +372,63 @@ func (s *Server) handleModerateUser(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
+		s.logger.Warn("moderate invalid id", "id", idStr)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
 		return
 	}
 	var req struct {
 		Status string `json:"status"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		s.logger.Warn("moderate invalid json", "error", err)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
 		return
 	}
+	s.logger.Debug("moderate payload", "id", id, "status", req.Status, "actor", userEmail(actor))
 	if req.Status != "active" && req.Status != "blocked" && req.Status != "pending" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "status must be active|blocked|pending"})
+		s.logger.Warn("moderate bad status", "status", req.Status)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "status must be active|blocked|pending"})
 		return
 	}
 	if err := s.store.UpdateUserStatus(r.Context(), id, req.Status); err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": "user not found"})
+		s.logger.Warn("moderate not found", "id", id, "error", err)
+		writeJSONResponse(w, http.StatusNotFound, map[string]any{"error": "user not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"id": id, "status": req.Status})
+	s.logger.Info("moderate ok", "id", id, "status", req.Status, "actor", userEmail(actor))
+	writeJSONResponse(w, http.StatusOK, map[string]any{"id": id, "status": req.Status})
 }
 
 func (s *Server) handleListKeys(w http.ResponseWriter, r *http.Request) {
 	user, ok := r.Context().Value(ctxUserKey).(*store.UserRow)
+	s.logger.Info("list keys", "user", userEmail(user), "remote", r.RemoteAddr)
 	if !ok || user == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		s.logger.Warn("list keys unauthorized")
+		writeJSONResponse(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 		return
 	}
+	s.logger.Debug("list keys debug", "user_id", user.ID)
 	keys, err := s.store.ListApiKeys(r.Context(), user.ID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "list failed"})
+		s.logger.Error("list keys failed", "user_id", user.ID, "error", err)
+		writeJSONResponse(w, http.StatusInternalServerError, map[string]any{"error": "list failed"})
 		return
 	}
-	writeJSON(w, http.StatusOK, keys)
+	s.logger.Info("list keys ok", "user_id", user.ID, "count", len(keys))
+	writeJSONResponse(w, http.StatusOK, keys)
 }
 
 func (s *Server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 	user, ok := r.Context().Value(ctxUserKey).(*store.UserRow)
+	s.logger.Info("create key attempt", "user", userEmail(user), "remote", r.RemoteAddr)
 	if !ok || user == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		s.logger.Warn("create key unauthorized")
+		writeJSONResponse(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		return
+	}
+	if user.ID == 0 {
+		s.logger.Warn("create key with ADMIN_TOKEN synthetic user: use /api/v1/users/{id}/keys", "role", user.Role)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "ADMIN_TOKEN cannot create personal key, use POST /api/v1/users/{id}/keys"})
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -340,88 +437,464 @@ func (s *Server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 		Scopes string `json:"scopes"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
+	s.logger.Debug("create key payload", "user_id", user.ID, "scopes", req.Scopes)
 	if len(req.Scopes) > 256 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "scopes too large"})
+		s.logger.Warn("create key scopes too large", "user_id", user.ID)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "scopes too large"})
 		return
 	}
 	if req.Scopes != "" && req.Scopes != "mcp:read" && req.Scopes != "admin" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid scopes"})
+		s.logger.Warn("create key invalid scopes", "scopes", req.Scopes)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid scopes"})
 		return
 	}
 	if req.Scopes == "admin" && user.Role != "admin" {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": "admin scope requires admin role"})
+		s.logger.Warn("create key admin scope denied", "user_id", user.ID, "role", user.Role)
+		writeJSONResponse(w, http.StatusForbidden, map[string]any{"error": "admin scope requires admin role"})
 		return
 	}
 	ak, err := s.store.CreateApiKey(r.Context(), user.ID, req.Scopes)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "create failed"})
+		s.logger.Error("create key failed", "user_id", user.ID, "error", err)
+		writeJSONResponse(w, http.StatusInternalServerError, map[string]any{"error": "create failed"})
 		return
 	}
-	writeJSON(w, http.StatusCreated, ak)
+	s.logger.Info("create key ok", "user_id", user.ID, "key_id", ak.ID, "scopes", ak.Scopes)
+	writeJSONResponse(w, http.StatusCreated, ak)
 }
 
 func (s *Server) handleDeleteKey(w http.ResponseWriter, r *http.Request) {
 	user, ok := r.Context().Value(ctxUserKey).(*store.UserRow)
+	s.logger.Info("delete key", "user", userEmail(user), "path", r.URL.Path)
 	if !ok || user == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		s.logger.Warn("delete key unauthorized")
+		writeJSONResponse(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 		return
 	}
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
+		s.logger.Warn("delete key invalid id", "id", idStr)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
 		return
 	}
+	s.logger.Debug("delete key", "user_id", user.ID, "key_id", id)
 	if err := s.store.DeleteApiKey(r.Context(), id, user.ID); err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": "not found"})
+		s.logger.Warn("delete key not found", "user_id", user.ID, "key_id", id)
+		writeJSONResponse(w, http.StatusNotFound, map[string]any{"error": "not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"deleted": id})
+	s.logger.Info("delete key ok", "user_id", user.ID, "key_id", id)
+	writeJSONResponse(w, http.StatusOK, map[string]any{"deleted": id})
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	user, ok := r.Context().Value(ctxUserKey).(*store.UserRow)
+	s.logger.Info("me", "user", userEmail(user))
+	s.logger.Debug("me debug", "user", fmt.Sprint(user))
 	if !ok || user == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		s.logger.Warn("me unauthorized")
+		writeJSONResponse(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"id": user.ID, "email": user.Email, "status": user.Status, "role": user.Role, "config": user.Config})
+	writeJSONResponse(w, http.StatusOK, userPublic(user))
 }
 
-func (s *Server) handleUpdateUserConfig(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
+	actor, _ := r.Context().Value(ctxUserKey).(*store.UserRow)
+	s.logger.Info("get user", "actor", userEmail(actor), "path", r.URL.Path)
+	if s.store == nil {
+		s.logger.Error("get user storage disabled")
+		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
+		return
+	}
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		s.logger.Warn("get user invalid id", "id", idStr)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
+		return
+	}
+	u, ok := s.store.GetUserByID(r.Context(), id)
+	if !ok {
+		s.logger.Warn("get user not found", "id", id)
+		writeJSONResponse(w, http.StatusNotFound, map[string]any{"error": "user not found"})
+		return
+	}
+	s.logger.Info("get user ok", "id", id, "email", u.Email)
+	writeJSONResponse(w, http.StatusOK, userPublic(&u))
+}
+
+func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
+	actor, _ := r.Context().Value(ctxUserKey).(*store.UserRow)
+	s.logger.Info("delete user", "actor", userEmail(actor), "path", r.URL.Path)
+	if s.store == nil {
+		s.logger.Error("delete user storage disabled")
+		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
+		return
+	}
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		s.logger.Warn("delete user invalid id", "id", idStr)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
+		return
+	}
+	s.logger.Debug("delete user", "id", id, "actor", userEmail(actor))
+	if err := s.store.DeleteUser(r.Context(), id); err != nil {
+		s.logger.Warn("delete user not found", "id", id, "error", err)
+		writeJSONResponse(w, http.StatusNotFound, map[string]any{"error": "user not found"})
+		return
+	}
+	s.logger.Info("delete user ok", "id", id, "actor", userEmail(actor))
+	writeJSONResponse(w, http.StatusOK, map[string]any{"deleted": id})
+}
+
+func (s *Server) handlePatchUser(w http.ResponseWriter, r *http.Request) {
+	actor, _ := r.Context().Value(ctxUserKey).(*store.UserRow)
+	s.logger.Info("patch user", "actor", userEmail(actor), "path", r.URL.Path)
+	if s.store == nil {
+		s.logger.Error("patch user storage disabled")
+		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	defer r.Body.Close()
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
+		s.logger.Warn("patch user invalid id", "id", idStr)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
+		return
+	}
+	var req struct {
+		Status *string `json:"status"`
+		Role   *string `json:"role"`
+		Config *string `json:"config"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.logger.Warn("patch user invalid json", "error", err)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	s.logger.Debug("patch user payload", "id", id, "status", req.Status, "role", req.Role, "actor", userEmail(actor))
+	if req.Status == nil && req.Role == nil && req.Config == nil {
+		s.logger.Warn("patch user nothing to update", "id", id)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "nothing to update"})
+		return
+	}
+	if req.Status != nil {
+		st := *req.Status
+		if st != "pending" && st != "active" && st != "blocked" {
+			s.logger.Warn("patch user bad status", "status", st)
+			writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "status must be pending|active|blocked"})
+			return
+		}
+		if err := s.store.UpdateUserStatus(r.Context(), id, st); err != nil {
+			s.logger.Warn("patch user not found status", "id", id, "error", err)
+			writeJSONResponse(w, http.StatusNotFound, map[string]any{"error": "user not found"})
+			return
+		}
+	}
+	if req.Role != nil {
+		role := *req.Role
+		if role != "user" && role != "admin" {
+			s.logger.Warn("patch user bad role", "role", role)
+			writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "role must be user|admin"})
+			return
+		}
+		if err := s.store.UpdateUserRole(r.Context(), id, role); err != nil {
+			s.logger.Warn("patch user not found role", "id", id, "error", err)
+			writeJSONResponse(w, http.StatusNotFound, map[string]any{"error": "user not found"})
+			return
+		}
+	}
+	if req.Config != nil {
+		if len(*req.Config) > 8192 {
+			s.logger.Warn("patch user config too large", "id", id)
+			writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "config too large"})
+			return
+		}
+		if err := s.store.UpdateUserConfig(r.Context(), id, *req.Config); err != nil {
+			s.logger.Warn("patch user config not found", "id", id, "error", err)
+			writeJSONResponse(w, http.StatusNotFound, map[string]any{"error": "user not found"})
+			return
+		}
+	}
+	s.logger.Info("patch user ok", "id", id, "actor", userEmail(actor))
+	u, _ := s.store.GetUserByID(r.Context(), id)
+	writeJSONResponse(w, http.StatusOK, userPublic(&u))
+}
+
+func (s *Server) handleUpdateUserConfig(w http.ResponseWriter, r *http.Request) {
+	actor, _ := r.Context().Value(ctxUserKey).(*store.UserRow)
+	s.logger.Info("update user config", "actor", userEmail(actor), "path", r.URL.Path)
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	defer r.Body.Close()
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		s.logger.Warn("update config invalid id", "id", idStr)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
 		return
 	}
 	var req struct {
 		Config string `json:"config"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		s.logger.Warn("update config invalid json", "error", err)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
 		return
 	}
+	s.logger.Debug("update config payload", "id", id, "len", len(req.Config))
 	if len(req.Config) > 8192 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "config too large"})
+		s.logger.Warn("update config too large", "id", id)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "config too large"})
 		return
 	}
 	if err := s.store.UpdateUserConfig(r.Context(), id, req.Config); err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": "user not found"})
+		s.logger.Warn("update config not found", "id", id, "error", err)
+		writeJSONResponse(w, http.StatusNotFound, map[string]any{"error": "user not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"id": id, "config": req.Config})
+	s.logger.Info("update config ok", "id", id, "actor", userEmail(actor))
+	writeJSONResponse(w, http.StatusOK, map[string]any{"id": id, "config": req.Config})
+}
+
+func (s *Server) handleListUserKeys(w http.ResponseWriter, r *http.Request) {
+	actor, _ := r.Context().Value(ctxUserKey).(*store.UserRow)
+	s.logger.Info("list user keys", "actor", userEmail(actor), "path", r.URL.Path)
+	if s.store == nil {
+		s.logger.Error("list user keys storage disabled")
+		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
+		return
+	}
+	idStr := r.PathValue("id")
+	uid, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		s.logger.Warn("list user keys invalid id", "id", idStr)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
+		return
+	}
+	if _, ok := s.store.GetUserByID(r.Context(), uid); !ok {
+		s.logger.Warn("list user keys not found", "uid", uid)
+		writeJSONResponse(w, http.StatusNotFound, map[string]any{"error": "user not found"})
+		return
+	}
+	keys, err := s.store.ListApiKeys(r.Context(), uid)
+	if err != nil {
+		s.logger.Error("list user keys failed", "uid", uid, "error", err)
+		writeJSONResponse(w, http.StatusInternalServerError, map[string]any{"error": "list failed"})
+		return
+	}
+	if keys == nil {
+		keys = []store.ApiKeyRow{}
+	}
+	s.logger.Info("list user keys ok", "uid", uid, "count", len(keys))
+	writeJSONResponse(w, http.StatusOK, keys)
+}
+
+func (s *Server) handleCreateUserKey(w http.ResponseWriter, r *http.Request) {
+	actor, _ := r.Context().Value(ctxUserKey).(*store.UserRow)
+	s.logger.Info("create user key", "actor", userEmail(actor), "path", r.URL.Path)
+	if s.store == nil {
+		s.logger.Error("create user key storage disabled")
+		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	defer r.Body.Close()
+	idStr := r.PathValue("id")
+	uid, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		s.logger.Warn("create user key invalid id", "id", idStr)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
+		return
+	}
+	if _, ok := s.store.GetUserByID(r.Context(), uid); !ok {
+		s.logger.Warn("create user key not found", "uid", uid)
+		writeJSONResponse(w, http.StatusNotFound, map[string]any{"error": "user not found"})
+		return
+	}
+	var req struct {
+		Scopes string `json:"scopes"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	s.logger.Debug("create user key payload", "uid", uid, "scopes", req.Scopes, "actor", userEmail(actor))
+	if len(req.Scopes) > 256 {
+		s.logger.Warn("create user key scopes too large", "uid", uid)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "scopes too large"})
+		return
+	}
+	if req.Scopes != "" && req.Scopes != "mcp:read" && req.Scopes != "admin" {
+		s.logger.Warn("create user key invalid scopes", "scopes", req.Scopes)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid scopes"})
+		return
+	}
+	ak, err := s.store.CreateApiKey(r.Context(), uid, req.Scopes)
+	if err != nil {
+		s.logger.Error("create user key failed", "uid", uid, "error", err)
+		writeJSONResponse(w, http.StatusInternalServerError, map[string]any{"error": "create failed"})
+		return
+	}
+	s.logger.Info("create user key ok", "uid", uid, "key_id", ak.ID, "scopes", ak.Scopes, "actor", userEmail(actor))
+	writeJSONResponse(w, http.StatusCreated, ak)
+}
+
+func (s *Server) handleDeleteUserKey(w http.ResponseWriter, r *http.Request) {
+	actor, _ := r.Context().Value(ctxUserKey).(*store.UserRow)
+	s.logger.Info("delete user key", "actor", userEmail(actor), "path", r.URL.Path)
+	if s.store == nil {
+		s.logger.Error("delete user key storage disabled")
+		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
+		return
+	}
+	idStr := r.PathValue("id")
+	uid, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		s.logger.Warn("delete user key invalid user id", "id", idStr)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid user id"})
+		return
+	}
+	keyIdStr := r.PathValue("keyId")
+	kid, err := strconv.ParseInt(keyIdStr, 10, 64)
+	if err != nil {
+		s.logger.Warn("delete user key invalid key id", "id", keyIdStr)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid key id"})
+		return
+	}
+	s.logger.Debug("delete user key", "uid", uid, "key_id", kid, "actor", userEmail(actor))
+	if err := s.store.DeleteApiKey(r.Context(), kid, uid); err != nil {
+		s.logger.Warn("delete user key not found", "uid", uid, "key_id", kid, "error", err)
+		writeJSONResponse(w, http.StatusNotFound, map[string]any{"error": "not found"})
+		return
+	}
+	s.logger.Info("delete user key ok", "uid", uid, "key_id", kid, "actor", userEmail(actor))
+	writeJSONResponse(w, http.StatusOK, map[string]any{"deleted": kid})
+}
+
+func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
+	actor, _ := r.Context().Value(ctxUserKey).(*store.UserRow)
+	s.logger.Info("get config", "actor", userEmail(actor))
+	s.logger.Debug("get config debug", "cfg", fmt.Sprint(s.cfg))
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	cfg := s.cfg
+	writeJSONResponse(w, http.StatusOK, map[string]any{
+		"http":      map[string]any{"addr": cfg.HTTP.Addr, "rate_limit": cfg.HTTP.RateLimit},
+		"store":     map[string]any{"dsn": maskDSNShort(cfg.Store.DSN), "kind": cfg.Store.Kind},
+		"cache":     cfg.Cache,
+		"queue":     cfg.Queue,
+		"providers": cfg.Providers,
+		"planner":   cfg.Planner,
+		"log":       cfg.Log,
+		"telemetry": cfg.Telemetry,
+		"geocoder":  map[string]any{"kind": cfg.Geocoder.Kind, "url": cfg.Geocoder.URL, "attempts": cfg.Geocoder.Attempts},
+		"yandex":    map[string]any{"rasp_url": cfg.Yandex.RaspURL, "geocode_url": cfg.Yandex.GeocodeURL},
+		"nominatim": cfg.Nominatim,
+	})
+}
+
+func (s *Server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
+	actor, _ := r.Context().Value(ctxUserKey).(*store.UserRow)
+	s.logger.Info("put config", "actor", userEmail(actor), "remote", r.RemoteAddr)
+	s.logger.Debug("put config debug", "headers", fmt.Sprint(r.Header))
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	defer r.Body.Close()
+	var req map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.logger.Warn("put config invalid json", "error", err)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	s.logger.Debug("put config payload", "body", fmt.Sprint(req), "actor", userEmail(actor))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if v, ok := req["providers"]; ok {
+		if m, ok := v.(map[string]any); ok {
+			if en, ok := m["enabled"]; ok {
+				switch x := en.(type) {
+				case []any:
+					enabled := make([]string, 0, len(x))
+					for _, e := range x {
+						if s, ok := e.(string); ok {
+							enabled = append(enabled, strings.TrimSpace(s))
+						}
+					}
+					s.cfg.Providers.Enabled = enabled
+				case []string:
+					s.cfg.Providers.Enabled = x
+				case string:
+					s.cfg.Providers.Enabled = strings.Split(x, ",")
+				}
+			}
+		}
+	}
+	if v, ok := req["planner"]; ok {
+		if m, ok := v.(map[string]any); ok {
+			if eng, ok := m["engine"].(string); ok {
+				if eng != "csa" && eng != "raptor" {
+					s.logger.Warn("put config invalid engine", "engine", eng)
+					writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "planner.engine must be csa|raptor"})
+					return
+				}
+				s.cfg.Planner.Engine = eng
+			}
+		}
+	}
+	if v, ok := req["log"]; ok {
+		if m, ok := v.(map[string]any); ok {
+			if lvl, ok := m["level"].(string); ok {
+				if lvl != "debug" && lvl != "info" && lvl != "warn" && lvl != "error" {
+					s.logger.Warn("put config invalid log level", "level", lvl)
+					writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "log.level invalid"})
+					return
+				}
+				s.cfg.Log.Level = lvl
+			}
+			if levels, ok := m["levels"].(map[string]any); ok {
+				if s.cfg.Log.Levels == nil {
+					s.cfg.Log.Levels = map[string]string{}
+				}
+				for k, v2 := range levels {
+					if vs, ok := v2.(string); ok {
+						s.cfg.Log.Levels[k] = vs
+					}
+				}
+			}
+		}
+	}
+	s.logger.Info("config updated via API", "providers", s.cfg.Providers.Enabled, "planner", s.cfg.Planner.Engine, "log_level", s.cfg.Log.Level)
+	writeJSONResponse(w, http.StatusOK, map[string]any{"status": "ok", "providers": s.cfg.Providers.Enabled, "planner": s.cfg.Planner.Engine, "log": s.cfg.Log})
+}
+
+func userPublic(u *store.UserRow) map[string]any {
+	return map[string]any{"id": u.ID, "email": u.Email, "status": u.Status, "role": u.Role, "created_at": u.CreatedAt, "config": u.Config}
+}
+
+func maskDSNShort(dsn string) string {
+	if dsn == "" {
+		return ""
+	}
+	if len(dsn) > 12 {
+		return dsn[:6] + "***" + dsn[len(dsn)-4:]
+	}
+	return "***"
 }
 
 func (s *Server) handleAdminPage(w http.ResponseWriter, r *http.Request) {
+	reqID := fmt.Sprint(r.Context().Value(ctxKey("request_id")))
+	s.logger.Info("admin page", "method", r.Method, "path", r.URL.Path, "remote", r.RemoteAddr, "request_id", reqID)
+	s.logger.Debug("admin page debug", "headers", fmt.Sprint(r.Header), "query", r.URL.RawQuery)
+	data, err := fs.ReadFile(webFS, "web/index.html")
+	if err != nil {
+		s.logger.Error("admin page read failed", "error", err)
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<!doctype html><html><head><title>TravelMCP Admin</title><style>body{font-family:sans-serif;margin:40px}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:8px}</style></head><body><h1>TravelMCP Admin</h1><p>Uptime: %d s</p><h2>Providers</h2><pre>%s</pre><h2>Metrics</h2><pre>%s</pre><p>API: <a href="/api/v1/providers">/api/v1/providers</a> | <a href="/api/v1/dashboard">/api/v1/dashboard</a> | <a href="/api/v1/users">/api/v1/users</a> | <a href="/api/v1/me">/api/v1/me</a></p></body></html>`,
-		int64(time.Since(s.started).Seconds()),
-		html.EscapeString(toJSON(s.registry.HealthStatuses())),
-		html.EscapeString(toJSON(s.metrics.Named())),
-	)
+	w.Write(data)
+	s.logger.Debug("admin page served", "bytes", len(data))
 }
 
 func toJSON(v any) string {
@@ -429,7 +902,7 @@ func toJSON(v any) string {
 	return string(b)
 }
 
-func writeJSON(w http.ResponseWriter, status int, v any) {
+func writeJSONResponse(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
@@ -457,6 +930,67 @@ func metricsMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(rec, r)
 		telemetry.HTTPRequests.WithLabelValues(fmt.Sprint(rec.status), r.URL.Path).Inc()
 		_ = time.Since(start)
+	})
+}
+
+func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		reqID := r.Header.Get("X-Request-ID")
+		if reqID == "" {
+			if v := r.Context().Value(ctxKey("request_id")); v != nil {
+				if s, ok := v.(string); ok {
+					reqID = s
+				}
+			}
+		}
+		var bodyLog string
+		if s.logger.Enabled(r.Context(), slog.LevelDebug) && (r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch) {
+			if r.Body != nil {
+				limited := io.LimitReader(r.Body, 4096)
+				b, _ := io.ReadAll(limited)
+				if len(b) > 0 {
+					bodyLog = string(b)
+					r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(b), r.Body))
+				}
+			}
+		}
+		rec := &statusRecorder{ResponseWriter: w, status: 200}
+		next.ServeHTTP(rec, r)
+		elapsed := time.Since(start)
+		attrs := []any{
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rec.status,
+			"elapsed_ms", elapsed.Milliseconds(),
+			"remote", r.RemoteAddr,
+		}
+		if reqID != "" {
+			attrs = append(attrs, "request_id", reqID)
+		}
+		if u, ok := r.Context().Value(ctxUserKey).(*store.UserRow); ok && u != nil {
+			attrs = append(attrs, "user_id", u.ID, "email", u.Email, "role", u.Role)
+		} else if v := r.Context().Value(ctxUserKey); v != nil {
+			attrs = append(attrs, "user", fmt.Sprint(v))
+		}
+		if bodyLog != "" {
+			attrs = append(attrs, "body", bodyLog)
+		}
+		switch {
+		case rec.status >= 500:
+			s.logger.Error("request", attrs...)
+		case rec.status >= 400:
+			s.logger.Warn("request", attrs...)
+		default:
+			if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || r.URL.Path == "/metrics" {
+				s.logger.Debug("request", attrs...)
+			} else {
+				s.logger.Info("request", attrs...)
+			}
+		}
+		if s.logger.Enabled(r.Context(), slog.LevelDebug) && rec.status >= 400 {
+			s.logger.Debug("request debug", "method", r.Method, "path", r.URL.Path, "query", r.URL.RawQuery, "headers", fmt.Sprint(r.Header))
+		}
 	})
 }
 

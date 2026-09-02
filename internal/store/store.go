@@ -34,7 +34,9 @@ type Store interface {
 	GetUserByID(ctx context.Context, id int64) (UserRow, bool)
 	ListUsers(ctx context.Context) ([]UserRow, error)
 	UpdateUserStatus(ctx context.Context, id int64, status string) error
+	UpdateUserRole(ctx context.Context, id int64, role string) error
 	UpdateUserConfig(ctx context.Context, id int64, config string) error
+	DeleteUser(ctx context.Context, id int64) error
 	CreateApiKey(ctx context.Context, userID int64, scopes string) (ApiKeyRow, error)
 	GetApiKey(ctx context.Context, key string) (ApiKeyRow, bool)
 	ListApiKeys(ctx context.Context, userID int64) ([]ApiKeyRow, error)
@@ -116,9 +118,13 @@ func (p *pgStub) ListUsers(ctx context.Context) ([]UserRow, error)          { re
 func (p *pgStub) UpdateUserStatus(ctx context.Context, id int64, status string) error {
 	return errNotImplemented
 }
+func (p *pgStub) UpdateUserRole(ctx context.Context, id int64, role string) error {
+	return errNotImplemented
+}
 func (p *pgStub) UpdateUserConfig(ctx context.Context, id int64, config string) error {
 	return errNotImplemented
 }
+func (p *pgStub) DeleteUser(ctx context.Context, id int64) error { return errNotImplemented }
 func (p *pgStub) CreateApiKey(ctx context.Context, userID int64, scopes string) (ApiKeyRow, error) {
 	return ApiKeyRow{}, errNotImplemented
 }

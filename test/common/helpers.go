@@ -98,6 +98,9 @@ func StartServer(t *testing.T, bin string, port int) string {
 		"HTTP_ADDR="+fmt.Sprintf("127.0.0.1:%d", port),
 		"PROVIDERS_ENABLED=synth",
 		"ADMIN_TOKEN=",
+		"DATABASE_DSN=memory",
+		"TRAVELMCP__STORE__DSN=memory",
+		"TRAVELMCP__STORE__KIND=memory",
 	)
 	var logs safeBuffer
 	cmd.Stdout = &logs

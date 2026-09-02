@@ -2,44 +2,86 @@ http:
   addr: ":8080"
   read_header_timeout: "10s"
   shutdown_timeout: "10s"
-  rate_limit: { rps: 100, burst: 200 }
+  rate_limit: { rps: 100, burst: 200 } # дефолт; переопределения см. docs/10-observability.md
+  # rate_limit_overrides:
+  #   "/api/v1/login": { rps: 5, burst: 10 }
+  #   "/mcp": { rps: 20, burst: 40 }
 
 store:
-  kind: "memory" # memory|sqlite|postgres — dev: in-memory
-  dsn: "memory"
+  kind: "memory" # memory|sqlite|postgres
+  # sqlite файл:  dsn: "sqlite://./data/travelmcp.db"
+  # sqlite memory: dsn: "memory"
+  # postgres: dsn: "postgres://user:***@localhost:5432/travelmcp?sslmode=disable"
+  dsn: "${DATABASE_DSN:-}" # env DATABASE_DSN или TRAVELMCP__STORE__DSN
+  max_open_conns: 10
 
 cache:
-  kind: "memory"
-  ttl: "5m"
+  kind: "memory" # memory|redis
+  addr: ""
+  ttl: "1440m"
 
 queue:
-  kind: "memory"
+  kind: "memory" # memory|nats
+  url: ""
+
+# legacy: database.dsn — deprecated, используйте store.dsn (syncLegacy)
+# database:
+#   dsn: "postgres://postgres:postgres@localhost:5432/travelmcp?sslmode=disable"
 
 providers:
-  enabled: ["intercity", "synth"]
+  # По умолчанию источников нет: реальные провайдеры подключаются по мере
+  # реализации. Мок synth для демо/тестов включается явно:
+  #   PROVIDERS_ENABLED=synth
+  # Реестр Минтранса (межгородской автобус, регионы 22/42/54/70) — как есть:
+  #   PROVIDERS_ENABLED=intercity
+  #   (датасет data/reestr/regions.json с координатами собирается
+  #   scripts/extract-minstran.py с --osm и не хранится в git)
+  enabled: [
+    intercity
+  ]
   intercity:
+    # путь к JSON-датасету реестра (см. scripts/extract-minstran.py)
     reestr_path: "data/reestr/regions.json"
     bounds: "ru"
   gtfs:
     path: "data/gtfs/feed.zip"
 
+auth:
+  admin_token: "${ADMIN_TOKEN}" # dev: export ADMIN_TOKEN=dev-secret; prod — env обязателен
+
 planner:
-  engine: "raptor"
+  engine: "csa" # csa|raptor (RAPTOR frequency-based для межгорода)
   semaphore_enable: true
-  semaphore_size: 0
+  semaphore_size: 0 # 0 = NumCPU*2, иначе явный размер
 
 log:
-  level: "debug"
-  format: "text"
+  level: "debug" # debug|info|warn|error — переключение без пересборки (LOG_LEVEL env)
+  format: "text" # json|text
+  # per-модуль override: TRAVELMCP__LOG__LEVELS__STORE=debug
   levels:
-    httpx.yandex: "debug"
-
-auth:
-  admin_token: "${ADMIN_TOKEN:-dev-secret}"
-
-yandex:
-  rasp_key: "${YANDEX_RASP_KEY:-}"
-  geocode_key: "${YANDEX_GEOCODE_KEY:-}"
+    # http: "info"
+    # providers.intercity: "debug"
 
 telemetry:
   prometheus_addr: ":9090"
+
+geocoder:
+  # Приоритет по умолчанию: nominatim (OSM, бесплатно) -> yandex (требует ключ).
+  # Провайдеры регистрируются, kind — опциональный приоритет (пусто = nominatim first).
+  # При недоступности одного — фолбэк на следующий; attempts=3 циклит по списку.
+  kind: "" # nominatim|yandex|""
+  url: "" # legacy generic (deprecated) — используйте yandex.geocode_url / nominatim.url
+  key: "${GEOCODER_API_KEY:-${GEOCODER_KEY:-${YANDEX_GEOCODE_KEY}}}" # api_key
+  api_key: "${GEOCODER_API_KEY:-${GEOCODER_KEY:-${YANDEX_GEOCODE_KEY}}}" # alias
+  base_url: "" # alias url
+  attempts: 3 # попыток с фолбэком по приоритету [nominatim,yandex]
+
+nominatim:
+  url: "https://nominatim.openstreetmap.org"
+
+# Секреты — только через env (или .env, gitignored); в YAML не заполняются.
+yandex:
+  rasp_key: "${YANDEX_RASP_KEY}"
+  geocode_key: "${YANDEX_GEOCODE_KEY}"
+  geocode_url: "https://geocode-maps.yandex.ru/1.x"
+  geocode_kind: ""

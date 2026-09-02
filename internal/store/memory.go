@@ -115,6 +115,17 @@ func (m *MemoryStore) UpdateUserStatus(ctx context.Context, id int64, status str
 	m.users[id] = u
 	return nil
 }
+func (m *MemoryStore) UpdateUserRole(ctx context.Context, id int64, role string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.users[id]
+	if !ok {
+		return fmt.Errorf("not found")
+	}
+	u.Role = role
+	m.users[id] = u
+	return nil
+}
 func (m *MemoryStore) UpdateUserConfig(ctx context.Context, id int64, config string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -124,6 +135,23 @@ func (m *MemoryStore) UpdateUserConfig(ctx context.Context, id int64, config str
 	}
 	u.Config = config
 	m.users[id] = u
+	return nil
+}
+func (m *MemoryStore) DeleteUser(ctx context.Context, id int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.users[id]
+	if !ok {
+		return fmt.Errorf("not found")
+	}
+	delete(m.users, id)
+	delete(m.usersByEmail, u.Email)
+	for k, v := range m.apiKeys {
+		if v.UserID == id {
+			delete(m.apiKeys, k)
+			delete(m.apiKeysByKey, v.Key)
+		}
+	}
 	return nil
 }
 func generateMemKey() string {

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TravelMCP — Админка</title>
+<link rel="stylesheet" href="/admin/style.css">
+</head><body>
+<header><h1>✈️ TravelMCP</h1><span class="sub">админ-панель • пользователи • ключи • конфиг</span><div style="margin-left:auto" class="row"><input id="token" placeholder="ADMIN_TOKEN или tm_..." size="36"><button onclick="saveToken()">Сохранить</button><button class="secondary" onclick="clearToken()">Выйти</button><span id="who" class="badge">нет токена</span></div></header>
+<div class="wrap">
+<div id="authCard" class="card" style="border-left:4px solid var(--bad)"><div id="authBanner"><b>⛔ Не авторизован</b> — вставьте токен сверху. <span class="muted">Первый запуск админом: задайте <code>ADMIN_TOKEN</code> в <code>.env</code> или env (<code>ADMIN_TOKEN=secret</code>), перезапустите <code>go run ./cmd/mcp-server</code>, вставьте <code>secret</code> в поле сверху → Сохранить.</span></div><div id="authDetail" class="muted" style="margin-top:6px"></div></div>
+<div class="card">
+<div class="row" style="justify-content:space-between"><strong>Быстрый вход по паролю</strong><span class="muted">для обычных пользователей (после модерации)</span></div>
+<div class="row" style="margin-top:10px"><input id="loginEmail" placeholder="email"><input id="loginPass" type="password" placeholder="пароль"><button onclick="doLogin()">Войти → получить токен</button><button class="secondary" onclick="doRegister()">Регистрация</button></div>
+<div id="loginMsg" class="muted" style="margin-top:8px"></div>
+</div>
+<div class="tabs"><div class="tab active" onclick="showTab('users')">Пользователи</div><div class="tab" onclick="showTab('keys')">Ключи</div><div class="tab" onclick="showTab('config')">Конфиг</div><div class="tab" onclick="showTab('dash')">Дашборд</div></div>
+
+<div id="tab-users" class="card">
+<div class="row" style="justify-content:space-between"><h2>Пользователи</h2><button class="secondary" onclick="loadUsers()">↻ Обновить</button></div>
+<div style="overflow:auto"><table><thead><tr><th>ID</th><th>Email</th><th>Статус</th><th>Роль</th><th>Создан</th><th>Конфиг</th><th>Действия</th></tr></thead><tbody id="usersBody"><tr><td colspan="7" class="muted">нет данных — сохраните токен</td></tr></tbody></table></div>
+<div class="row" style="margin-top:12px"><input id="editUserId" placeholder="ID" style="width:80px"><select id="editStatus"><option value="">— статус —</option><option>active</option><option>pending</option><option>blocked</option></select><select id="editRole"><option value="">— роль —</option><option>user</option><option>admin</option></select><input id="editCfg" placeholder='config json' style="flex:1"><button onclick="patchUser()">Применить</button><button class="danger" onclick="deleteUser()">Удалить</button></div>
+</div>
+
+<div id="tab-keys" class="card hidden">
+<div class="row" style="justify-content:space-between"><h2>Ключи</h2><div class="row"><input id="keysUserId" placeholder="user ID" style="width:100px"><button class="secondary" onclick="loadKeysForUser()">Загрузить чужие (admin)</button><button class="secondary" onclick="loadMyKeys()">Мои</button></div></div>
+<div style="overflow:auto;margin-top:10px"><table><thead><tr><th>ID</th><th>User</th><th>Key</th><th>Scopes</th><th>Создан</th><th>Исп.</th><th></th></tr></thead><tbody id="keysBody"></tbody></table></div>
+<div class="row" style="margin-top:12px"><input id="newKeyScopes" value="mcp:read" style="width:140px"><button onclick="createKey()">Создать мой</button><button class="secondary" onclick="createUserKey()">Создать для user ID</button></div>
+<div id="lastKey" class="mono hidden" style="margin-top:12px;background:#f0fdf4;color:#065f46;border:1px solid #a7f3d0"></div>
+</div>
+
+<div id="tab-config" class="card hidden">
+<h2>Конфиг (hot-reload)</h2>
+<div class="grid">
+<div><label class="muted">Providers enabled (через запятую)</label><input id="cfgProviders" style="width:100%" placeholder="synth,intercity"></div>
+<div><label class="muted">Planner engine</label><select id="cfgEngine" style="width:100%"><option value="csa">csa</option><option value="raptor">raptor</option></select></div>
+<div><label class="muted">Log level</label><select id="cfgLog" style="width:100%"><option>debug</option><option>info</option><option>warn</option><option>error</option></select></div>
+<div><label class="muted">Log levels per-module (json)</label><input id="cfgLevels" style="width:100%" placeholder='{"http":"debug"}'></div>
+</div>
+<div class="row" style="margin-top:12px"><button onclick="loadConfig()">Загрузить</button><button class="ok" onclick="saveConfig()">Сохранить (PUT)</button></div>
+<pre id="cfgOut" class="mono" style="margin-top:12px">—</pre>
+</div>
+
+<div id="tab-dash" class="card hidden">
+<div class="row" style="justify-content:space-between"><h2>Дашборд</h2><button class="secondary" onclick="loadDash()">↻ Обновить</button></div>
+<div class="grid">
+<div><h3 style="margin:8px 0;font-size:14px">Providers</h3><pre id="provOut" class="mono">—</pre></div>
+<div><h3 style="margin:8px 0;font-size:14px">Metrics</h3><pre id="metricsOut" class="mono">—</pre></div>
+</div>
+</div>
+
+<div class="card"><span class="muted">API: <code>/api/v1/users</code> <code>/api/v1/keys</code> <code>/api/v1/config</code> <code>/healthz</code> <code>/readyz</code> • MCP <code>/mcp</code></span></div>
+</div>
+<div id="toast" class="toast"></div>
+<script src="/admin/app.js"></script></body></html>
