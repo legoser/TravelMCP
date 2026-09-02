@@ -81,3 +81,26 @@ queue: { kind: "memory", url: "" }              # memory|nats
 ```
 
 Фабрики `internal/cache` / `internal/queue` — `memory` по умолчанию, `redis`/`nats` подключаются по `kind`.
+
+## Почему `reestr_path` в конфиге
+
+`providers.intercity.reestr_path: "data/reestr/regions.json"` — путь к датасету Минтранса, собранному `scripts/extract-minstran.py` (XLSX → JSON + `--osm` геокодинг). Файл не коммитится (`data/` в `.gitignore`), путь меняется между контурами:
+- `config.test.yaml: "testdata/reestr/mini.json"` — мини-фикстура для тестов,
+- `config.dev.yaml: "data/reestr/regions.json"` — локальный полный дамп,
+- `config.prod.yaml` — тот же путь, но dataset кладётся волюмом/секретом.
+`PROVIDERS_ENABLED=intercity` без пути → `intercity.Health() Up:false`. Для смены источника (`gtfs`) добавляется `providers.gtfs.path` — та же точка.
+
+## Выбор planner engine
+
+`planner.engine: "csa"|"raptor"` — **не переключается на лету per-запрос**, выбирается при старте из конфига (` TRAVELMCP__PLANNER__ENGINE=raptor`).
+
+- **csa (Connection Scan Algorithm)** — сканирует `Connections` по времени, `O(conns)`. Быстрее на малых/средних сетях (`synth` 7 стопов, `intercity` 255 стопов) — `5-30 мс`, проще дебажить, Pareto `6` прогонов. Рекомендуется для `dev/test` и сетей до `10k` соединений.
+- **raptor (Round-bAsed)** — раундово расслабляет маршруты, `O(rounds * routes)`, лучше на плотных частотах (`>50` активных рейсов), частотах 5-15 мин — `2-10 мс` на `intercity`. Нужен `routeTrips` индекс.
+
+Критерий: если `active>50` рейсов/день — `raptor`; если сеть разреженная, трансфер-граф важнее — `csa`. Для `prod` с `intercity` рекомендуется `raptor` (`config.prod.yaml`), для `synth` хватит `csa`. Смена — перезапуск (`systemd`/`k8s rollout`) без перекомпиляции.
+
+## Хардкоды defaults — исправлено
+
+Ранее `middleware.NewRateLimiter` и `planner.NewWithConfig` содержали `100/200` и `NumCPU*2` внутри кода. Теперь единственный источник — `config.Defaults()` (`config.go:102`, `120`):
+- `HTTP.RateLimit {100,200}` и `Planner.SemaphoreSize = runtime.NumCPU()*2`
+- `NewRateLimiter`/`NewWithConfig` берут `cfg` значения, fallback `def = Defaults().HTTP.RateLimit` — дубликат удалён, `PLANNER_SEMAPHORE_SIZE`/`HTTP_RATE_LIMIT_*` только из `Config`.

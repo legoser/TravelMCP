@@ -49,11 +49,12 @@ type RateLimiter struct {
 func NewRateLimiter(cfg config.HTTP) *RateLimiter {
 	defRPS := cfg.RateLimit.RPS
 	defBurst := cfg.RateLimit.Burst
+	def := config.Defaults().HTTP.RateLimit
 	if defRPS <= 0 {
-		defRPS = 100
+		defRPS = def.RPS
 	}
 	if defBurst <= 0 {
-		defBurst = 200
+		defBurst = def.Burst
 	}
 	return &RateLimiter{
 		limiters:  map[string]*bucket{},

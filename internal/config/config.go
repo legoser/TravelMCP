@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -117,7 +118,7 @@ func Defaults() *Config {
 				ReestrPath: "data/reestr/regions.json",
 			},
 		},
-		Planner: Planner{Engine: "csa", SemaphoreSize: 0, SemaphoreEnable: true},
+		Planner: Planner{Engine: "csa", SemaphoreSize: runtime.NumCPU() * 2, SemaphoreEnable: true},
 		Log:     Log{Level: "info", Format: "json", Levels: map[string]string{}},
 	}
 }
