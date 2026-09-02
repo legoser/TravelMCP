@@ -12,6 +12,12 @@ import (
 	"travelmcp/internal/httpx"
 )
 
+func init() {
+	geocoder.Register("yandex", func(cfg config.Yandex, client *httpx.Client) geocoder.Geocoder {
+		return New(cfg, client)
+	})
+}
+
 type Geocoder struct {
 	cfg    config.Yandex
 	client *httpx.Client

@@ -13,11 +13,16 @@ import (
 	"time"
 
 	"travelmcp/internal/config"
+	"travelmcp/internal/geocoder"
+	"travelmcp/internal/httpx"
 	"travelmcp/internal/logger"
 	"travelmcp/internal/providers"
 	"travelmcp/internal/server"
 	"travelmcp/internal/store"
 	"travelmcp/internal/telemetry"
+
+	_ "travelmcp/internal/adapters/nominatim"
+	_ "travelmcp/internal/adapters/yandex"
 )
 
 func main() {
@@ -35,6 +40,11 @@ func main() {
 	logger := factory.For("main")
 	slog.SetDefault(logger)
 	logger.Info("config loaded", "path", configPath, "addr", cfg.HTTP.Addr, "providers", strings.Join(cfg.Providers.Enabled, ","), "dsn", maskDSN(cfg.Database.DSN), "reestr", cfg.Providers.Intercity.ReestrPath, "log_level", cfg.Log.Level, "log_format", cfg.Log.Format)
+
+	httpxClient := httpx.New(logger, "geocoder")
+	if _, err := geocoder.New(cfg.Yandex, httpxClient); err != nil {
+		logger.Warn("geocoder init", "kind", cfg.Yandex.GeocodeKind, "error", err)
+	}
 
 	metrics := telemetry.New()
 	regStart := time.Now()
