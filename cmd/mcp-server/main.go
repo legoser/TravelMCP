@@ -76,11 +76,15 @@ func main() {
 		logger.Info("storage disabled", "reason", "DATABASE_DSN empty")
 	}
 
+	readTimeout := parseDuration(cfg.HTTP.ReadHeaderTimeout, 10*time.Second)
+	shutdownTimeout := parseDuration(cfg.HTTP.ShutdownTimeout, 10*time.Second)
 	srv := &http.Server{
 		Addr:              cfg.HTTP.Addr,
 		Handler:           server.NewWithStore(cfg, logger, metrics, registry, st),
-		ReadHeaderTimeout: 10 * time.Second,
+		ReadHeaderTimeout: readTimeout,
 	}
+	_ = shutdownTimeout
+	_ = readTimeout
 	logger.Info("http setup completed", "total_startup_ms", time.Since(totalStart).Milliseconds())
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -95,7 +99,7 @@ func main() {
 	select {
 	case <-ctx.Done():
 		logger.Info("shutting down")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			logger.Error("graceful shutdown failed", "error", err)
@@ -123,6 +127,16 @@ func maskDSN(dsn string) string {
 		return "***"
 	}
 	return dsn
+}
+
+func parseDuration(s string, def time.Duration) time.Duration {
+	if s == "" {
+		return def
+	}
+	if d, err := time.ParseDuration(s); err == nil {
+		return d
+	}
+	return def
 }
 
 // deprecated: use logger.NewFactory

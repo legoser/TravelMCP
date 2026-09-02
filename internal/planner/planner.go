@@ -1,12 +1,15 @@
 package planner
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
 
+	"golang.org/x/sync/semaphore"
 	"travelmcp/internal/geo"
 	"travelmcp/internal/model"
 	"travelmcp/internal/telemetry"
@@ -16,24 +19,25 @@ type Planner struct {
 	metrics *telemetry.Metrics
 	engine  string
 	logger  *slog.Logger
+	sem     *semaphore.Weighted
 }
 
 func New(metrics *telemetry.Metrics) *Planner {
-	return &Planner{metrics: metrics, engine: "csa"}
+	return &Planner{metrics: metrics, engine: "csa", sem: semaphore.NewWeighted(int64(runtime.NumCPU() * 2))}
 }
 
 func NewWithEngine(metrics *telemetry.Metrics, engine string) *Planner {
 	if engine == "" {
 		engine = "csa"
 	}
-	return &Planner{metrics: metrics, engine: engine}
+	return &Planner{metrics: metrics, engine: engine, sem: semaphore.NewWeighted(int64(runtime.NumCPU() * 2))}
 }
 
 func NewWithLogger(metrics *telemetry.Metrics, engine string, logger *slog.Logger) *Planner {
 	if engine == "" {
 		engine = "csa"
 	}
-	return &Planner{metrics: metrics, engine: engine, logger: logger}
+	return &Planner{metrics: metrics, engine: engine, logger: logger, sem: semaphore.NewWeighted(int64(runtime.NumCPU() * 2))}
 }
 
 func (p *Planner) Plan(net *model.Network, from, to model.Coords, params model.SearchParams) (*model.Journey, error) {
@@ -52,6 +56,12 @@ type PlaceHint struct {
 }
 
 func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, params model.SearchParams, fromPlace, toPlace *PlaceHint) (*model.Journey, error) {
+	if p.sem != nil {
+		if err := p.sem.Acquire(context.Background(), 1); err != nil {
+			return nil, err
+		}
+		defer p.sem.Release(1)
+	}
 	maxWalk := params.MaxWalkMinutes
 	if maxWalk <= 0 {
 		maxWalk = 30

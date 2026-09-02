@@ -18,6 +18,7 @@ import (
 
 	"travelmcp/internal/config"
 	"travelmcp/internal/mcp"
+	"travelmcp/internal/middleware"
 	"travelmcp/internal/planner"
 	"travelmcp/internal/providers"
 	"travelmcp/internal/store"
@@ -67,7 +68,8 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 	mux.Handle("GET /admin", s.auth(http.HandlerFunc(s.handleAdminPage), "admin"))
 	mux.Handle("/mcp", s.auth(mcpHandler, "mcp:read"))
 
-	return mux
+	rl := middleware.NewRateLimiter(cfg.HTTP)
+	return rl.Middleware(mux)
 }
 
 type ctxKey string
