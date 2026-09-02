@@ -64,16 +64,22 @@ telemetry:
   prometheus_addr: ":9090"
 
 geocoder:
-  kind: "yandex" # yandex|nominatim — именной выбор адаптера
-  url: "https://geocode-maps.yandex.ru/1.x" # base_url
+  # Приоритет по умолчанию: nominatim (OSM, бесплатно) -> yandex (требует ключ).
+  # Провайдеры регистрируются, kind — опциональный приоритет (пусто = nominatim first).
+  # При недоступности одного — фолбэк на следующий; attempts=3 циклит по списку.
+  kind: "" # nominatim|yandex|""
+  url: "" # legacy generic (deprecated) — используйте yandex.geocode_url / nominatim.url
   key: "${GEOCODER_API_KEY:-${GEOCODER_KEY:-${YANDEX_GEOCODE_KEY}}}" # api_key
   api_key: "${GEOCODER_API_KEY:-${GEOCODER_KEY:-${YANDEX_GEOCODE_KEY}}}" # alias
-  base_url: "https://geocode-maps.yandex.ru/1.x" # alias url
+  base_url: "" # alias url
+  attempts: 3 # попыток с фолбэком по приоритету [nominatim,yandex]
+
+nominatim:
+  url: "https://nominatim.openstreetmap.org"
 
 # Секреты — только через env (или .env, gitignored); в YAML не заполняются.
 yandex:
   rasp_key: "${YANDEX_RASP_KEY}"
-  # deprecated: используйте geocoder.* (syncLegacy сохраняет совместимость)
   geocode_key: "${YANDEX_GEOCODE_KEY}"
   geocode_url: "https://geocode-maps.yandex.ru/1.x"
-  geocode_kind: "yandex"
+  geocode_kind: ""

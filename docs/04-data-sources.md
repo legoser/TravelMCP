@@ -60,9 +60,88 @@
   - уважение rate-limit и robots.txt; осознаёт риски ToS.
 - **Оценка**: 1–2 дня на первый сайт + постоянное сопровождение.
 
+### Геокодеры (Yandex + Nominatim OSM, реализовано)
+
+Интерфейс `internal/geocoder` (`Geocode`/`Reverse`) + фабрика-реестр `geocoder.Register` + `fallback` с `attempts=3` и приоритетом по умолчанию `nominatim → yandex` (`internal/geocoder/fallback.go:20` `defaultPriority`). Выбор через `GEOCODER_KIND` (пусто = авто-приоритет, `yandex`/`nominatim` = предпочесть), конфигурация в `configs/config.example.yaml` (`geocoder`/`yandex`/`nominatim`) и env (`GEOCODER_*`, `YANDEX_GEOCODE_*`, `NOMINATIM_URL`, префикс `TRAVELMCP__`).
+
+#### Yandex Geocoder
+
+- **Endpoint**: `https://geocode-maps.yandex.ru/1.x/?format=json&apikey=<key>&geocode=<query>` (`adapters/yandex` через `httpx`, `User-Agent` не требуется).
+- **Ключ**: `YANDEX_GEOCODE_KEY` / `GEOCODER_API_KEY` (иначе `geocode key empty` → fallback).
+- **Запрос (2026-09-02, ключ `b619...`):**
+  ```sh
+  curl "https://geocode-maps.yandex.ru/1.x/?format=json&apikey=$YANDEX_GEOCODE_KEY&geocode=Новосибирск"
+  ```
+- **Ответ** (`response.GeoObjectCollection.featureMember[0].GeoObject.Point.pos` = `"lon lat"`):
+  ```json
+  {"response":{"GeoObjectCollection":{"featureMember":[{"GeoObject":{"Point":{"pos":"82.92043 55.03020"}}}]} } }
+  ```
+  → `Result{Lat:55.03020, Lon:82.92043, Name:"Новосибирск"}`.
+- **Качество на 2026-09-02 (7 запросов, см. логи `httpx`):**
+
+  | Запрос | Yandex | Комментарий |
+  |---|---|---|
+  | Новосибирск | `55.03020,82.92043` | ok (центр) |
+  | Барнаул автовокзал | `56.21272,56.74141` | **ошибка** — точка под Пермью, не Барнаул (`53.35,83.75` ожидалось) |
+  | Юрга | `55.71356,84.93388` | ok |
+  | Пермь | `58.01046,56.22944` | ok |
+  | Екатеринбург | `56.83743,60.59764` | ok |
+  | Кемерово автовокзал | `not found` | **не найден** |
+  | Новосибирский автовокзал-Главный | `54.82602,82.66569` | **ошибка** — ~25 км от `55.0411,83.0274` |
+
+  Без `kind`/`bounded` Yandex часто промахивается по автовокзалам; для города ok.
+
+#### Nominatim (OSM, бесплатно)
+
+- **Endpoint**: `https://nominatim.openstreetmap.org/search?q=<query>&format=json&limit=1&accept-language=ru&addressdetails=0` и `reverse?lat=&lon=&format=json&accept-language=ru` (`adapters/nominatim`, `httpx`, заголовок `User-Agent: travelmcp/1.0 (travelmcp@example.com)` обязателен по политике OSM, лимит ≤1 req/s).
+- **Запрос:**
+  ```sh
+  curl -A "travelmcp/1.0 (travelmcp@example.com)" \
+    "https://nominatim.openstreetmap.org/search?q=Барнаул%20автовокзал&format=json&limit=1&accept-language=ru"
+  ```
+- **Ответ:**
+  ```json
+  [{"place_id":217259914,"lat":"53.35182","lon":"83.75862",
+    "display_name":"Автовокзал, 12, площадь Победы, Железнодорожный район, Барнаул, городской округ Барнаул, Алтайский край, 656000, Россия",
+    "osm_type":"node","class":"amenity","type":"bus_station"}]
+  ```
+  → `Result{Lat:53.35182, Lon:83.75862, Name:"Автовокзал, 12, ... Барнаул ..."}`.
+- **Reverse:**
+  ```sh
+  curl -A "travelmcp/1.0 (travelmcp@example.com)" \
+    "https://nominatim.openstreetmap.org/reverse?lat=55.0411&lon=83.0274&format=json&accept-language=ru"
+  # {"display_name":"Новосибирский автовокзал-Главный, 37/2, Гусинобродское шоссе, ..., 630010, Россия","lat":"55.0410573","lon":"83.0273816","class":"amenity","type":"bus_station"}
+  ```
+- **Качество (те же 7 запросов, `httpx` 150–1500 мс, 2026-09-02):**
+
+  | Запрос | Nominatim | Точность |
+  |---|---|---|
+  | Новосибирск | `54.96781,82.95160` | город-центр, ok |
+  | Барнаул автовокзал | `53.35182,83.75862` | **точно** — 100 м от эталона `53.3523,83.7591` |
+  | Юрга | `55.71360,84.93480` | ok |
+  | Пермь | `58.01085,56.23185` | ok |
+  | Екатеринбург | `56.83821,60.60079` | ok |
+  | Кемерово автовокзал | `55.34155,86.06103` | **точно** — 30 м от `55.3416,86.0610` |
+  | Новосибирский автовокзал-Главный | `55.04112,83.02747` | **точно** — 10 м от `55.0411,83.0274` |
+
+  OSM/Nominatim покрывает автовокзалы по `amenity=bus_station` из `tools/osm-extract` (24895 объектов СФО) — для межгорода точнее Яндекса и без ключа/квоты.
+
+#### Вывод и приоритет
+
+Сравнение равнозначно по городам, по автовокзалам **Nominatim лучше** (3/7 Yandex ошибок vs 0/7 OSM). Поэтому приоритет по умолчанию зафиксирован `nominatim → yandex` (`fallback.go:20`). `GEOCODER_KIND=yandex` принудительно меняет порядок; `GEOCODER_ATTEMPTS=3` циклит `[предпочитаемый, остальные по defaultPriority, остальные по алфавиту]`. При пустом `YANDEX_GEOCODE_KEY` Yandex сразу `key empty` и fallback отрабатывает на Nominatim (проверено `go run` с `Yandex key=""` → `nominatim 200`).
+
+#### Конфигурация
+
+```yaml
+geocoder: {kind: "", attempts: 3} # "" = nominatim first
+nominatim: {url: "https://nominatim.openstreetmap.org"}
+yandex: {geocode_key: "${YANDEX_GEOCODE_KEY}", geocode_url: "https://geocode-maps.yandex.ru/1.x"}
+```
+Env: `GEOCODER_KIND`, `GEOCODER_ATTEMPTS`, `NOMINATIM_URL`/`TRAVELMCP__NOMINATIM__URL`, `YANDEX_GEOCODE_KEY`/`URL`, `GEOCODER_API_KEY` (legacy).
+
 ### Платные API (Yandex Maps, 2ГИС и др.)
 
-На первом этапе **не используются**: коммерческие тарифы и лицензии, запрещающие хранение/перепродажу. Архитектура допускает добавление REST-провайдера позже без изменений ядра.
+На первом этапе **не используются** кроме геокодера (выше): коммерческие тарифы и лицензии, запрещающие хранение/перепродажу. Архитектура допускает добавление REST-провайдера позже без изменений ядра.
 
 ## Метрики здоровья по каждому источнику
 

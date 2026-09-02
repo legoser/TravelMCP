@@ -42,8 +42,11 @@ func main() {
 	logger.Info("config loaded", "path", configPath, "addr", cfg.HTTP.Addr, "providers", strings.Join(cfg.Providers.Enabled, ","), "dsn", maskDSN(cfg.Database.DSN), "reestr", cfg.Providers.Intercity.ReestrPath, "log_level", cfg.Log.Level, "log_format", cfg.Log.Format)
 
 	httpxClient := httpx.New(logger, "geocoder")
-	if _, err := geocoder.New(cfg.Yandex, httpxClient); err != nil {
-		logger.Warn("geocoder init", "kind", cfg.Yandex.GeocodeKind, "error", err)
+	if g, err := geocoder.New(*cfg, httpxClient); err != nil {
+		logger.Warn("geocoder init", "error", err)
+	} else {
+		_ = g
+		logger.Info("geocoder ready", "attempts", cfg.Geocoder.Attempts, "preferred", cfg.Geocoder.Kind, "registered", geocoder.RegisteredKinds())
 	}
 
 	metrics := telemetry.New()

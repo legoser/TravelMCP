@@ -65,29 +65,34 @@ type Auth struct {
 }
 
 type Yandex struct {
-	RaspKey string `yaml:"rasp_key"`
-	RaspURL string `yaml:"rasp_url"`
-	// Deprecated: use Geocoder.*
+	RaspKey     string `yaml:"rasp_key"`
+	RaspURL     string `yaml:"rasp_url"`
 	GeocodeKey  string `yaml:"geocode_key"`
 	GeocodeURL  string `yaml:"geocode_url"`
 	GeocodeKind string `yaml:"geocode_kind"`
 }
 
+type Nominatim struct {
+	URL string `yaml:"url"`
+}
+
 type Geocoder struct {
-	Kind   string `yaml:"kind"`
-	URL    string `yaml:"url"`
-	Key    string `yaml:"key"`
-	ApiKey string `yaml:"api_key"`
+	Kind     string `yaml:"kind"`
+	URL      string `yaml:"url"`
+	Key      string `yaml:"key"`
+	ApiKey   string `yaml:"api_key"`
+	Attempts int    `yaml:"attempts"`
 }
 
 func (g *Geocoder) UnmarshalYAML(node *yaml.Node) error {
 	type raw Geocoder
 	var tmp struct {
-		Kind    string `yaml:"kind"`
-		URL     string `yaml:"url"`
-		BaseURL string `yaml:"base_url"`
-		Key     string `yaml:"key"`
-		ApiKey  string `yaml:"api_key"`
+		Kind     string `yaml:"kind"`
+		URL      string `yaml:"url"`
+		BaseURL  string `yaml:"base_url"`
+		Key      string `yaml:"key"`
+		ApiKey   string `yaml:"api_key"`
+		Attempts *int   `yaml:"attempts"`
 	}
 	if err := node.Decode(&tmp); err != nil {
 		return err
@@ -105,6 +110,9 @@ func (g *Geocoder) UnmarshalYAML(node *yaml.Node) error {
 		g.Key = tmp.ApiKey
 	}
 	g.ApiKey = g.Key
+	if tmp.Attempts != nil {
+		g.Attempts = *tmp.Attempts
+	}
 	return nil
 }
 
@@ -135,6 +143,7 @@ type Config struct {
 	Auth      Auth      `yaml:"auth"`
 	Geocoder  Geocoder  `yaml:"geocoder"`
 	Yandex    Yandex    `yaml:"yandex"`
+	Nominatim Nominatim `yaml:"nominatim"`
 	Planner   Planner   `yaml:"planner"`
 	Log       Log       `yaml:"log"`
 	Telemetry Telemetry `yaml:"telemetry"`
@@ -158,10 +167,11 @@ func Defaults() *Config {
 				ReestrPath: "data/reestr/regions.json",
 			},
 		},
-		Geocoder: Geocoder{Kind: "yandex", URL: "https://geocode-maps.yandex.ru/1.x", Key: ""},
-		Yandex:   Yandex{GeocodeURL: "https://geocode-maps.yandex.ru/1.x", GeocodeKind: "yandex"},
-		Planner:  Planner{Engine: "csa", SemaphoreSize: runtime.NumCPU() * 2, SemaphoreEnable: true},
-		Log:      Log{Level: "info", Format: "json", Levels: map[string]string{}},
+		Geocoder:  Geocoder{Kind: "", URL: "", Key: "", Attempts: 3},
+		Yandex:    Yandex{GeocodeURL: "https://geocode-maps.yandex.ru/1.x", GeocodeKind: ""},
+		Nominatim: Nominatim{URL: "https://nominatim.openstreetmap.org"},
+		Planner:   Planner{Engine: "csa", SemaphoreSize: runtime.NumCPU() * 2, SemaphoreEnable: true},
+		Log:       Log{Level: "info", Format: "json", Levels: map[string]string{}},
 	}
 }
 
@@ -197,14 +207,20 @@ func syncLegacy(cfg *Config) {
 	if cfg.Database.DSN == "" && cfg.Store.DSN != "" {
 		cfg.Database.DSN = cfg.Store.DSN
 	}
-	if cfg.Geocoder.Kind == "" && cfg.Yandex.GeocodeKind != "" {
-		cfg.Geocoder.Kind = cfg.Yandex.GeocodeKind
+	if cfg.Nominatim.URL == "" {
+		cfg.Nominatim.URL = "https://nominatim.openstreetmap.org"
 	}
-	if cfg.Geocoder.URL == "" && cfg.Yandex.GeocodeURL != "" {
-		cfg.Geocoder.URL = cfg.Yandex.GeocodeURL
+	if cfg.Yandex.GeocodeURL == "" {
+		cfg.Yandex.GeocodeURL = "https://geocode-maps.yandex.ru/1.x"
 	}
-	if cfg.Geocoder.Key == "" && cfg.Yandex.GeocodeKey != "" {
-		cfg.Geocoder.Key = cfg.Yandex.GeocodeKey
+	if cfg.Geocoder.URL != "" && cfg.Yandex.GeocodeURL == "https://geocode-maps.yandex.ru/1.x" {
+		cfg.Yandex.GeocodeURL = cfg.Geocoder.URL
+	}
+	if cfg.Geocoder.Key != "" && cfg.Yandex.GeocodeKey == "" {
+		cfg.Yandex.GeocodeKey = cfg.Geocoder.Key
+	}
+	if cfg.Geocoder.ApiKey != "" && cfg.Yandex.GeocodeKey == "" {
+		cfg.Yandex.GeocodeKey = cfg.Geocoder.ApiKey
 	}
 	if cfg.Geocoder.ApiKey == "" && cfg.Geocoder.Key != "" {
 		cfg.Geocoder.ApiKey = cfg.Geocoder.Key
@@ -212,14 +228,8 @@ func syncLegacy(cfg *Config) {
 	if cfg.Geocoder.Key == "" && cfg.Geocoder.ApiKey != "" {
 		cfg.Geocoder.Key = cfg.Geocoder.ApiKey
 	}
-	if cfg.Yandex.GeocodeKind == "" && cfg.Geocoder.Kind != "" {
-		cfg.Yandex.GeocodeKind = cfg.Geocoder.Kind
-	}
-	if cfg.Yandex.GeocodeURL == "" && cfg.Geocoder.URL != "" {
-		cfg.Yandex.GeocodeURL = cfg.Geocoder.URL
-	}
-	if cfg.Yandex.GeocodeKey == "" && cfg.Geocoder.Key != "" {
-		cfg.Yandex.GeocodeKey = cfg.Geocoder.Key
+	if cfg.Geocoder.Attempts <= 0 {
+		cfg.Geocoder.Attempts = 3
 	}
 }
 
@@ -245,41 +255,44 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("YANDEX_GEOCODE_KEY"); v != "" {
 		cfg.Yandex.GeocodeKey = v
-		cfg.Geocoder.Key = v
 	}
 	if v := os.Getenv("YANDEX_GEOCODE_URL"); v != "" {
 		cfg.Yandex.GeocodeURL = v
-		cfg.Geocoder.URL = v
 	}
 	if v := os.Getenv("YANDEX_GEOCODE_KIND"); v != "" {
 		cfg.Yandex.GeocodeKind = v
-		cfg.Geocoder.Kind = v
+	}
+	if v := os.Getenv("NOMINATIM_URL"); v != "" {
+		cfg.Nominatim.URL = v
+	}
+	if v := os.Getenv("NOMINATIM_BASE_URL"); v != "" {
+		cfg.Nominatim.URL = v
 	}
 	if v := os.Getenv("GEOCODER_KIND"); v != "" {
 		cfg.Geocoder.Kind = v
-		cfg.Yandex.GeocodeKind = v
 	}
 	if v := os.Getenv("GEOCODER_URL"); v != "" {
 		cfg.Geocoder.URL = v
-		cfg.Yandex.GeocodeURL = v
 	}
 	if v := os.Getenv("GEOCODER_BASE_URL"); v != "" {
 		cfg.Geocoder.URL = v
-		cfg.Yandex.GeocodeURL = v
 	}
 	if v := os.Getenv("GEOCODER_KEY"); v != "" {
 		cfg.Geocoder.Key = v
 		cfg.Geocoder.ApiKey = v
-		cfg.Yandex.GeocodeKey = v
 	}
 	if v := os.Getenv("GEOCODER_API_KEY"); v != "" {
 		cfg.Geocoder.Key = v
 		cfg.Geocoder.ApiKey = v
-		cfg.Yandex.GeocodeKey = v
 	}
 	if v := os.Getenv("GEOCODER_API-KEY"); v != "" {
 		cfg.Geocoder.Key = v
 		cfg.Geocoder.ApiKey = v
+	}
+	if v := os.Getenv("GEOCODER_ATTEMPTS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.Geocoder.Attempts = n
+		}
 	}
 	if v := os.Getenv("PLANNER_ENGINE"); v != "" {
 		cfg.Planner.Engine = v
@@ -395,6 +408,39 @@ func setByPath(cfg *Config, parts []string, v string) {
 	case "auth":
 		if len(parts) == 2 && parts[1] == "admin_token" {
 			cfg.Auth.AdminToken = v
+		}
+	case "geocoder":
+		if len(parts) == 2 && parts[1] == "kind" {
+			cfg.Geocoder.Kind = v
+		}
+		if len(parts) == 2 && (parts[1] == "url" || parts[1] == "base_url") {
+			cfg.Geocoder.URL = v
+		}
+		if len(parts) == 2 && (parts[1] == "key" || parts[1] == "api_key") {
+			cfg.Geocoder.Key = v
+			cfg.Geocoder.ApiKey = v
+		}
+		if len(parts) == 2 && parts[1] == "attempts" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				cfg.Geocoder.Attempts = n
+			}
+		}
+	case "yandex":
+		if len(parts) == 2 && parts[1] == "rasp_key" {
+			cfg.Yandex.RaspKey = v
+		}
+		if len(parts) == 2 && (parts[1] == "geocode_key" || parts[1] == "api_key" || parts[1] == "key") {
+			cfg.Yandex.GeocodeKey = v
+		}
+		if len(parts) == 2 && (parts[1] == "geocode_url" || parts[1] == "url" || parts[1] == "base_url") {
+			cfg.Yandex.GeocodeURL = v
+		}
+		if len(parts) == 2 && parts[1] == "geocode_kind" {
+			cfg.Yandex.GeocodeKind = v
+		}
+	case "nominatim":
+		if len(parts) == 2 && (parts[1] == "url" || parts[1] == "base_url") {
+			cfg.Nominatim.URL = v
 		}
 	}
 }
