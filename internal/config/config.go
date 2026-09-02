@@ -74,9 +74,38 @@ type Yandex struct {
 }
 
 type Geocoder struct {
-	Kind string `yaml:"kind"`
-	URL  string `yaml:"url"`
-	Key  string `yaml:"key"`
+	Kind   string `yaml:"kind"`
+	URL    string `yaml:"url"`
+	Key    string `yaml:"key"`
+	ApiKey string `yaml:"api_key"`
+}
+
+func (g *Geocoder) UnmarshalYAML(node *yaml.Node) error {
+	type raw Geocoder
+	var tmp struct {
+		Kind    string `yaml:"kind"`
+		URL     string `yaml:"url"`
+		BaseURL string `yaml:"base_url"`
+		Key     string `yaml:"key"`
+		ApiKey  string `yaml:"api_key"`
+	}
+	if err := node.Decode(&tmp); err != nil {
+		return err
+	}
+	_ = raw{}
+	g.Kind = tmp.Kind
+	if tmp.URL != "" {
+		g.URL = tmp.URL
+	} else if tmp.BaseURL != "" {
+		g.URL = tmp.BaseURL
+	}
+	if tmp.Key != "" {
+		g.Key = tmp.Key
+	} else if tmp.ApiKey != "" {
+		g.Key = tmp.ApiKey
+	}
+	g.ApiKey = g.Key
+	return nil
 }
 
 type Planner struct {
@@ -177,6 +206,12 @@ func syncLegacy(cfg *Config) {
 	if cfg.Geocoder.Key == "" && cfg.Yandex.GeocodeKey != "" {
 		cfg.Geocoder.Key = cfg.Yandex.GeocodeKey
 	}
+	if cfg.Geocoder.ApiKey == "" && cfg.Geocoder.Key != "" {
+		cfg.Geocoder.ApiKey = cfg.Geocoder.Key
+	}
+	if cfg.Geocoder.Key == "" && cfg.Geocoder.ApiKey != "" {
+		cfg.Geocoder.Key = cfg.Geocoder.ApiKey
+	}
 	if cfg.Yandex.GeocodeKind == "" && cfg.Geocoder.Kind != "" {
 		cfg.Yandex.GeocodeKind = cfg.Geocoder.Kind
 	}
@@ -228,9 +263,23 @@ func applyEnv(cfg *Config) {
 		cfg.Geocoder.URL = v
 		cfg.Yandex.GeocodeURL = v
 	}
+	if v := os.Getenv("GEOCODER_BASE_URL"); v != "" {
+		cfg.Geocoder.URL = v
+		cfg.Yandex.GeocodeURL = v
+	}
 	if v := os.Getenv("GEOCODER_KEY"); v != "" {
 		cfg.Geocoder.Key = v
+		cfg.Geocoder.ApiKey = v
 		cfg.Yandex.GeocodeKey = v
+	}
+	if v := os.Getenv("GEOCODER_API_KEY"); v != "" {
+		cfg.Geocoder.Key = v
+		cfg.Geocoder.ApiKey = v
+		cfg.Yandex.GeocodeKey = v
+	}
+	if v := os.Getenv("GEOCODER_API-KEY"); v != "" {
+		cfg.Geocoder.Key = v
+		cfg.Geocoder.ApiKey = v
 	}
 	if v := os.Getenv("PLANNER_ENGINE"); v != "" {
 		cfg.Planner.Engine = v

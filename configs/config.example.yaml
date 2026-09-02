@@ -64,9 +64,11 @@ telemetry:
   prometheus_addr: ":9090"
 
 geocoder:
-  kind: "yandex" # yandex|nominatim
-  url: "https://geocode-maps.yandex.ru/1.x"
-  key: "${GEOCODER_KEY:-${YANDEX_GEOCODE_KEY}}"
+  kind: "yandex" # yandex|nominatim — именной выбор адаптера
+  url: "https://geocode-maps.yandex.ru/1.x" # base_url
+  key: "${GEOCODER_API_KEY:-${GEOCODER_KEY:-${YANDEX_GEOCODE_KEY}}}" # api_key
+  api_key: "${GEOCODER_API_KEY:-${GEOCODER_KEY:-${YANDEX_GEOCODE_KEY}}}" # alias
+  base_url: "https://geocode-maps.yandex.ru/1.x" # alias url
 
 # Секреты — только через env (или .env, gitignored); в YAML не заполняются.
 yandex:
