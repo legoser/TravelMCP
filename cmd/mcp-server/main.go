@@ -33,7 +33,7 @@ func main() {
 	totalStart := time.Now()
 	cfg, err := config.Load(configPath)
 	if err != nil {
-		slog.New(slog.NewJSONHandler(os.Stdout, nil)).Error("config load failed", "error", err)
+		slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})).Error("config load failed", "error", err)
 		os.Exit(1)
 	}
 	factory := logger.NewFactory(cfg.Log)
@@ -53,7 +53,8 @@ func main() {
 
 	metrics := telemetry.New()
 	regStart := time.Now()
-	registry := providers.NewRegistryWith(cfg.Providers.Enabled, cfg.Providers.Intercity.ReestrPath)
+	intercityLogger := factory.For("providers.intercity")
+	registry := providers.NewRegistryWithLogger(cfg.Providers.Enabled, cfg.Providers.Intercity.ReestrPath, intercityLogger)
 	logger.Info("provider registry initialized", "enabled", cfg.Providers.Enabled, "elapsed", time.Since(regStart).String())
 
 	var st store.Store

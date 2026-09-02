@@ -93,10 +93,22 @@ type reestrBlock struct {
 
 type Intercity struct {
 	reestrPath string
+	logger     *slog.Logger
 }
 
 func NewIntercity(reestrPath string, now time.Time) *Intercity {
-	return &Intercity{reestrPath: reestrPath}
+	return NewIntercityWithLogger(reestrPath, now, nil)
+}
+
+func NewIntercityWithLogger(reestrPath string, now time.Time, logger *slog.Logger) *Intercity {
+	if logger == nil {
+		logger = slog.Default()
+		if logger.Handler() != nil {
+			return &Intercity{reestrPath: reestrPath, logger: logger}
+		}
+		return &Intercity{reestrPath: reestrPath, logger: logger.With("module", "providers.intercity")}
+	}
+	return &Intercity{reestrPath: reestrPath, logger: logger}
 }
 
 func (p *Intercity) ID() string {
@@ -190,7 +202,7 @@ func (p *Intercity) build(ds *reestrDataset, day time.Time) *model.Network {
 			active++
 		}
 	}
-	slog.Info("intercity build schedules", "total", len(ds.Schedules), "active", active, "day", day.Format("2006-01-02"))
+	p.logger.Info("intercity build schedules", "total", len(ds.Schedules), "active", active, "day", day.Format("2006-01-02"))
 
 	if active > 50 {
 		numCPU := runtime.NumCPU()
@@ -217,7 +229,7 @@ func (p *Intercity) build(ds *reestrDataset, day time.Time) *model.Network {
 			}(sched)
 		}
 		wg.Wait()
-		slog.Info("intercity build trips parallel", "trips", len(net.Trips), "connections", len(net.Connections), "elapsed_ms", time.Since(t0).Milliseconds())
+		p.logger.Info("intercity build trips parallel", "trips", len(net.Trips), "connections", len(net.Connections), "elapsed_ms", time.Since(t0).Milliseconds())
 	} else {
 		for _, sched := range ds.Schedules {
 			if !p.serviceActive(net, sched.ServiceID, day) {
@@ -228,7 +240,7 @@ func (p *Intercity) build(ds *reestrDataset, day time.Time) *model.Network {
 	}
 
 	p.addTransferLinks(net)
-	slog.Info("intercity build completed", "stops", len(net.Stops), "trips", len(net.Trips), "connections", len(net.Connections), "transfers", len(net.Transfers), "elapsed_ms", time.Since(t0).Milliseconds())
+	p.logger.Info("intercity build completed", "stops", len(net.Stops), "trips", len(net.Trips), "connections", len(net.Connections), "transfers", len(net.Transfers), "elapsed_ms", time.Since(t0).Milliseconds())
 
 	sort.Slice(net.Connections, func(i, j int) bool {
 		return net.Connections[i].Departure.Before(net.Connections[j].Departure)

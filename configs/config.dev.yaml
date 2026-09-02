@@ -56,12 +56,14 @@ planner:
 
 log:
   level: "debug" # debug|info|warn|error — переключение без пересборки (LOG_LEVEL env)
-  format: "text" # json|text
+  format: "text" # json|text — текст с цветом и временем 15:04:05.000 для консоли
+  add_source: false
   # per-модуль override: TRAVELMCP__LOG__LEVELS__STORE=debug
   levels:
     planner: "info"
     # http: "info"
     # providers.intercity: "debug"
+    # httpx: "debug"
 
 telemetry:
   prometheus_addr: ":9090"

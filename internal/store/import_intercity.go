@@ -439,6 +439,7 @@ func geocodeStation(name, region string) (float64, float64, bool) {
 	q := fmt.Sprintf("Россия, %s, %s", regionName, name)
 	u := "https://geocode-maps.yandex.ru/1.x/?format=json&results=1&apikey=" + url.QueryEscape(key) + "&geocode=" + url.QueryEscape(q)
 	client := &http.Client{Timeout: 10 * time.Second}
+	slog.Default().Debug("geocode yandex fallback", "q", q, "region", region)
 	resp, err := client.Get(u)
 	if err != nil {
 		return 0, 0, false

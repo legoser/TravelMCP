@@ -54,13 +54,15 @@ planner:
 
 log:
   level: "info" # debug|info|warn|error — переключение без пересборки (LOG_LEVEL env)
-  format: "json" # json|text
+  format: "json" # json|text — json для prod/логов, text с цветом для консоли
+  add_source: false # true — добавляет file:line в debug
   # per-модуль override: TRAVELMCP__LOG__LEVELS__STORE=debug
   levels:
     #planner: "info"
     #mcp: "info"
     # http: "info"
     # providers.intercity: "debug"
+    # httpx: "debug" # внешние запросы подробно
 
 telemetry:
   prometheus_addr: ":9090"

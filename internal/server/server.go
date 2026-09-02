@@ -917,7 +917,7 @@ func writeJSONResponse(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		slog.Error("write json", "error", err)
+		slog.Default().Error("write json", "error", err)
 	}
 }
 

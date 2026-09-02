@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"log/slog"
 	"sync"
 	"time"
 
@@ -43,11 +44,19 @@ func NewRegistry(enabled []string) *Registry {
 }
 
 func NewRegistryWith(enabled []string, intercityPath string) *Registry {
+	return NewRegistryWithLogger(enabled, intercityPath, nil)
+}
+
+func NewRegistryWithLogger(enabled []string, intercityPath string, logger *slog.Logger) *Registry {
 	r := &Registry{byID: map[string]Provider{}, intercityPath: intercityPath}
 	if len(enabled) == 0 {
 		return r
 	}
 	for _, id := range enabled {
+		if id == IntercityID && logger != nil {
+			r.Register(NewIntercityWithLogger(intercityPath, time.Now(), logger))
+			continue
+		}
 		r.enable(id)
 	}
 	return r
@@ -55,7 +64,7 @@ func NewRegistryWith(enabled []string, intercityPath string) *Registry {
 
 var factories = map[string]func(path string) Provider{
 	SynthID:     func(_ string) Provider { return NewSynth(time.Now()) },
-	IntercityID: func(p string) Provider { return NewIntercity(p, time.Now()) },
+	IntercityID: func(p string) Provider { return NewIntercityWithLogger(p, time.Now(), nil) },
 	GTFSID:      func(p string) Provider { return NewGTFS(p) },
 }
 

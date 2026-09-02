@@ -1,9 +1,16 @@
 package logger
 
 import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
 	"log/slog"
 	"os"
+	"runtime"
 	"strings"
+	"sync"
+	"time"
 
 	"travelmcp/internal/config"
 )
@@ -33,11 +40,143 @@ func NewFactory(cfg config.Log) *Factory {
 
 func (f *Factory) For(module string) *slog.Logger {
 	lvl := f.levelFor(module)
-	opts := &slog.HandlerOptions{Level: lvl, AddSource: f.addSource || lvl == slog.LevelDebug}
+	addSource := f.addSource || lvl == slog.LevelDebug
+	var h slog.Handler
 	if strings.ToLower(f.format) == "text" {
-		return slog.New(slog.NewTextHandler(os.Stdout, opts))
+		h = newColorHandler(os.Stdout, lvl, addSource)
+	} else {
+		opts := &slog.HandlerOptions{
+			Level:     lvl,
+			AddSource: addSource,
+			ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+				if a.Key == slog.TimeKey && len(groups) == 0 {
+					if t, ok := a.Value.Any().(time.Time); ok {
+						a.Value = slog.StringValue(t.Format(time.RFC3339Nano))
+					}
+				}
+				return a
+			},
+		}
+		h = slog.NewJSONHandler(os.Stdout, opts)
 	}
-	return slog.New(slog.NewJSONHandler(os.Stdout, opts))
+	lg := slog.New(h)
+	if module != "" {
+		lg = lg.With("module", module)
+	}
+	return lg
+}
+
+func colorLevel(l slog.Level) string {
+	switch {
+	case l <= slog.LevelDebug:
+		return "\x1b[36mDBG\x1b[0m"
+	case l <= slog.LevelInfo:
+		return "\x1b[32mINF\x1b[0m"
+	case l <= slog.LevelWarn:
+		return "\x1b[33mWRN\x1b[0m"
+	default:
+		return "\x1b[31mERR\x1b[0m"
+	}
+}
+
+type colorHandler struct {
+	mu        sync.Mutex
+	w         io.Writer
+	level     slog.Level
+	addSource bool
+	attrs     []slog.Attr
+	groups    []string
+}
+
+func newColorHandler(w io.Writer, level slog.Level, addSource bool) *colorHandler {
+	return &colorHandler{w: w, level: level, addSource: addSource}
+}
+
+func (h *colorHandler) Enabled(_ context.Context, lvl slog.Level) bool { return lvl >= h.level }
+
+func (h *colorHandler) Handle(_ context.Context, r slog.Record) error {
+	tm := r.Time.Format("15:04:05.000")
+	lvl := colorLevel(r.Level)
+	src := ""
+	if h.addSource && r.PC != 0 {
+		fs := runtime.CallersFrames([]uintptr{r.PC})
+		if fr, ok := <-func() chan runtime.Frame {
+			ch := make(chan runtime.Frame, 1)
+			go func() {
+				f, _ := fs.Next()
+				ch <- f
+			}()
+			return ch
+		}(); ok && fr.File != "" {
+			src = fmt.Sprintf(" %s:%d", shortFile(fr.File), fr.Line)
+		}
+	}
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "%s %s%s %s", tm, lvl, src, r.Message)
+	if len(h.attrs) > 0 {
+		for _, a := range h.attrs {
+			buf.WriteString(" ")
+			buf.WriteString(a.Key)
+			buf.WriteString("=")
+			buf.WriteString(formatValue(a.Value))
+		}
+	}
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == "" {
+			return true
+		}
+		buf.WriteString(" ")
+		if len(h.groups) > 0 {
+			buf.WriteString(strings.Join(h.groups, "."))
+			buf.WriteString(".")
+		}
+		buf.WriteString(a.Key)
+		buf.WriteString("=")
+		buf.WriteString(formatValue(a.Value))
+		return true
+	})
+	buf.WriteString("\n")
+	h.mu.Lock()
+	_, err := h.w.Write(buf.Bytes())
+	h.mu.Unlock()
+	return err
+}
+
+func (h *colorHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	nh := &colorHandler{w: h.w, level: h.level, addSource: h.addSource, attrs: append(append([]slog.Attr(nil), h.attrs...), attrs...), groups: h.groups}
+	return nh
+}
+
+func (h *colorHandler) WithGroup(name string) slog.Handler {
+	nh := &colorHandler{w: h.w, level: h.level, addSource: h.addSource, attrs: append([]slog.Attr(nil), h.attrs...), groups: append(append([]string(nil), h.groups...), name)}
+	return nh
+}
+
+func shortFile(f string) string {
+	if idx := strings.LastIndex(f, "/"); idx >= 0 {
+		if j := strings.LastIndex(f[:idx], "/"); j >= 0 {
+			return f[j+1:]
+		}
+		return f[idx+1:]
+	}
+	return f
+}
+
+func formatValue(v slog.Value) string {
+	switch v.Kind() {
+	case slog.KindString:
+		s := v.String()
+		if strings.ContainsAny(s, " \t\n\"'") {
+			return fmt.Sprintf("%q", s)
+		}
+		return s
+	case slog.KindTime:
+		return v.Time().Format("15:04:05")
+	case slog.KindDuration:
+		return v.Duration().String()
+	default:
+		return fmt.Sprintf("%v", v.Any())
+	}
 }
 
 func (f *Factory) levelFor(module string) slog.Level {
