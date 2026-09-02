@@ -42,6 +42,20 @@ services:
 
 Middleware `requestIDMiddleware` — `X-Request-ID` генерируется (`uuid`) если не передан, прокидывается в `ctx` и `X-Request-ID` ответа. `httpx` логирует `module`/`method`/`host`/`status`/`elapsed_ms` на `Info`, тело `8192` байт на `Debug`.
 
+### Форматеры `internal/logger/factory.go:35`
+
+- `log.format=json` — прод/ELK, `time RFC3339Nano`, `level INFO`, `module` атрибут, `add_source` опционально.
+- `log.format=text` — консоль, человекочитаемый: `15:04:05.000` + цветной уровень `DBG/INF/WRN/ERR` (ANSI 36/32/33/31), `module` префикс, `key=value` без кавычек, пробел-разделитель, `AddSource` как `file:line` только на `debug`.
+- Per-модуль уровни `log.levels` (`TRAVELMCP__LOG__LEVELS__STORE=debug`) — `Factory.levelFor` точное совпадение → `providers.intercity` → `providers` prefix → global.
+- Фикс проскока дефолтного формата: `providers/intercity.go:193` переведён с `slog.Info` (global `slog.Default`) на инжектированный `logger *slog.Logger` (`internal/providers/intercity.go:96 NewIntercityWithLogger`, `cmd/mcp-server/main.go:56 NewRegistryWithLogger`), `server.go:920 writeJSONResponse` через `slog.Default().Error`. `configs/config.dev.yaml:59 format=text level=debug`, `config.example.yaml:57 json`.
+- Пример `text`:
+  ```
+  23:34:49.056 INF main config loaded module=main path=configs/config.dev.yaml addr=:8080
+  23:34:49.131 INF providers.intercity intercity build completed stops=255 trips=579 elapsed_ms=3
+  23:35:28.607 INF http request method=GET path=/healthz status=200 elapsed_ms=0 request_id=...
+  ```
+  `json` остаётся машинно-парсимым, `text` — цветной человекочитаемый.
+
 ## Конфигурация rate-limit и semaphore
 
 В единой точке `configs/config.yaml` → `internal/config/config.go:13`:

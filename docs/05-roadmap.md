@@ -64,7 +64,7 @@
 | 4 | Наблюдаемость `GET /metrics` prom, `otel` трейсы, `request-id`, `telemetry` на prom | 1,3 | 4д | `curl /metrics` prom формат |
 | 5 | Универсальные источники `adapters/gtfs`, `Geocoder`, `osm` (из 05 Этап 2/3) | 2,4 | 1–2н | `PROVIDERS_ENABLED=gtfs,intercity` merged сеть |
 | 6 | Пользователи/админка/стоимость (05 Этап 4/5), скрейпер (05 Этап 6) | 3 | 5–7д | per-user `config`, `/api/v1/config` hot-reload |
-| 7 | i18n последняя (`locales`, `Classifier` per-регион) | все | 3–5д | — |
+| 7 | i18n последняя (`locales`, `Classifier` per-регион) — **backlog, отложена 2026-09-02** (приоритет — логирование и данные `docs/11-data-import-strategy.md`) | все | 3–5д | — |
 
 См. `docs/09-refactor-plan.md` §1–2 для схемы `Config`/`log.levels`/`httpx`.
 

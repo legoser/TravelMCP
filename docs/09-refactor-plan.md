@@ -126,7 +126,7 @@ yandex: { rasp_key: "${YANDEX_RASP_KEY}", geocode_key: "${YANDEX_GEOCODE_KEY}" }
 - [ ] Стоимость `model.Cost` `Leg.Cost` `model.go:272` — `CostBasis fare|estimate`, движок тарифа.
 - [ ] Скрейпер модульный (по необходимости, 2–4д/сайт) с `Health` метриками (05 Этап 6).
 
-### Фаза 7 — i18n (последняя, 3–5 дней)
+### Фаза 7 — i18n (последняя, 3–5 дней) — **backlog 2026-09-02, отложена** (см. `docs/11-data-import-strategy.md`)
 *Зависит от всех предыдущих (классификатор уже модульный).*
 - [ ] `locales/ru.yaml,en.yaml` (`go-i18n` или `x/text`) — перевод кодов `validate` и описаний MCP `mcp/mcp.go:50`.
 - [ ] `StopClassifier` per-регион (ru/en) из `configs/classifiers/*.yaml`.
