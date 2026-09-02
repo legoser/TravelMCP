@@ -1,23 +1,45 @@
 http:
   addr: ":8080"
+  read_header_timeout: "10s"
+  shutdown_timeout: "10s"
+  rate_limit: { rps: 100, burst: 200 }
 
-database:
+store:
+  kind: "memory" # memory|sqlite|postgres — dev: in-memory
   dsn: "memory"
+
+cache:
+  kind: "memory"
+  ttl: "5m"
+
+queue:
+  kind: "memory"
 
 providers:
   enabled: ["intercity", "synth"]
   intercity:
     reestr_path: "data/reestr/regions.json"
-
-log:
-  level: "debug"
+    bounds: "ru"
+  gtfs:
+    path: "data/gtfs/feed.zip"
 
 planner:
   engine: "raptor"
+  semaphore_enable: true
+  semaphore_size: 0
+
+log:
+  level: "debug"
+  format: "text"
+  levels:
+    httpx.yandex: "debug"
 
 auth:
-  admin_token: "${ADMIN_TOKEN:-dev-secret}" # dev fallback
+  admin_token: "${ADMIN_TOKEN:-dev-secret}"
 
 yandex:
-  rasp_key: ""
-  geocode_key: ""
+  rasp_key: "${YANDEX_RASP_KEY:-}"
+  geocode_key: "${YANDEX_GEOCODE_KEY:-}"
+
+telemetry:
+  prometheus_addr: ":9090"

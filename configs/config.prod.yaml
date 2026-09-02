@@ -1,19 +1,43 @@
 http:
   addr: ":8080"
+  read_header_timeout: "10s"
+  shutdown_timeout: "10s"
+  rate_limit: { rps: 100, burst: 200 }
+  # rate_limit_overrides:
+  #   "/api/v1/login": { rps: 5, burst: 10 }
+  #   "/mcp": { rps: 20, burst: 40 }
 
-database:
-  dsn: "postgres://postgres:postgres@localhost:5432/travelmcp?sslmode=disable"
+store:
+  kind: "postgres" # postgres|sqlite|memory — prod: postgres (pgx/PostGIS)
+  dsn: "${DATABASE_DSN}" # postgres://user:***@db:5432/travelmcp?sslmode=disable
+  max_open_conns: 20
+
+cache:
+  kind: "redis" # memory|redis
+  addr: "${CACHE_ADDR:-redis:6379}"
+  ttl: "5m"
+
+queue:
+  kind: "nats" # memory|nats
+  url: "${QUEUE_URL:-nats://nats:4222}"
 
 providers:
   enabled: ["intercity"]
   intercity:
     reestr_path: "data/reestr/regions.json"
-
-log:
-  level: "info"
+    bounds: "ru"
+  gtfs:
+    path: "data/gtfs/feed.zip"
 
 planner:
   engine: "raptor"
+  semaphore_enable: true
+  semaphore_size: 0
+
+log:
+  level: "info"
+  format: "json"
+  levels: {}
 
 auth:
   admin_token: "${ADMIN_TOKEN}"
@@ -21,3 +45,6 @@ auth:
 yandex:
   rasp_key: "${YANDEX_RASP_KEY}"
   geocode_key: "${YANDEX_GEOCODE_KEY}"
+
+telemetry:
+  prometheus_addr: ":9090"

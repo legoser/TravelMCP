@@ -1,7 +1,9 @@
 http:
   addr: ":8080"
+  rate_limit: { rps: 1000, burst: 2000 }
 
-database:
+store:
+  kind: "memory"
   dsn: "memory"
 
 providers:
@@ -11,9 +13,11 @@ providers:
 
 log:
   level: "warn"
+  format: "text"
 
 planner:
   engine: "csa"
+  semaphore_enable: false
 
 auth:
   admin_token: "test-secret"

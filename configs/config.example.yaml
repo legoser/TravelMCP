@@ -7,8 +7,26 @@ http:
   #   "/api/v1/login": { rps: 5, burst: 10 }
   #   "/mcp": { rps: 20, burst: 40 }
 
-database:
-  dsn: "postgres://postgres:postgres@localhost:5432/travelmcp?sslmode=disable"
+store:
+  kind: "memory" # memory|sqlite|postgres
+  # sqlite файл:  dsn: "sqlite://./data/travelmcp.db"
+  # sqlite memory: dsn: "memory"
+  # postgres: dsn: "postgres://user:***@localhost:5432/travelmcp?sslmode=disable"
+  dsn: "${DATABASE_DSN:-}" # env DATABASE_DSN или TRAVELMCP__STORE__DSN
+  max_open_conns: 10
+
+cache:
+  kind: "memory" # memory|redis
+  addr: ""
+  ttl: "5m"
+
+queue:
+  kind: "memory" # memory|nats
+  url: ""
+
+# legacy: database.dsn — deprecated, используйте store.dsn (syncLegacy)
+# database:
+#   dsn: "postgres://postgres:postgres@localhost:5432/travelmcp?sslmode=disable"
 
 providers:
   # По умолчанию источников нет: реальные провайдеры подключаются по мере
@@ -18,14 +36,16 @@ providers:
   #   PROVIDERS_ENABLED=intercity
   #   (датасет data/reestr/regions.json с координатами собирается
   #   scripts/extract-minstran.py с --osm и не хранится в git)
-  enabled:
-    []
+  enabled: []
   intercity:
     # путь к JSON-датасету реестра (см. scripts/extract-minstran.py)
     reestr_path: "data/reestr/regions.json"
+    bounds: "ru"
+  gtfs:
+    path: "data/gtfs/feed.zip"
 
 auth:
-  admin_token: "${ADMIN_TOKEN}" # dev: export ADMIN_TOKEN=dev-secret; prod — env ADMIN_TOKEN обязателен
+  admin_token: "${ADMIN_TOKEN}" # dev: export ADMIN_TOKEN=dev-secret; prod — env обязателен
 
 planner:
   engine: "csa" # csa|raptor (RAPTOR frequency-based для межгорода)
@@ -40,16 +60,10 @@ log:
     # http: "info"
     # providers.intercity: "debug"
 
-store:
-  kind: "memory" # memory|sqlite|postgres (dsn)
-  dsn: "${DATABASE_DSN:-}"
-cache:
-  kind: "memory" # memory|redis
-  ttl: "5m"
-queue:
-  kind: "memory" # memory|nats
+telemetry:
+  prometheus_addr: ":9090"
 
 # Секреты — только через env (или .env, gitignored); в YAML не заполняются.
 yandex:
-  rasp_key: ""
-  geocode_key: ""
+  rasp_key: "${YANDEX_RASP_KEY}"
+  geocode_key: "${YANDEX_GEOCODE_KEY}"
