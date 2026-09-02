@@ -181,6 +181,97 @@ func (t *txStore) FindStation(ctx context.Context, name, region string) (Station
 	}
 	return r, true
 }
+func (t *txStore) CreateUser(ctx context.Context, email, passHash, role string) (int64, error) {
+	status := "pending"
+	if role == "admin" {
+		status = "active"
+	}
+	res, err := t.tx.ExecContext(ctx, `INSERT INTO users(email, pass_hash, status, role, created_at, config) VALUES(?,?,?,?,?,?)`, email, passHash, status, role, time.Now().Unix(), "")
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+func (t *txStore) GetUserByEmail(ctx context.Context, email string) (UserRow, bool) {
+	var r UserRow
+	err := t.tx.QueryRowContext(ctx, `SELECT id, email, pass_hash, status, role, created_at, config FROM users WHERE email=?`, email).Scan(&r.ID, &r.Email, &r.PassHash, &r.Status, &r.Role, &r.CreatedAt, &r.Config)
+	if err != nil {
+		return UserRow{}, false
+	}
+	return r, true
+}
+func (t *txStore) GetUserByID(ctx context.Context, id int64) (UserRow, bool) {
+	var r UserRow
+	err := t.tx.QueryRowContext(ctx, `SELECT id, email, pass_hash, status, role, created_at, config FROM users WHERE id=?`, id).Scan(&r.ID, &r.Email, &r.PassHash, &r.Status, &r.Role, &r.CreatedAt, &r.Config)
+	if err != nil {
+		return UserRow{}, false
+	}
+	return r, true
+}
+func (t *txStore) ListUsers(ctx context.Context) ([]UserRow, error) {
+	rows, err := t.tx.QueryContext(ctx, `SELECT id, email, pass_hash, status, role, created_at, config FROM users ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UserRow
+	for rows.Next() {
+		var r UserRow
+		rows.Scan(&r.ID, &r.Email, &r.PassHash, &r.Status, &r.Role, &r.CreatedAt, &r.Config)
+		out = append(out, r)
+	}
+	return out, nil
+}
+func (t *txStore) UpdateUserStatus(ctx context.Context, id int64, status string) error {
+	_, err := t.tx.ExecContext(ctx, `UPDATE users SET status=? WHERE id=?`, status, id)
+	return err
+}
+func (t *txStore) UpdateUserConfig(ctx context.Context, id int64, config string) error {
+	_, err := t.tx.ExecContext(ctx, `UPDATE users SET config=? WHERE id=?`, config, id)
+	return err
+}
+func (t *txStore) CreateApiKey(ctx context.Context, userID int64, scopes string) (ApiKeyRow, error) {
+	key := fmt.Sprintf("tm_%d_%d", userID, time.Now().UnixNano())
+	if scopes == "" {
+		scopes = "mcp:read"
+	}
+	res, err := t.tx.ExecContext(ctx, `INSERT INTO api_keys(user_id, key, scopes, created_at, last_used) VALUES(?,?,?,?,?)`, userID, key, scopes, time.Now().Unix(), 0)
+	if err != nil {
+		return ApiKeyRow{}, err
+	}
+	id, _ := res.LastInsertId()
+	return ApiKeyRow{ID: id, UserID: userID, Key: key, Scopes: scopes, CreatedAt: time.Now().Unix()}, nil
+}
+func (t *txStore) GetApiKey(ctx context.Context, key string) (ApiKeyRow, bool) {
+	var r ApiKeyRow
+	err := t.tx.QueryRowContext(ctx, `SELECT id, user_id, key, scopes, created_at, last_used FROM api_keys WHERE key=?`, key).Scan(&r.ID, &r.UserID, &r.Key, &r.Scopes, &r.CreatedAt, &r.LastUsed)
+	if err != nil {
+		return ApiKeyRow{}, false
+	}
+	return r, true
+}
+func (t *txStore) ListApiKeys(ctx context.Context, userID int64) ([]ApiKeyRow, error) {
+	rows, err := t.tx.QueryContext(ctx, `SELECT id, user_id, key, scopes, created_at, last_used FROM api_keys WHERE user_id=? ORDER BY id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ApiKeyRow
+	for rows.Next() {
+		var r ApiKeyRow
+		rows.Scan(&r.ID, &r.UserID, &r.Key, &r.Scopes, &r.CreatedAt, &r.LastUsed)
+		out = append(out, r)
+	}
+	return out, nil
+}
+func (t *txStore) DeleteApiKey(ctx context.Context, id int64, userID int64) error {
+	_, err := t.tx.ExecContext(ctx, `DELETE FROM api_keys WHERE id=? AND user_id=?`, id, userID)
+	return err
+}
+func (t *txStore) TouchApiKey(ctx context.Context, key string) error {
+	_, err := t.tx.ExecContext(ctx, `UPDATE api_keys SET last_used=? WHERE key=?`, time.Now().Unix(), key)
+	return err
+}
 
 func (s *SQLiteStore) Migrate(ctx context.Context) error {
 	stmts := []string{
@@ -235,6 +326,14 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS imports (
 			provider_id TEXT PRIMARY KEY, at INTEGER, records INTEGER, status TEXT, snapshot TEXT, checksum TEXT, issues INTEGER
 		)`,
+		`CREATE TABLE IF NOT EXISTS users (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			email TEXT UNIQUE, pass_hash TEXT, status TEXT, role TEXT, created_at INTEGER, config TEXT
+		)`,
+		`CREATE TABLE IF NOT EXISTS api_keys (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER REFERENCES users(id), key TEXT UNIQUE, scopes TEXT, created_at INTEGER, last_used INTEGER
+		)`,
 		`CREATE INDEX IF NOT EXISTS idx_stops_station ON stops(station_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_routes_external ON routes(external_code)`,
 		`CREATE INDEX IF NOT EXISTS idx_trips_route ON trips(route_id)`,
@@ -263,6 +362,97 @@ func (s *SQLiteStore) GetImport(ctx context.Context, providerID string) (ImportR
 		return ImportRow{}, false
 	}
 	return r, true
+}
+func (s *SQLiteStore) CreateUser(ctx context.Context, email, passHash, role string) (int64, error) {
+	status := "pending"
+	if role == "admin" {
+		status = "active"
+	}
+	res, err := s.db.ExecContext(ctx, `INSERT INTO users(email, pass_hash, status, role, created_at, config) VALUES(?,?,?,?,?,?)`, email, passHash, status, role, time.Now().Unix(), "")
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+func (s *SQLiteStore) GetUserByEmail(ctx context.Context, email string) (UserRow, bool) {
+	var r UserRow
+	err := s.db.QueryRowContext(ctx, `SELECT id, email, pass_hash, status, role, created_at, config FROM users WHERE email=?`, email).Scan(&r.ID, &r.Email, &r.PassHash, &r.Status, &r.Role, &r.CreatedAt, &r.Config)
+	if err != nil {
+		return UserRow{}, false
+	}
+	return r, true
+}
+func (s *SQLiteStore) GetUserByID(ctx context.Context, id int64) (UserRow, bool) {
+	var r UserRow
+	err := s.db.QueryRowContext(ctx, `SELECT id, email, pass_hash, status, role, created_at, config FROM users WHERE id=?`, id).Scan(&r.ID, &r.Email, &r.PassHash, &r.Status, &r.Role, &r.CreatedAt, &r.Config)
+	if err != nil {
+		return UserRow{}, false
+	}
+	return r, true
+}
+func (s *SQLiteStore) ListUsers(ctx context.Context) ([]UserRow, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, email, pass_hash, status, role, created_at, config FROM users ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UserRow
+	for rows.Next() {
+		var r UserRow
+		rows.Scan(&r.ID, &r.Email, &r.PassHash, &r.Status, &r.Role, &r.CreatedAt, &r.Config)
+		out = append(out, r)
+	}
+	return out, nil
+}
+func (s *SQLiteStore) UpdateUserStatus(ctx context.Context, id int64, status string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET status=? WHERE id=?`, status, id)
+	return err
+}
+func (s *SQLiteStore) UpdateUserConfig(ctx context.Context, id int64, config string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET config=? WHERE id=?`, config, id)
+	return err
+}
+func (s *SQLiteStore) CreateApiKey(ctx context.Context, userID int64, scopes string) (ApiKeyRow, error) {
+	key := fmt.Sprintf("tm_%d_%d", userID, time.Now().UnixNano())
+	if scopes == "" {
+		scopes = "mcp:read"
+	}
+	res, err := s.db.ExecContext(ctx, `INSERT INTO api_keys(user_id, key, scopes, created_at, last_used) VALUES(?,?,?,?,?)`, userID, key, scopes, time.Now().Unix(), 0)
+	if err != nil {
+		return ApiKeyRow{}, err
+	}
+	id, _ := res.LastInsertId()
+	return ApiKeyRow{ID: id, UserID: userID, Key: key, Scopes: scopes, CreatedAt: time.Now().Unix()}, nil
+}
+func (s *SQLiteStore) GetApiKey(ctx context.Context, key string) (ApiKeyRow, bool) {
+	var r ApiKeyRow
+	err := s.db.QueryRowContext(ctx, `SELECT id, user_id, key, scopes, created_at, last_used FROM api_keys WHERE key=?`, key).Scan(&r.ID, &r.UserID, &r.Key, &r.Scopes, &r.CreatedAt, &r.LastUsed)
+	if err != nil {
+		return ApiKeyRow{}, false
+	}
+	return r, true
+}
+func (s *SQLiteStore) ListApiKeys(ctx context.Context, userID int64) ([]ApiKeyRow, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, user_id, key, scopes, created_at, last_used FROM api_keys WHERE user_id=? ORDER BY id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ApiKeyRow
+	for rows.Next() {
+		var r ApiKeyRow
+		rows.Scan(&r.ID, &r.UserID, &r.Key, &r.Scopes, &r.CreatedAt, &r.LastUsed)
+		out = append(out, r)
+	}
+	return out, nil
+}
+func (s *SQLiteStore) DeleteApiKey(ctx context.Context, id int64, userID int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM api_keys WHERE id=? AND user_id=?`, id, userID)
+	return err
+}
+func (s *SQLiteStore) TouchApiKey(ctx context.Context, key string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE api_keys SET last_used=? WHERE key=?`, time.Now().Unix(), key)
+	return err
 }
 func (s *SQLiteStore) SaveQualityIssue(ctx context.Context, q QualityRow) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO quality_issues(provider_id, entity, entity_id, level, msg, at) VALUES(?,?,?,?,?,?)`, q.ProviderID, q.Entity, q.EntityID, q.Level, q.Msg, q.At)

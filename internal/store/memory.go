@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -22,18 +23,26 @@ type MemoryStore struct {
 	transfers    []TransferRow
 	quality      []QualityRow
 	imports      map[string]time.Time
+	users        map[int64]UserRow
+	usersByEmail map[string]int64
+	apiKeys      map[int64]ApiKeyRow
+	apiKeysByKey map[string]int64
 	nextID       int64
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		stations: make(map[int64]StationRow),
-		stops:    make(map[int64]StopRow),
-		carriers: make(map[int64]CarrierRow),
-		routes:   make(map[int64]RouteRow),
-		trips:    make(map[int64]TripRow),
-		imports:  make(map[string]time.Time),
-		nextID:   1,
+		stations:     make(map[int64]StationRow),
+		stops:        make(map[int64]StopRow),
+		carriers:     make(map[int64]CarrierRow),
+		routes:       make(map[int64]RouteRow),
+		trips:        make(map[int64]TripRow),
+		imports:      make(map[string]time.Time),
+		users:        make(map[int64]UserRow),
+		usersByEmail: make(map[string]int64),
+		apiKeys:      make(map[int64]ApiKeyRow),
+		apiKeysByKey: make(map[string]int64),
+		nextID:       1,
 	}
 }
 
@@ -51,6 +60,125 @@ func (m *MemoryStore) FindStation(ctx context.Context, name, region string) (Sta
 		}
 	}
 	return StationRow{}, false
+}
+func (m *MemoryStore) CreateUser(ctx context.Context, email, passHash, role string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.usersByEmail[email]; ok {
+		return 0, fmt.Errorf("user exists")
+	}
+	id := m.allocID()
+	status := "pending"
+	if role == "admin" {
+		status = "active"
+	}
+	m.users[id] = UserRow{ID: id, Email: email, PassHash: passHash, Status: status, Role: role, CreatedAt: time.Now().Unix()}
+	m.usersByEmail[email] = id
+	return id, nil
+}
+func (m *MemoryStore) GetUserByEmail(ctx context.Context, email string) (UserRow, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	id, ok := m.usersByEmail[email]
+	if !ok {
+		return UserRow{}, false
+	}
+	u, ok := m.users[id]
+	return u, ok
+}
+func (m *MemoryStore) GetUserByID(ctx context.Context, id int64) (UserRow, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	u, ok := m.users[id]
+	return u, ok
+}
+func (m *MemoryStore) ListUsers(ctx context.Context) ([]UserRow, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []UserRow
+	for _, u := range m.users {
+		out = append(out, u)
+	}
+	return out, nil
+}
+func (m *MemoryStore) UpdateUserStatus(ctx context.Context, id int64, status string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.users[id]
+	if !ok {
+		return fmt.Errorf("not found")
+	}
+	u.Status = status
+	m.users[id] = u
+	return nil
+}
+func (m *MemoryStore) UpdateUserConfig(ctx context.Context, id int64, config string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.users[id]
+	if !ok {
+		return fmt.Errorf("not found")
+	}
+	u.Config = config
+	m.users[id] = u
+	return nil
+}
+func (m *MemoryStore) CreateApiKey(ctx context.Context, userID int64, scopes string) (ApiKeyRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if scopes == "" {
+		scopes = "mcp:read"
+	}
+	id := m.allocID()
+	key := fmt.Sprintf("tm_%d_%d", userID, time.Now().UnixNano())
+	row := ApiKeyRow{ID: id, UserID: userID, Key: key, Scopes: scopes, CreatedAt: time.Now().Unix()}
+	m.apiKeys[id] = row
+	m.apiKeysByKey[key] = id
+	return row, nil
+}
+func (m *MemoryStore) GetApiKey(ctx context.Context, key string) (ApiKeyRow, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	id, ok := m.apiKeysByKey[key]
+	if !ok {
+		return ApiKeyRow{}, false
+	}
+	r, ok := m.apiKeys[id]
+	return r, ok
+}
+func (m *MemoryStore) ListApiKeys(ctx context.Context, userID int64) ([]ApiKeyRow, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []ApiKeyRow
+	for _, k := range m.apiKeys {
+		if k.UserID == userID {
+			out = append(out, k)
+		}
+	}
+	return out, nil
+}
+func (m *MemoryStore) DeleteApiKey(ctx context.Context, id int64, userID int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k, ok := m.apiKeys[id]
+	if !ok || k.UserID != userID {
+		return fmt.Errorf("not found")
+	}
+	delete(m.apiKeys, id)
+	delete(m.apiKeysByKey, k.Key)
+	return nil
+}
+func (m *MemoryStore) TouchApiKey(ctx context.Context, key string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id, ok := m.apiKeysByKey[key]
+	if !ok {
+		return nil
+	}
+	k := m.apiKeys[id]
+	k.LastUsed = time.Now().Unix()
+	m.apiKeys[id] = k
+	return nil
 }
 func (m *MemoryStore) MarkImported(ctx context.Context, providerID string, at time.Time, records int) error {
 	m.mu.Lock()

@@ -34,6 +34,7 @@ MCP-сервер для поиска мультимодальных маршру
 - [`docs/05-roadmap.md`](docs/05-roadmap.md) — дорожная карта этапов.
 - [`docs/06-structure.md`](docs/06-structure.md) — структура репозитория и связи (актуальный каркас).
 - [`docs/07-first-provider-plan.md`](docs/07-first-provider-plan.md) — план добавления первого провайдера междугородних автобусов.
+- [`docs/08-api.md`](docs/08-api.md) — API и примеры запросов (auth, MCP, логи).
 
 ## Рабочие данные (не коммитятся)
 

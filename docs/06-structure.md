@@ -31,7 +31,7 @@ Travel_MCP/
 ├── Dockerfile
 ├── Makefile                   # make build / test / unit / integration / smoke / run
 ├── go.mod / go.sum
-└── docs/                      # проектная документация (01–06)
+└── docs/                      # проектная документация (01–06, 08-api)
 ```
 
 Правило размещения: приложение — в `internal/` (нельзя импортировать извне

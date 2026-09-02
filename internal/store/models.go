@@ -122,3 +122,22 @@ type ImportRow struct {
 	Checksum   string
 	Issues     int
 }
+
+type UserRow struct {
+	ID        int64
+	Email     string
+	PassHash  string
+	Status    string
+	Role      string
+	CreatedAt int64
+	Config    string
+}
+
+type ApiKeyRow struct {
+	ID        int64
+	UserID    int64
+	Key       string
+	Scopes    string
+	CreatedAt int64
+	LastUsed  int64
+}

@@ -29,6 +29,17 @@ type Store interface {
 	Close() error
 	WithTx(ctx context.Context, fn func(Store) error) error
 	FindStation(ctx context.Context, name, region string) (StationRow, bool)
+	CreateUser(ctx context.Context, email, passHash, role string) (int64, error)
+	GetUserByEmail(ctx context.Context, email string) (UserRow, bool)
+	GetUserByID(ctx context.Context, id int64) (UserRow, bool)
+	ListUsers(ctx context.Context) ([]UserRow, error)
+	UpdateUserStatus(ctx context.Context, id int64, status string) error
+	UpdateUserConfig(ctx context.Context, id int64, config string) error
+	CreateApiKey(ctx context.Context, userID int64, scopes string) (ApiKeyRow, error)
+	GetApiKey(ctx context.Context, key string) (ApiKeyRow, bool)
+	ListApiKeys(ctx context.Context, userID int64) ([]ApiKeyRow, error)
+	DeleteApiKey(ctx context.Context, id int64, userID int64) error
+	TouchApiKey(ctx context.Context, key string) error
 }
 
 func New(ctx context.Context, dsn string) (Store, error) {
@@ -94,6 +105,25 @@ func (p *pgStub) WithTx(ctx context.Context, fn func(Store) error) error { retur
 func (p *pgStub) FindStation(ctx context.Context, name, region string) (StationRow, bool) {
 	return StationRow{}, false
 }
+func (p *pgStub) CreateUser(ctx context.Context, email, passHash, role string) (int64, error) {
+	return 0, errNotImplemented
+}
+func (p *pgStub) GetUserByEmail(ctx context.Context, email string) (UserRow, bool) {
+	return UserRow{}, false
+}
+func (p *pgStub) GetUserByID(ctx context.Context, id int64) (UserRow, bool) { return UserRow{}, false }
+func (p *pgStub) ListUsers(ctx context.Context) ([]UserRow, error) { return nil, errNotImplemented }
+func (p *pgStub) UpdateUserStatus(ctx context.Context, id int64, status string) error { return errNotImplemented }
+func (p *pgStub) UpdateUserConfig(ctx context.Context, id int64, config string) error { return errNotImplemented }
+func (p *pgStub) CreateApiKey(ctx context.Context, userID int64, scopes string) (ApiKeyRow, error) {
+	return ApiKeyRow{}, errNotImplemented
+}
+func (p *pgStub) GetApiKey(ctx context.Context, key string) (ApiKeyRow, bool) { return ApiKeyRow{}, false }
+func (p *pgStub) ListApiKeys(ctx context.Context, userID int64) ([]ApiKeyRow, error) {
+	return nil, errNotImplemented
+}
+func (p *pgStub) DeleteApiKey(ctx context.Context, id int64, userID int64) error { return errNotImplemented }
+func (p *pgStub) TouchApiKey(ctx context.Context, key string) error { return nil }
 
 var errNotImplemented = errStr("postgres store not implemented: use sqlite DSN")
 
