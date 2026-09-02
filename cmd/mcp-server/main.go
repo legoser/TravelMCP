@@ -125,20 +125,7 @@ func maskDSN(dsn string) string {
 	return dsn
 }
 
+// deprecated: use logger.NewFactory
 func newLogger(level, format string, addSource bool) *slog.Logger {
-	lvl := slog.LevelInfo
-	switch strings.ToLower(strings.TrimSpace(level)) {
-	case "debug":
-		lvl = slog.LevelDebug
-	case "info":
-		lvl = slog.LevelInfo
-	case "warn", "warning":
-		lvl = slog.LevelWarn
-	case "error":
-		lvl = slog.LevelError
-	}
-	if strings.ToLower(strings.TrimSpace(format)) == "text" {
-		return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: lvl, AddSource: addSource || lvl == slog.LevelDebug}))
-	}
-	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl, AddSource: addSource}))
+	return logger.NewFactory(config.Log{Level: level, Format: format, AddSource: addSource}).For("main")
 }

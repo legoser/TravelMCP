@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"travelmcp/internal/classifier"
 	"travelmcp/internal/geo"
 	"travelmcp/internal/model"
 )
@@ -36,6 +37,10 @@ func (s *Synth) Health() HealthStatus {
 	return status
 }
 
+func (s *Synth) Capabilities() Capabilities {
+	return Capabilities{Modes: []model.Mode{model.ModeBus, model.ModeTram, model.ModeRail, model.ModeFlight}}
+}
+
 // NetworkForDay строит синтетическую сеть с рейсами на указанный день.
 func (s *Synth) NetworkForDay(day time.Time) (*model.Network, error) {
 	dayBase := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC)
@@ -43,7 +48,7 @@ func (s *Synth) NetworkForDay(day time.Time) (*model.Network, error) {
 }
 
 func (s *Synth) addStop(net *model.Network, id, name string, lat, lon float64) {
-	net.Stops[id] = &model.Stop{ID: id, ProviderID: SynthID, Name: name, Lat: lat, Lon: lon, Type: model.InferStopType(name)}
+	net.Stops[id] = &model.Stop{ID: id, ProviderID: SynthID, Name: name, Lat: lat, Lon: lon, Type: classifier.Ru.Classify(name, nil)}
 }
 
 func (s *Synth) Network() (*model.Network, error) {

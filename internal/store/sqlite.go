@@ -12,6 +12,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"travelmcp/internal/classifier"
 	"travelmcp/internal/model"
 )
 
@@ -601,7 +602,7 @@ func (s *SQLiteStore) LoadNetwork(ctx context.Context, providers []string, day t
 		}
 		ms := &model.Stop{ID: r.ExternalCode, ProviderID: r.ProviderID, Name: r.Name, Lat: lat, Lon: lon, Type: model.StopType(r.StopType)}
 		if ms.Type == "" {
-			ms.Type = model.InferStopType(r.Name)
+			ms.Type = classifier.Ru.Classify(r.Name, nil)
 		}
 		net.Stops[r.ExternalCode] = ms
 		stopIDMap[r.ID] = r.ExternalCode

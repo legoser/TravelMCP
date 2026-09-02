@@ -16,10 +16,17 @@ type HealthStatus struct {
 	ExcludedStops  int       `json:"excluded_stops"`
 }
 
+type Capabilities struct {
+	SupportsFares    bool
+	SupportsRealtime bool
+	Modes            []model.Mode
+}
+
 type Provider interface {
 	ID() string
 	Health() HealthStatus
 	Network() (*model.Network, error)
+	Capabilities() Capabilities
 }
 
 type Registry struct {
@@ -46,12 +53,18 @@ func NewRegistryWith(enabled []string, intercityPath string) *Registry {
 	return r
 }
 
+var factories = map[string]func(path string) Provider{
+	SynthID:     func(_ string) Provider { return NewSynth(time.Now()) },
+	IntercityID: func(p string) Provider { return NewIntercity(p, time.Now()) },
+}
+
+func RegisterFactory(id string, fn func(path string) Provider) {
+	factories[id] = fn
+}
+
 func (r *Registry) enable(id string) {
-	switch id {
-	case SynthID:
-		r.Register(NewSynth(time.Now()))
-	case IntercityID:
-		r.Register(NewIntercity(r.intercityPath, time.Now()))
+	if fn, ok := factories[id]; ok {
+		r.Register(fn(r.intercityPath))
 	}
 }
 

@@ -77,7 +77,8 @@ func (brokenProvider) ID() string { return "broken" }
 func (brokenProvider) Health() providers.HealthStatus {
 	return providers.HealthStatus{Up: false, LastError: "connection refused"}
 }
-func (brokenProvider) Network() (*model.Network, error) { return model.NewNetwork(), nil }
+func (brokenProvider) Network() (*model.Network, error)     { return model.NewNetwork(), nil }
+func (brokenProvider) Capabilities() providers.Capabilities { return providers.Capabilities{} }
 
 func TestProvidersAndDashboardAPI(t *testing.T) {
 	ts, client := newApp(t)

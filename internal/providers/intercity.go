@@ -5,14 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"regexp"
 	"runtime"
 	"sort"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
+	"travelmcp/internal/adapters/timeutil"
+	"travelmcp/internal/classifier"
 	"travelmcp/internal/geo"
 	"travelmcp/internal/model"
 )
@@ -115,6 +114,10 @@ func (p *Intercity) Health() HealthStatus {
 	return HealthStatus{Up: true, LastImportTime: time.Now(), Records: len(ds.Schedules), Issues: len(issues), ExcludedStops: len(excluded)}
 }
 
+func (p *Intercity) Capabilities() Capabilities {
+	return Capabilities{Modes: []model.Mode{model.ModeBus}}
+}
+
 func (p *Intercity) Network() (*model.Network, error) {
 	return p.NetworkForDay(time.Now())
 }
@@ -152,7 +155,7 @@ func (p *Intercity) build(ds *reestrDataset, day time.Time) *model.Network {
 		if st.Lon != nil {
 			lon = *st.Lon
 		}
-		net.Stops[st.ID] = &model.Stop{ID: st.ID, ProviderID: IntercityID, Name: st.Name, Lat: lat, Lon: lon, Type: model.InferStopType(st.Name)}
+		net.Stops[st.ID] = &model.Stop{ID: st.ID, ProviderID: IntercityID, Name: st.Name, Lat: lat, Lon: lon, Type: classifier.Ru.Classify(st.Name, nil)}
 	}
 
 	for i := range ds.Routes {
@@ -250,16 +253,8 @@ func (p *Intercity) addTransferLinks(net *model.Network) {
 	}
 }
 
-var timeRe = regexp.MustCompile(`^(\d{1,2}):(\d{2})`)
-
 func parseTimeMinutes(s string) (int, bool) {
-	m := timeRe.FindStringSubmatch(strings.TrimSpace(s))
-	if m == nil {
-		return 0, false
-	}
-	h, _ := strconv.Atoi(m[1])
-	min, _ := strconv.Atoi(m[2])
-	return h*60 + min, true
+	return timeutil.ParseTimeMinutes(s)
 }
 
 const (

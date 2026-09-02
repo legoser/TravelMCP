@@ -18,6 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"travelmcp/internal/classifier"
+
 	"travelmcp/internal/geo"
 	"travelmcp/internal/model"
 )
@@ -169,7 +171,7 @@ func ImportIntercity(ctx context.Context, s Store, path string, logger *slog.Log
 		stopIDMap := map[string]int64{}
 		for _, st := range ds.Stops {
 			stationID := stopToStation[st.ID]
-			sr := StopRow{StationID: stationID, ProviderID: "intercity", ExternalCode: st.ID, StopType: string(model.InferStopType(st.Name)), Name: st.Name, RawName: st.Name}
+			sr := StopRow{StationID: stationID, ProviderID: "intercity", ExternalCode: st.ID, StopType: string(classifier.Ru.Classify(st.Name, nil)), Name: st.Name, RawName: st.Name}
 			id, _ := tx.UpsertStop(ctx, sr)
 			stopIDMap[st.ID] = id
 			_ = tx.UpsertStationCode(ctx, StationCodeRow{StationID: stationID, ProviderID: "intercity", CodeType: "op_reg", Code: st.OpReg, NameForm: st.Name})

@@ -15,9 +15,10 @@ type mockProv struct {
 	net *model.Network
 }
 
-func (m *mockProv) ID() string                       { return m.id }
-func (m *mockProv) Health() providers.HealthStatus   { return providers.HealthStatus{Up: true} }
-func (m *mockProv) Network() (*model.Network, error) { return m.net, nil }
+func (m *mockProv) ID() string                           { return m.id }
+func (m *mockProv) Health() providers.HealthStatus       { return providers.HealthStatus{Up: true} }
+func (m *mockProv) Network() (*model.Network, error)     { return m.net, nil }
+func (m *mockProv) Capabilities() providers.Capabilities { return providers.Capabilities{} }
 
 func TestMergeIsolatesProviderConflict(t *testing.T) {
 	n1 := model.NewNetwork()

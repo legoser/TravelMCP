@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"travelmcp/internal/classifier"
 	"travelmcp/internal/model"
 )
 
@@ -323,7 +324,7 @@ func (m *MemoryStore) LoadNetwork(ctx context.Context, providers []string, day t
 		}
 		ms := &model.Stop{ID: strID, ProviderID: st.ProviderID, Name: st.Name, Lat: lat, Lon: lon, Type: model.StopType(st.StopType)}
 		if ms.Type == "" {
-			ms.Type = model.InferStopType(st.Name)
+			ms.Type = classifier.Ru.Classify(st.Name, nil)
 		}
 		net.Stops[strID] = ms
 		stopIDMap[id] = strID
