@@ -22,21 +22,29 @@ type Planner struct {
 }
 
 func New(metrics *telemetry.Metrics) *Planner {
-	return &Planner{metrics: metrics, engine: "csa", sem: make(chan struct{}, runtime.NumCPU()*2)}
+	return NewWithConfig(metrics, "csa", nil, 0, true)
 }
 
 func NewWithEngine(metrics *telemetry.Metrics, engine string) *Planner {
-	if engine == "" {
-		engine = "csa"
-	}
-	return &Planner{metrics: metrics, engine: engine, sem: make(chan struct{}, runtime.NumCPU()*2)}
+	return NewWithConfig(metrics, engine, nil, 0, true)
 }
 
 func NewWithLogger(metrics *telemetry.Metrics, engine string, logger *slog.Logger) *Planner {
+	return NewWithConfig(metrics, engine, logger, 0, true)
+}
+
+func NewWithConfig(metrics *telemetry.Metrics, engine string, logger *slog.Logger, semSize int, semEnable bool) *Planner {
 	if engine == "" {
 		engine = "csa"
 	}
-	return &Planner{metrics: metrics, engine: engine, logger: logger, sem: make(chan struct{}, runtime.NumCPU()*2)}
+	if semSize <= 0 {
+		semSize = runtime.NumCPU() * 2
+	}
+	var sem chan struct{}
+	if semEnable {
+		sem = make(chan struct{}, semSize)
+	}
+	return &Planner{metrics: metrics, engine: engine, logger: logger, sem: sem}
 }
 
 func (p *Planner) acquire(ctx context.Context) error {

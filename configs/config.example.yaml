@@ -2,7 +2,10 @@ http:
   addr: ":8080"
   read_header_timeout: "10s"
   shutdown_timeout: "10s"
-  rate_limit: { rps: 100, burst: 200 }
+  rate_limit: { rps: 100, burst: 200 } # дефолт; переопределения см. docs/10-observability.md
+  # rate_limit_overrides:
+  #   "/api/v1/login": { rps: 5, burst: 10 }
+  #   "/mcp": { rps: 20, burst: 40 }
 
 database:
   dsn: "postgres://postgres:postgres@localhost:5432/travelmcp?sslmode=disable"
@@ -26,6 +29,8 @@ auth:
 
 planner:
   engine: "csa" # csa|raptor (RAPTOR frequency-based для межгорода)
+  semaphore_enable: true
+  semaphore_size: 0 # 0 = NumCPU*2, иначе явный размер
 
 log:
   level: "info" # debug|info|warn|error — переключение без пересборки (LOG_LEVEL env)

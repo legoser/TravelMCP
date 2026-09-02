@@ -69,7 +69,9 @@ type Yandex struct {
 }
 
 type Planner struct {
-	Engine string `yaml:"engine"`
+	Engine          string `yaml:"engine"`
+	SemaphoreSize   int    `yaml:"semaphore_size"`
+	SemaphoreEnable bool   `yaml:"semaphore_enable"`
 }
 
 type Log struct {
@@ -115,7 +117,7 @@ func Defaults() *Config {
 				ReestrPath: "data/reestr/regions.json",
 			},
 		},
-		Planner: Planner{Engine: "csa"},
+		Planner: Planner{Engine: "csa", SemaphoreSize: 0, SemaphoreEnable: true},
 		Log:     Log{Level: "info", Format: "json", Levels: map[string]string{}},
 	}
 }
@@ -179,6 +181,24 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("PLANNER_ENGINE"); v != "" {
 		cfg.Planner.Engine = v
+	}
+	if v := os.Getenv("PLANNER_SEMAPHORE_SIZE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Planner.SemaphoreSize = n
+		}
+	}
+	if v := os.Getenv("PLANNER_SEMAPHORE_ENABLE"); v != "" {
+		cfg.Planner.SemaphoreEnable = v == "1" || v == "true"
+	}
+	if v := os.Getenv("HTTP_RATE_LIMIT_RPS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.HTTP.RateLimit.RPS = n
+		}
+	}
+	if v := os.Getenv("HTTP_RATE_LIMIT_BURST"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.HTTP.RateLimit.Burst = n
+		}
 	}
 	if v := os.Getenv("LOG_LEVEL"); v != "" {
 		cfg.Log.Level = v
@@ -261,6 +281,14 @@ func setByPath(cfg *Config, parts []string, v string) {
 	case "planner":
 		if len(parts) == 2 && parts[1] == "engine" {
 			cfg.Planner.Engine = v
+		}
+		if len(parts) == 2 && parts[1] == "semaphore_size" {
+			if n, err := strconv.Atoi(v); err == nil {
+				cfg.Planner.SemaphoreSize = n
+			}
+		}
+		if len(parts) == 2 && parts[1] == "semaphore_enable" {
+			cfg.Planner.SemaphoreEnable = v == "1" || v == "true"
 		}
 	case "auth":
 		if len(parts) == 2 && parts[1] == "admin_token" {

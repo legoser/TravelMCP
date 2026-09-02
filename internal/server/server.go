@@ -50,7 +50,7 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 		store:    st,
 	}
 
-	app := mcp.NewWithStore(planner.NewWithLogger(metrics, cfg.Planner.Engine, logger), registry, st, logger)
+	app := mcp.NewWithStore(planner.NewWithConfig(metrics, cfg.Planner.Engine, logger, cfg.Planner.SemaphoreSize, cfg.Planner.SemaphoreEnable), registry, st, logger)
 	mcpHandler := mcpserver.NewStreamableHTTPServer(app.Server(), mcpserver.WithStateLess(true))
 
 	mux := http.NewServeMux()
