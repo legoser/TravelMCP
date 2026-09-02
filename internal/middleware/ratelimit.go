@@ -4,16 +4,45 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 
-	"golang.org/x/time/rate"
 	"travelmcp/internal/config"
 )
 
+type bucket struct {
+	mu     sync.Mutex
+	tokens float64
+	last   time.Time
+	rps    float64
+	burst  float64
+}
+
+func newBucket(rps, burst int) *bucket {
+	return &bucket{tokens: float64(burst), last: time.Now(), rps: float64(rps), burst: float64(burst)}
+}
+
+func (b *bucket) Allow() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	now := time.Now()
+	elapsed := now.Sub(b.last).Seconds()
+	b.last = now
+	b.tokens += elapsed * b.rps
+	if b.tokens > b.burst {
+		b.tokens = b.burst
+	}
+	if b.tokens < 1 {
+		return false
+	}
+	b.tokens--
+	return true
+}
+
 type RateLimiter struct {
 	mu        sync.Mutex
-	limiters  map[string]*rate.Limiter
-	def       rate.Limit
-	burst     int
+	limiters  map[string]*bucket
+	defRPS    int
+	defBurst  int
 	overrides map[string]config.RateLimit
 }
 
@@ -27,34 +56,30 @@ func NewRateLimiter(cfg config.HTTP) *RateLimiter {
 		defBurst = 200
 	}
 	return &RateLimiter{
-		limiters:  map[string]*rate.Limiter{},
-		def:       rate.Limit(defRPS),
-		burst:     defBurst,
+		limiters:  map[string]*bucket{},
+		defRPS:    defRPS,
+		defBurst:  defBurst,
 		overrides: cfg.RateLimitOverrides,
 	}
 }
 
-func (rl *RateLimiter) getLimiter(key, path string) *rate.Limiter {
+func (rl *RateLimiter) getLimiter(key, path string) *bucket {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	k := key + "|" + path
 	if lim, ok := rl.limiters[k]; ok {
 		return lim
 	}
-	lim := rate.NewLimiter(rl.def, rl.burst)
-	if ov, ok := rl.overrides[path]; ok {
-		rps := ov.RPS
-		burst := ov.Burst
-		if rps > 0 || burst > 0 {
-			if rps <= 0 {
-				rps = int(rl.def)
-			}
-			if burst <= 0 {
-				burst = rl.burst
-			}
-			lim = rate.NewLimiter(rate.Limit(rps), burst)
+	rps, burst := rl.defRPS, rl.defBurst
+	if ov, ok := rl.overrides[path]; ok && (ov.RPS > 0 || ov.Burst > 0) {
+		if ov.RPS > 0 {
+			rps = ov.RPS
+		}
+		if ov.Burst > 0 {
+			burst = ov.Burst
 		}
 	}
+	lim := newBucket(rps, burst)
 	rl.limiters[k] = lim
 	return lim
 }

@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/sync/semaphore"
 	"travelmcp/internal/geo"
 	"travelmcp/internal/model"
 	"travelmcp/internal/telemetry"
@@ -19,26 +18,37 @@ type Planner struct {
 	metrics *telemetry.Metrics
 	engine  string
 	logger  *slog.Logger
-	sem     *semaphore.Weighted
+	sem     chan struct{}
 }
 
 func New(metrics *telemetry.Metrics) *Planner {
-	return &Planner{metrics: metrics, engine: "csa", sem: semaphore.NewWeighted(int64(runtime.NumCPU() * 2))}
+	return &Planner{metrics: metrics, engine: "csa", sem: make(chan struct{}, runtime.NumCPU()*2)}
 }
 
 func NewWithEngine(metrics *telemetry.Metrics, engine string) *Planner {
 	if engine == "" {
 		engine = "csa"
 	}
-	return &Planner{metrics: metrics, engine: engine, sem: semaphore.NewWeighted(int64(runtime.NumCPU() * 2))}
+	return &Planner{metrics: metrics, engine: engine, sem: make(chan struct{}, runtime.NumCPU()*2)}
 }
 
 func NewWithLogger(metrics *telemetry.Metrics, engine string, logger *slog.Logger) *Planner {
 	if engine == "" {
 		engine = "csa"
 	}
-	return &Planner{metrics: metrics, engine: engine, logger: logger, sem: semaphore.NewWeighted(int64(runtime.NumCPU() * 2))}
+	return &Planner{metrics: metrics, engine: engine, logger: logger, sem: make(chan struct{}, runtime.NumCPU()*2)}
 }
+
+func (p *Planner) acquire(ctx context.Context) error {
+	select {
+	case p.sem <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (p *Planner) release() { <-p.sem }
 
 func (p *Planner) Plan(net *model.Network, from, to model.Coords, params model.SearchParams) (*model.Journey, error) {
 	return p.planWithStops(net, from, to, params, nil, nil)
@@ -57,10 +67,10 @@ type PlaceHint struct {
 
 func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, params model.SearchParams, fromPlace, toPlace *PlaceHint) (*model.Journey, error) {
 	if p.sem != nil {
-		if err := p.sem.Acquire(context.Background(), 1); err != nil {
+		if err := p.acquire(context.Background()); err != nil {
 			return nil, err
 		}
-		defer p.sem.Release(1)
+		defer p.release()
 	}
 	maxWalk := params.MaxWalkMinutes
 	if maxWalk <= 0 {
