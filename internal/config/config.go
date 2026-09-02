@@ -65,8 +65,11 @@ type Auth struct {
 }
 
 type Yandex struct {
-	RaspKey    string `yaml:"rasp_key"`
-	GeocodeKey string `yaml:"geocode_key"`
+	RaspKey     string `yaml:"rasp_key"`
+	GeocodeKey  string `yaml:"geocode_key"`
+	GeocodeURL  string `yaml:"geocode_url"`
+	RaspURL     string `yaml:"rasp_url"`
+	GeocodeKind string `yaml:"geocode_kind"`
 }
 
 type Planner struct {
@@ -118,6 +121,7 @@ func Defaults() *Config {
 				ReestrPath: "data/reestr/regions.json",
 			},
 		},
+		Yandex:  Yandex{GeocodeURL: "https://geocode-maps.yandex.ru/1.x", GeocodeKind: "yandex"},
 		Planner: Planner{Engine: "csa", SemaphoreSize: runtime.NumCPU() * 2, SemaphoreEnable: true},
 		Log:     Log{Level: "info", Format: "json", Levels: map[string]string{}},
 	}
@@ -179,6 +183,12 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("YANDEX_GEOCODE_KEY"); v != "" {
 		cfg.Yandex.GeocodeKey = v
+	}
+	if v := os.Getenv("YANDEX_GEOCODE_URL"); v != "" {
+		cfg.Yandex.GeocodeURL = v
+	}
+	if v := os.Getenv("YANDEX_GEOCODE_KIND"); v != "" {
+		cfg.Yandex.GeocodeKind = v
 	}
 	if v := os.Getenv("PLANNER_ENGINE"); v != "" {
 		cfg.Planner.Engine = v

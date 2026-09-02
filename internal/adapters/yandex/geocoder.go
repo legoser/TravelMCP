@@ -7,27 +7,53 @@ import (
 	"net/http"
 	"net/url"
 
+	"travelmcp/internal/config"
 	"travelmcp/internal/geocoder"
 	"travelmcp/internal/httpx"
 )
 
 type Geocoder struct {
-	key    string
+	cfg    config.Yandex
 	client *httpx.Client
 }
 
-func New(key string, client *httpx.Client) *Geocoder {
-	return &Geocoder{key: key, client: client}
+func New(cfg config.Yandex, client *httpx.Client) *Geocoder {
+	if cfg.GeocodeURL == "" {
+		cfg.GeocodeURL = "https://geocode-maps.yandex.ru/1.x"
+	}
+	return &Geocoder{cfg: cfg, client: client}
 }
 
 var _ geocoder.Geocoder = (*Geocoder)(nil)
 
+type yandexResponse struct {
+	Response struct {
+		GeoObjectCollection struct {
+			FeatureMember []struct {
+				GeoObject struct {
+					Point struct {
+						Pos string `json:"pos"`
+					} `json:"Point"`
+				} `json:"GeoObject"`
+			} `json:"featureMember"`
+		} `json:"GeoObjectCollection"`
+	} `json:"response"`
+}
+
 func (y *Geocoder) Geocode(ctx context.Context, query string) (*geocoder.Result, error) {
-	if y.key == "" {
+	if y.cfg.GeocodeKey == "" {
 		return nil, fmt.Errorf("yandex geocode key empty")
 	}
-	u := fmt.Sprintf("https://geocode-maps.yandex.ru/1.x/?format=json&apikey=%s&geocode=%s", url.QueryEscape(y.key), url.QueryEscape(query))
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	base, err := url.Parse(y.cfg.GeocodeURL)
+	if err != nil {
+		return nil, fmt.Errorf("geocode url: %w", err)
+	}
+	q := base.Query()
+	q.Set("format", "json")
+	q.Set("apikey", y.cfg.GeocodeKey)
+	q.Set("geocode", query)
+	base.RawQuery = q.Encode()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base.String(), nil)
 	resp, err := y.client.Do(ctx, req)
 	if err != nil {
 		return nil, err
@@ -36,19 +62,7 @@ func (y *Geocoder) Geocode(ctx context.Context, query string) (*geocoder.Result,
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("geocode %d", resp.StatusCode)
 	}
-	var data struct {
-		Response struct {
-			GeoObjectCollection struct {
-				FeatureMember []struct {
-					GeoObject struct {
-						Point struct {
-							Pos string `json:"pos"`
-						} `json:"Point"`
-					} `json:"GeoObject"`
-				} `json:"featureMember"`
-			} `json:"GeoObjectCollection"`
-		} `json:"response"`
-	}
+	var data yandexResponse
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return nil, err
 	}

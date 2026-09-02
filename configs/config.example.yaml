@@ -67,3 +67,5 @@ telemetry:
 yandex:
   rasp_key: "${YANDEX_RASP_KEY}"
   geocode_key: "${YANDEX_GEOCODE_KEY}"
+  geocode_url: "https://geocode-maps.yandex.ru/1.x"
+  geocode_kind: "yandex" # замените на nominatim и geocode_url для другого провайдера
