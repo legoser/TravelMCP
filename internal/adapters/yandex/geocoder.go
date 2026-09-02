@@ -13,19 +13,19 @@ import (
 )
 
 func init() {
-	geocoder.Register("yandex", func(cfg config.Yandex, client *httpx.Client) geocoder.Geocoder {
+	geocoder.Register("yandex", func(cfg config.Geocoder, client *httpx.Client) geocoder.Geocoder {
 		return New(cfg, client)
 	})
 }
 
 type Geocoder struct {
-	cfg    config.Yandex
+	cfg    config.Geocoder
 	client *httpx.Client
 }
 
-func New(cfg config.Yandex, client *httpx.Client) *Geocoder {
-	if cfg.GeocodeURL == "" {
-		cfg.GeocodeURL = "https://geocode-maps.yandex.ru/1.x"
+func New(cfg config.Geocoder, client *httpx.Client) *Geocoder {
+	if cfg.URL == "" {
+		cfg.URL = "https://geocode-maps.yandex.ru/1.x"
 	}
 	return &Geocoder{cfg: cfg, client: client}
 }
@@ -47,16 +47,16 @@ type yandexResponse struct {
 }
 
 func (y *Geocoder) Geocode(ctx context.Context, query string) (*geocoder.Result, error) {
-	if y.cfg.GeocodeKey == "" {
-		return nil, fmt.Errorf("yandex geocode key empty")
+	if y.cfg.Key == "" {
+		return nil, fmt.Errorf("geocode key empty")
 	}
-	base, err := url.Parse(y.cfg.GeocodeURL)
+	base, err := url.Parse(y.cfg.URL)
 	if err != nil {
 		return nil, fmt.Errorf("geocode url: %w", err)
 	}
 	q := base.Query()
 	q.Set("format", "json")
-	q.Set("apikey", y.cfg.GeocodeKey)
+	q.Set("apikey", y.cfg.Key)
 	q.Set("geocode", query)
 	base.RawQuery = q.Encode()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base.String(), nil)

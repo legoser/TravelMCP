@@ -65,11 +65,18 @@ type Auth struct {
 }
 
 type Yandex struct {
-	RaspKey     string `yaml:"rasp_key"`
+	RaspKey string `yaml:"rasp_key"`
+	RaspURL string `yaml:"rasp_url"`
+	// Deprecated: use Geocoder.*
 	GeocodeKey  string `yaml:"geocode_key"`
 	GeocodeURL  string `yaml:"geocode_url"`
-	RaspURL     string `yaml:"rasp_url"`
 	GeocodeKind string `yaml:"geocode_kind"`
+}
+
+type Geocoder struct {
+	Kind string `yaml:"kind"`
+	URL  string `yaml:"url"`
+	Key  string `yaml:"key"`
 }
 
 type Planner struct {
@@ -97,6 +104,7 @@ type Config struct {
 	Database  Database  `yaml:"database"`
 	Providers Providers `yaml:"providers"`
 	Auth      Auth      `yaml:"auth"`
+	Geocoder  Geocoder  `yaml:"geocoder"`
 	Yandex    Yandex    `yaml:"yandex"`
 	Planner   Planner   `yaml:"planner"`
 	Log       Log       `yaml:"log"`
@@ -121,9 +129,10 @@ func Defaults() *Config {
 				ReestrPath: "data/reestr/regions.json",
 			},
 		},
-		Yandex:  Yandex{GeocodeURL: "https://geocode-maps.yandex.ru/1.x", GeocodeKind: "yandex"},
-		Planner: Planner{Engine: "csa", SemaphoreSize: runtime.NumCPU() * 2, SemaphoreEnable: true},
-		Log:     Log{Level: "info", Format: "json", Levels: map[string]string{}},
+		Geocoder: Geocoder{Kind: "yandex", URL: "https://geocode-maps.yandex.ru/1.x", Key: ""},
+		Yandex:   Yandex{GeocodeURL: "https://geocode-maps.yandex.ru/1.x", GeocodeKind: "yandex"},
+		Planner:  Planner{Engine: "csa", SemaphoreSize: runtime.NumCPU() * 2, SemaphoreEnable: true},
+		Log:      Log{Level: "info", Format: "json", Levels: map[string]string{}},
 	}
 }
 
@@ -159,6 +168,24 @@ func syncLegacy(cfg *Config) {
 	if cfg.Database.DSN == "" && cfg.Store.DSN != "" {
 		cfg.Database.DSN = cfg.Store.DSN
 	}
+	if cfg.Geocoder.Kind == "" && cfg.Yandex.GeocodeKind != "" {
+		cfg.Geocoder.Kind = cfg.Yandex.GeocodeKind
+	}
+	if cfg.Geocoder.URL == "" && cfg.Yandex.GeocodeURL != "" {
+		cfg.Geocoder.URL = cfg.Yandex.GeocodeURL
+	}
+	if cfg.Geocoder.Key == "" && cfg.Yandex.GeocodeKey != "" {
+		cfg.Geocoder.Key = cfg.Yandex.GeocodeKey
+	}
+	if cfg.Yandex.GeocodeKind == "" && cfg.Geocoder.Kind != "" {
+		cfg.Yandex.GeocodeKind = cfg.Geocoder.Kind
+	}
+	if cfg.Yandex.GeocodeURL == "" && cfg.Geocoder.URL != "" {
+		cfg.Yandex.GeocodeURL = cfg.Geocoder.URL
+	}
+	if cfg.Yandex.GeocodeKey == "" && cfg.Geocoder.Key != "" {
+		cfg.Yandex.GeocodeKey = cfg.Geocoder.Key
+	}
 }
 
 func applyEnv(cfg *Config) {
@@ -183,12 +210,27 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("YANDEX_GEOCODE_KEY"); v != "" {
 		cfg.Yandex.GeocodeKey = v
+		cfg.Geocoder.Key = v
 	}
 	if v := os.Getenv("YANDEX_GEOCODE_URL"); v != "" {
 		cfg.Yandex.GeocodeURL = v
+		cfg.Geocoder.URL = v
 	}
 	if v := os.Getenv("YANDEX_GEOCODE_KIND"); v != "" {
 		cfg.Yandex.GeocodeKind = v
+		cfg.Geocoder.Kind = v
+	}
+	if v := os.Getenv("GEOCODER_KIND"); v != "" {
+		cfg.Geocoder.Kind = v
+		cfg.Yandex.GeocodeKind = v
+	}
+	if v := os.Getenv("GEOCODER_URL"); v != "" {
+		cfg.Geocoder.URL = v
+		cfg.Yandex.GeocodeURL = v
+	}
+	if v := os.Getenv("GEOCODER_KEY"); v != "" {
+		cfg.Geocoder.Key = v
+		cfg.Yandex.GeocodeKey = v
 	}
 	if v := os.Getenv("PLANNER_ENGINE"); v != "" {
 		cfg.Planner.Engine = v

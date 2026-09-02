@@ -9,18 +9,18 @@ import (
 )
 
 type Geocoder struct {
-	cfg    config.Yandex
+	cfg    config.Geocoder
 	client *httpx.Client
 }
 
-func New(cfg config.Yandex, client *httpx.Client) *Geocoder {
+func New(cfg config.Geocoder, client *httpx.Client) *Geocoder {
 	return &Geocoder{cfg: cfg, client: client}
 }
 
 var _ geocoder.Geocoder = (*Geocoder)(nil)
 
 func init() {
-	geocoder.Register("nominatim", func(cfg config.Yandex, client *httpx.Client) geocoder.Geocoder {
+	geocoder.Register("nominatim", func(cfg config.Geocoder, client *httpx.Client) geocoder.Geocoder {
 		return New(cfg, client)
 	})
 }

@@ -63,9 +63,15 @@ log:
 telemetry:
   prometheus_addr: ":9090"
 
+geocoder:
+  kind: "yandex" # yandex|nominatim
+  url: "https://geocode-maps.yandex.ru/1.x"
+  key: "${GEOCODER_KEY:-${YANDEX_GEOCODE_KEY}}"
+
 # Секреты — только через env (или .env, gitignored); в YAML не заполняются.
 yandex:
   rasp_key: "${YANDEX_RASP_KEY}"
+  # deprecated: используйте geocoder.* (syncLegacy сохраняет совместимость)
   geocode_key: "${YANDEX_GEOCODE_KEY}"
   geocode_url: "https://geocode-maps.yandex.ru/1.x"
-  geocode_kind: "yandex" # замените на nominatim и geocode_url для другого провайдера
+  geocode_kind: "yandex"

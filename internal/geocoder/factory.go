@@ -10,17 +10,17 @@ import (
 
 var (
 	mu       sync.RWMutex
-	registry = map[string]func(config.Yandex, *httpx.Client) Geocoder{}
+	registry = map[string]func(config.Geocoder, *httpx.Client) Geocoder{}
 )
 
-func Register(kind string, fn func(config.Yandex, *httpx.Client) Geocoder) {
+func Register(kind string, fn func(config.Geocoder, *httpx.Client) Geocoder) {
 	mu.Lock()
 	defer mu.Unlock()
 	registry[kind] = fn
 }
 
-func New(cfg config.Yandex, client *httpx.Client) (Geocoder, error) {
-	kind := cfg.GeocodeKind
+func New(cfg config.Geocoder, client *httpx.Client) (Geocoder, error) {
+	kind := cfg.Kind
 	if kind == "" {
 		kind = "yandex"
 	}
