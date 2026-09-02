@@ -56,6 +56,7 @@ func NewRegistryWith(enabled []string, intercityPath string) *Registry {
 var factories = map[string]func(path string) Provider{
 	SynthID:     func(_ string) Provider { return NewSynth(time.Now()) },
 	IntercityID: func(p string) Provider { return NewIntercity(p, time.Now()) },
+	GTFSID:      func(p string) Provider { return NewGTFS(p) },
 }
 
 func RegisterFactory(id string, fn func(path string) Provider) {
