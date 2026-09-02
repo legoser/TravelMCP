@@ -140,9 +140,15 @@ func (a *App) handleFindRoute(ctx context.Context, req mcp.CallToolRequest) (*mc
 		params.Preference = model.PreferenceTransfers
 	}
 	if v, ok := argFloat(req.GetArguments(), "max_walk_minutes"); ok {
+		if v < 0 || v > 180 {
+			return mcp.NewToolResultError("max_walk_minutes: 0..180"), nil
+		}
 		params.MaxWalkMinutes = int(v)
 	}
 	if v, ok := argFloat(req.GetArguments(), "max_transfers"); ok {
+		if v < -1 || v > 20 {
+			return mcp.NewToolResultError("max_transfers: -1..20"), nil
+		}
 		params.MaxTransfers = int(v)
 	}
 
@@ -215,6 +221,9 @@ func (a *App) resolvePointWithPlace(args map[string]any, kind string) (model.Coo
 	}
 	if !hasLat || !hasLon {
 		return model.Coords{}, nil, fmt.Errorf("%s: укажите %s_place или координаты %s_lat/%s_lon", kind, kind, kind, kind)
+	}
+	if lat < -90 || lat > 90 || lon < -180 || lon > 180 {
+		return model.Coords{}, nil, fmt.Errorf("%s: координаты вне диапазона lat -90..90 lon -180..180", kind)
 	}
 	return model.Coords{Lat: lat, Lon: lon}, nil, nil
 }
@@ -443,6 +452,26 @@ func argFloat(args map[string]any, key string) (float64, bool) {
 	if !ok {
 		return 0, false
 	}
-	f, ok := v.(float64)
-	return f, ok
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case json.Number:
+		f, err := n.Float64()
+		if err != nil {
+			return 0, false
+		}
+		return f, true
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(n), 64)
+		if err == nil {
+			return f, true
+		}
+	}
+	return 0, false
 }

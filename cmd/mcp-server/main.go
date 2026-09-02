@@ -5,6 +5,7 @@ import (
 	"flag"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -31,7 +32,7 @@ func main() {
 	}
 	logger := newLogger(cfg.Log.Level, cfg.Log.Format, cfg.Log.AddSource)
 	slog.SetDefault(logger)
-	logger.Info("config loaded", "path", configPath, "addr", cfg.HTTP.Addr, "providers", strings.Join(cfg.Providers.Enabled, ","), "dsn", cfg.Database.DSN, "reestr", cfg.Providers.Intercity.ReestrPath, "log_level", cfg.Log.Level, "log_format", cfg.Log.Format)
+	logger.Info("config loaded", "path", configPath, "addr", cfg.HTTP.Addr, "providers", strings.Join(cfg.Providers.Enabled, ","), "dsn", maskDSN(cfg.Database.DSN), "reestr", cfg.Providers.Intercity.ReestrPath, "log_level", cfg.Log.Level, "log_format", cfg.Log.Format)
 
 	metrics := telemetry.New()
 	regStart := time.Now()
@@ -41,7 +42,7 @@ func main() {
 	var st store.Store
 	if cfg.Database.DSN != "" {
 		s := time.Now()
-		logger.Info("storage init", "dsn", cfg.Database.DSN)
+		logger.Info("storage init", "dsn", maskDSN(cfg.Database.DSN))
 		var err error
 		st, err = store.New(context.Background(), cfg.Database.DSN)
 		if err != nil {
@@ -103,6 +104,23 @@ func main() {
 			os.Exit(1)
 		}
 	}
+}
+
+func maskDSN(dsn string) string {
+	if dsn == "" {
+		return ""
+	}
+	if strings.HasPrefix(dsn, "postgres") {
+		u, err := url.Parse(dsn)
+		if err == nil && u.User != nil {
+			u.User = url.UserPassword(u.User.Username(), "***")
+			return u.String()
+		}
+	}
+	if strings.Contains(dsn, "@") {
+		return "***"
+	}
+	return dsn
 }
 
 func newLogger(level, format string, addSource bool) *slog.Logger {

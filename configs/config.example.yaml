@@ -19,7 +19,7 @@ providers:
     reestr_path: "data/reestr/regions.json"
 
 auth:
-  admin_token: "dev-secret"
+  admin_token: "${ADMIN_TOKEN:-dev-secret}" # dev fallback; prod — env ADMIN_TOKEN
 
 planner:
   engine: "csa" # csa|raptor (RAPTOR frequency-based для межгорода)

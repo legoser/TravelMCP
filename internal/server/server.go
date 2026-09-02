@@ -2,17 +2,19 @@ package server
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"html"
 	"log/slog"
 	"net/http"
+	"net/mail"
 	"strconv"
 	"strings"
 	"time"
 
 	mcpserver "github.com/mark3labs/mcp-go/server"
+	"golang.org/x/crypto/bcrypt"
 
 	"travelmcp/internal/config"
 	"travelmcp/internal/mcp"
@@ -74,8 +76,8 @@ const ctxUserKey ctxKey = "user"
 
 func (s *Server) auth(next http.Handler, requiredScope string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// No auth configured - open mode (for tests/dev)
 		if s.cfg.Auth.AdminToken == "" {
+			s.logger.Warn("auth open-mode: ADMIN_TOKEN empty")
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -85,7 +87,7 @@ func (s *Server) auth(next http.Handler, requiredScope string) http.Handler {
 		} else if h := r.Header.Get("X-API-Key"); h != "" {
 			key = h
 		}
-		if s.cfg.Auth.AdminToken != "" && key == s.cfg.Auth.AdminToken {
+		if s.cfg.Auth.AdminToken != "" && subtle.ConstantTimeCompare([]byte(key), []byte(s.cfg.Auth.AdminToken)) == 1 {
 			ctx := context.WithValue(r.Context(), ctxUserKey, &store.UserRow{ID: 0, Email: "admin", Role: "admin", Status: "active"})
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
@@ -122,7 +124,7 @@ func (s *Server) auth(next http.Handler, requiredScope string) http.Handler {
 
 func hasScope(scopes, required string) bool {
 	for _, s := range strings.Split(scopes, ",") {
-		if strings.TrimSpace(s) == required || strings.TrimSpace(s) == "admin" {
+		if strings.TrimSpace(s) == required {
 			return true
 		}
 	}
@@ -130,8 +132,15 @@ func hasScope(scopes, required string) bool {
 }
 
 func hashPassword(pw string) string {
-	h := sha256.Sum256([]byte(pw))
-	return hex.EncodeToString(h[:])
+	h, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
+	if err != nil {
+		panic(err)
+	}
+	return string(h)
+}
+
+func checkPassword(hash, pw string) bool {
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(pw)) == nil
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -170,6 +179,8 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	defer r.Body.Close()
 	var req struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
@@ -179,8 +190,12 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
-	if req.Email == "" || len(req.Password) < 6 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "email and password (min 6) required"})
+	if _, err := mail.ParseAddress(req.Email); err != nil || req.Email == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "valid email required"})
+		return
+	}
+	if len(req.Password) < 8 || len(req.Password) > 72 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "password 8..72 required"})
 		return
 	}
 	if _, ok := s.store.GetUserByEmail(r.Context(), req.Email); ok {
@@ -188,9 +203,6 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	role := "user"
-	if req.Email == "admin" {
-		role = "admin"
-	}
 	id, err := s.store.CreateUser(r.Context(), req.Email, hashPassword(req.Password), role)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "create failed"})
@@ -206,6 +218,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	defer r.Body.Close()
 	var req struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
@@ -216,7 +230,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
 	user, ok := s.store.GetUserByEmail(r.Context(), req.Email)
-	if !ok || user.PassHash != hashPassword(req.Password) {
+	if !ok || !checkPassword(user.PassHash, req.Password) {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid credentials"})
 		return
 	}
@@ -262,6 +276,8 @@ func (s *Server) handleModerateUser(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	defer r.Body.Close()
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
@@ -306,10 +322,24 @@ func (s *Server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	defer r.Body.Close()
 	var req struct {
 		Scopes string `json:"scopes"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
+	if len(req.Scopes) > 256 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "scopes too large"})
+		return
+	}
+	if req.Scopes != "" && req.Scopes != "mcp:read" && req.Scopes != "admin" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid scopes"})
+		return
+	}
+	if req.Scopes == "admin" && user.Role != "admin" {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "admin scope requires admin role"})
+		return
+	}
 	ak, err := s.store.CreateApiKey(r.Context(), user.ID, req.Scopes)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "create failed"})
@@ -347,6 +377,8 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateUserConfig(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	defer r.Body.Close()
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
@@ -360,6 +392,10 @@ func (s *Server) handleUpdateUserConfig(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
 		return
 	}
+	if len(req.Config) > 8192 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "config too large"})
+		return
+	}
 	if err := s.store.UpdateUserConfig(r.Context(), id, req.Config); err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "user not found"})
 		return
@@ -371,8 +407,8 @@ func (s *Server) handleAdminPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<!doctype html><html><head><title>TravelMCP Admin</title><style>body{font-family:sans-serif;margin:40px}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:8px}</style></head><body><h1>TravelMCP Admin</h1><p>Uptime: %d s</p><h2>Providers</h2><pre>%s</pre><h2>Metrics</h2><pre>%s</pre><p>API: <a href="/api/v1/providers">/api/v1/providers</a> | <a href="/api/v1/dashboard">/api/v1/dashboard</a> | <a href="/api/v1/users">/api/v1/users</a> | <a href="/api/v1/me">/api/v1/me</a></p></body></html>`,
 		int64(time.Since(s.started).Seconds()),
-		toJSON(s.registry.HealthStatuses()),
-		toJSON(s.metrics.Named()),
+		html.EscapeString(toJSON(s.registry.HealthStatuses())),
+		html.EscapeString(toJSON(s.metrics.Named())),
 	)
 }
 
@@ -383,6 +419,7 @@ func toJSON(v any) string {
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		slog.Error("write json", "error", err)

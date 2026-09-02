@@ -16,7 +16,7 @@ planner:
   engine: "raptor"
 
 auth:
-  admin_token: "dev-secret"
+  admin_token: "${ADMIN_TOKEN:-dev-secret}" # dev fallback
 
 yandex:
   rasp_key: ""

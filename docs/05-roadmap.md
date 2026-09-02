@@ -51,6 +51,23 @@
 ### Этап 6 — Скрейпинг (по необходимости, 2–4 дня за первый сайт)
 - Модульный скрейпер + нормализатор + валидатор + метрики здоровья.
 
+## Консолидированный план рефакторинга (детально — docs/09-refactor-plan.md)
+
+Зафиксирован 2026-09-02, объединяет незавершённое выше с review. Зависимости по фазам.
+
+| Фаза | Тема | Зависит от | Срок | Критерий |
+|---|---|---|---|---|
+| 0 | Hotfix безопасности (`bcrypt`, `crypto/rand` ключи, `ConstantTimeCompare`, `html/template`, `MaxBytesReader`, `WithTx`/`foreign_keys`, маскировка DSN) | — | 1–2д | `curl /register admin` не даёт админа, `make test` |
+| 1 | Единая точка конфигураций (koanf `TRAVELMCP__` prefix, один `Config`, только `-config` флаг) + логгер `Factory` per-модуль `log.levels` + `httpx.Client` (Info кратко / Debug body) + `readyz` снапшот | 0 | 3–4д | `PROVIDERS_ENABLED` через `Config`, `/readyz` <5мс, логи внешних запросов |
+| 2 | Порты/адаптеры (`intercity/raw→mapper`, `Factory` реестр, `timeutil` дедуп), валидация split (ядро коды / политика `BBox`), `StopClassifier` модульный (ru.yaml), `NetworkCache` | 1 | 1.5н | Новый `gtfs` — только пакет + поле `Gtfs` в `Config`, `model` без кириллицы |
+| 3 | Хранилище `postgres PostGIS`, `cache redis/memory`, `queue memory→nats` интерфейсы, `semaphore`+`rate limit` поиска | 2 | 1н | `DATABASE_DSN`/`CACHE_KIND` переключаются конфигом |
+| 4 | Наблюдаемость `GET /metrics` prom, `otel` трейсы, `request-id`, `telemetry` на prom | 1,3 | 4д | `curl /metrics` prom формат |
+| 5 | Универсальные источники `adapters/gtfs`, `Geocoder`, `osm` (из 05 Этап 2/3) | 2,4 | 1–2н | `PROVIDERS_ENABLED=gtfs,intercity` merged сеть |
+| 6 | Пользователи/админка/стоимость (05 Этап 4/5), скрейпер (05 Этап 6) | 3 | 5–7д | per-user `config`, `/api/v1/config` hot-reload |
+| 7 | i18n последняя (`locales`, `Classifier` per-регион) | все | 3–5д | — |
+
+См. `docs/09-refactor-plan.md` §1–2 для схемы `Config`/`log.levels`/`httpx`.
+
 ## Итоговые ориентиры
 
 - MVP (этапы 0–2): ~2–3 недели.

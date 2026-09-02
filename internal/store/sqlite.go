@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strings"
@@ -34,10 +36,21 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("sqlite ping: %w", err)
 	}
 	db.SetMaxOpenConns(1)
-	db.Exec(`PRAGMA journal_mode=WAL`)
-	db.Exec(`PRAGMA synchronous=NORMAL`)
-	db.Exec(`PRAGMA cache_size=-64000`)
-	db.Exec(`PRAGMA temp_store=MEMORY`)
+	if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
+		return nil, fmt.Errorf("pragma wal: %w", err)
+	}
+	if _, err := db.Exec(`PRAGMA synchronous=NORMAL`); err != nil {
+		return nil, fmt.Errorf("pragma sync: %w", err)
+	}
+	if _, err := db.Exec(`PRAGMA cache_size=-64000`); err != nil {
+		return nil, fmt.Errorf("pragma cache: %w", err)
+	}
+	if _, err := db.Exec(`PRAGMA temp_store=MEMORY`); err != nil {
+		return nil, fmt.Errorf("pragma temp: %w", err)
+	}
+	if _, err := db.Exec(`PRAGMA foreign_keys=ON`); err != nil {
+		return nil, fmt.Errorf("pragma fk: %w", err)
+	}
 	return &SQLiteStore{db: db}, nil
 }
 
@@ -46,7 +59,7 @@ func (s *SQLiteStore) Close() error { return s.db.Close() }
 func (s *SQLiteStore) WithTx(ctx context.Context, fn func(Store) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fn(s)
+		return fmt.Errorf("begin tx: %w", err)
 	}
 	ts := &txStore{tx: tx, parent: s}
 	if err := fn(ts); err != nil {
@@ -231,7 +244,7 @@ func (t *txStore) UpdateUserConfig(ctx context.Context, id int64, config string)
 	return err
 }
 func (t *txStore) CreateApiKey(ctx context.Context, userID int64, scopes string) (ApiKeyRow, error) {
-	key := fmt.Sprintf("tm_%d_%d", userID, time.Now().UnixNano())
+	key := generateApiKey()
 	if scopes == "" {
 		scopes = "mcp:read"
 	}
@@ -412,8 +425,16 @@ func (s *SQLiteStore) UpdateUserConfig(ctx context.Context, id int64, config str
 	_, err := s.db.ExecContext(ctx, `UPDATE users SET config=? WHERE id=?`, config, id)
 	return err
 }
+func generateApiKey() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	return "tm_" + hex.EncodeToString(b)
+}
+
 func (s *SQLiteStore) CreateApiKey(ctx context.Context, userID int64, scopes string) (ApiKeyRow, error) {
-	key := fmt.Sprintf("tm_%d_%d", userID, time.Now().UnixNano())
+	key := generateApiKey()
 	if scopes == "" {
 		scopes = "mcp:read"
 	}

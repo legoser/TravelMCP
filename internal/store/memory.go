@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"sync"
@@ -123,6 +125,14 @@ func (m *MemoryStore) UpdateUserConfig(ctx context.Context, id int64, config str
 	m.users[id] = u
 	return nil
 }
+func generateMemKey() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	return "tm_" + hex.EncodeToString(b)
+}
+
 func (m *MemoryStore) CreateApiKey(ctx context.Context, userID int64, scopes string) (ApiKeyRow, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -130,7 +140,7 @@ func (m *MemoryStore) CreateApiKey(ctx context.Context, userID int64, scopes str
 		scopes = "mcp:read"
 	}
 	id := m.allocID()
-	key := fmt.Sprintf("tm_%d_%d", userID, time.Now().UnixNano())
+	key := generateMemKey()
 	row := ApiKeyRow{ID: id, UserID: userID, Key: key, Scopes: scopes, CreatedAt: time.Now().Unix()}
 	m.apiKeys[id] = row
 	m.apiKeysByKey[key] = id
