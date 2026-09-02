@@ -1,4 +1,4 @@
-package geocoder
+package yandex
 
 import (
 	"context"
@@ -7,19 +7,22 @@ import (
 	"net/http"
 	"net/url"
 
+	"travelmcp/internal/geocoder"
 	"travelmcp/internal/httpx"
 )
 
-type YandexGeocoder struct {
+type Geocoder struct {
 	key    string
 	client *httpx.Client
 }
 
-func NewYandex(key string, client *httpx.Client) *YandexGeocoder {
-	return &YandexGeocoder{key: key, client: client}
+func New(key string, client *httpx.Client) *Geocoder {
+	return &Geocoder{key: key, client: client}
 }
 
-func (y *YandexGeocoder) Geocode(ctx context.Context, query string) (*Result, error) {
+var _ geocoder.Geocoder = (*Geocoder)(nil)
+
+func (y *Geocoder) Geocode(ctx context.Context, query string) (*geocoder.Result, error) {
 	if y.key == "" {
 		return nil, fmt.Errorf("yandex geocode key empty")
 	}
@@ -54,9 +57,9 @@ func (y *YandexGeocoder) Geocode(ctx context.Context, query string) (*Result, er
 	}
 	var lon, lat float64
 	fmt.Sscan(data.Response.GeoObjectCollection.FeatureMember[0].GeoObject.Point.Pos, &lon, &lat)
-	return &Result{Lat: lat, Lon: lon, Name: query}, nil
+	return &geocoder.Result{Lat: lat, Lon: lon, Name: query}, nil
 }
 
-func (y *YandexGeocoder) Reverse(_ context.Context, lat, lon float64) (string, error) {
+func (y *Geocoder) Reverse(_ context.Context, lat, lon float64) (string, error) {
 	return fmt.Sprintf("%.5f,%.5f", lat, lon), nil
 }
