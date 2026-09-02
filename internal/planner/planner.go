@@ -66,6 +66,8 @@ type PlaceHint struct {
 }
 
 func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, params model.SearchParams, fromPlace, toPlace *PlaceHint) (*model.Journey, error) {
+	start := time.Now()
+	defer func() { telemetry.ObservePlanner(p.engine, time.Since(start)) }()
 	if p.sem != nil {
 		if err := p.acquire(context.Background()); err != nil {
 			return nil, err

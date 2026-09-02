@@ -3,11 +3,49 @@ package telemetry
 import (
 	"sort"
 	"sync"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+)
+
+var (
+	PlannerDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name: "travelmcp_planner_duration_seconds",
+		Help: "Planner duration",
+	}, []string{"engine"})
+
+	ProviderHealth = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "travelmcp_provider_health",
+		Help: "Provider up 1/0",
+	}, []string{"provider"})
+
+	HTTPRequests = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "travelmcp_http_requests_total",
+		Help: "HTTP requests",
+	}, []string{"code", "path"})
+
+	ExternalRequests = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "travelmcp_external_requests_total",
+		Help: "External requests",
+	}, []string{"host", "status"})
 )
 
 type Metrics struct {
 	mu       sync.Mutex
 	counters map[string]int64
+}
+
+func ObservePlanner(engine string, d time.Duration) {
+	PlannerDuration.WithLabelValues(engine).Observe(d.Seconds())
+}
+
+func SetProviderHealth(provider string, up bool) {
+	v := 0.0
+	if up {
+		v = 1
+	}
+	ProviderHealth.WithLabelValues(provider).Set(v)
 }
 
 func New() *Metrics {

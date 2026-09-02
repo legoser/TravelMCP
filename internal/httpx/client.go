@@ -3,12 +3,15 @@ package httpx
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"travelmcp/internal/telemetry"
 )
 
 type Client struct {
@@ -35,11 +38,13 @@ func (c *Client) Do(ctx context.Context, req *http.Request) (*http.Response, err
 	resp, err := c.base.Do(req)
 	elapsed := time.Since(start).Milliseconds()
 	if err != nil {
+		telemetry.ExternalRequests.WithLabelValues(req.URL.Host, "error").Inc()
 		if c.logger != nil {
 			c.logger.Warn("external request failed", "module", c.module, "method", req.Method, "host", req.URL.Host, "elapsed_ms", elapsed, "error", err)
 		}
 		return nil, err
 	}
+	telemetry.ExternalRequests.WithLabelValues(req.URL.Host, fmt.Sprint(resp.StatusCode)).Inc()
 	if c.logger != nil {
 		c.logger.Info("external request", "module", c.module, "method", req.Method, "host", req.URL.Host, "path", req.URL.Path, "status", resp.StatusCode, "elapsed_ms", elapsed)
 		if c.logger.Enabled(ctx, slog.LevelDebug) {

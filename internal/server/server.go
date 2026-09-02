@@ -13,7 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	mcpserver "github.com/mark3labs/mcp-go/server"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/crypto/bcrypt"
 
 	"travelmcp/internal/config"
@@ -54,6 +56,7 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 	mux := http.NewServeMux()
 	mux.Handle("GET /healthz", http.HandlerFunc(s.handleHealthz))
 	mux.Handle("GET /readyz", http.HandlerFunc(s.handleReadyz))
+	mux.Handle("GET /metrics", promhttp.Handler())
 	mux.Handle("POST /api/v1/register", http.HandlerFunc(s.handleRegister))
 	mux.Handle("POST /api/v1/login", http.HandlerFunc(s.handleLogin))
 	mux.Handle("GET /api/v1/providers", s.auth(http.HandlerFunc(s.handleProviders), "mcp:read"))
@@ -69,7 +72,10 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 	mux.Handle("/mcp", s.auth(mcpHandler, "mcp:read"))
 
 	rl := middleware.NewRateLimiter(cfg.HTTP)
-	return rl.Middleware(mux)
+	handler := rl.Middleware(mux)
+	handler = requestIDMiddleware(handler)
+	handler = metricsMiddleware(handler)
+	return handler
 }
 
 type ctxKey string
@@ -430,4 +436,36 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		slog.Error("write json", "error", err)
 	}
+}
+
+func requestIDMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := r.Header.Get("X-Request-ID")
+		if id == "" {
+			id = uuid.NewString()
+		}
+		w.Header().Set("X-Request-ID", id)
+		ctx := context.WithValue(r.Context(), ctxKey("request_id"), id)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func metricsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: 200}
+		next.ServeHTTP(rec, r)
+		telemetry.HTTPRequests.WithLabelValues(fmt.Sprint(rec.status), r.URL.Path).Inc()
+		_ = time.Since(start)
+	})
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
 }
