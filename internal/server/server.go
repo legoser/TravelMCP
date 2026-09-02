@@ -23,6 +23,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"travelmcp/internal/config"
+	logfactory "travelmcp/internal/logger"
 	"travelmcp/internal/mcp"
 	"travelmcp/internal/middleware"
 	"travelmcp/internal/planner"
@@ -57,8 +58,17 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 		started:  time.Now(),
 		store:    st,
 	}
-
-	app := mcp.NewWithStore(planner.NewWithConfig(metrics, cfg.Planner.Engine, logger, cfg.Planner.SemaphoreSize, cfg.Planner.SemaphoreEnable), registry, st, logger)
+	plannerLogger := logger
+	mcpLogger := logger
+	if cfg != nil {
+		lf := logfactory.NewFactory(cfg.Log)
+		plannerLogger = lf.For("planner")
+		mcpLogger = lf.For("mcp")
+		if logger == nil {
+			s.logger = lf.For("http")
+		}
+	}
+	app := mcp.NewWithStore(planner.NewWithConfig(metrics, cfg.Planner.Engine, plannerLogger, cfg.Planner.SemaphoreSize, cfg.Planner.SemaphoreEnable), registry, st, mcpLogger)
 	mcpHandler := mcpserver.NewStreamableHTTPServer(app.Server(), mcpserver.WithStateLess(true))
 
 	mux := http.NewServeMux()

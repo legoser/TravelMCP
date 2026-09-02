@@ -57,6 +57,8 @@ log:
   format: "json" # json|text
   # per-модуль override: TRAVELMCP__LOG__LEVELS__STORE=debug
   levels:
+    #planner: "info"
+    #mcp: "info"
     # http: "info"
     # providers.intercity: "debug"
 
