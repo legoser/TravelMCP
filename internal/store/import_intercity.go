@@ -97,192 +97,192 @@ func ImportIntercity(ctx context.Context, s Store, path string, logger *slog.Log
 	var importErr error
 	importErr = s.WithTx(ctx, func(tx Store) error {
 		logger.Info("station grouping started")
-	// Station grouping: stops with same coords within 0.4km -> same station
-	type stationKey struct{ id int64 }
-	stations := map[string]int64{}
-	stopToStation := map[string]int64{}
-	var stationRows []StationRow
+		// Station grouping: stops with same coords within 0.4km -> same station
+		type stationKey struct{ id int64 }
+		stations := map[string]int64{}
+		stopToStation := map[string]int64{}
+		var stationRows []StationRow
 
-	for _, st := range ds.Stops {
-		lat, lon := 0.0, 0.0
-		if st.Lat != nil {
-			lat = *st.Lat
-		}
-		if st.Lon != nil {
-			lon = *st.Lon
-		}
-		found := int64(0)
-		for _, sr := range stationRows {
-			if sr.Lat == 0 && sr.Lon == 0 || lat == 0 && lon == 0 {
-				continue
+		for _, st := range ds.Stops {
+			lat, lon := 0.0, 0.0
+			if st.Lat != nil {
+				lat = *st.Lat
 			}
-			d := geo.Haversine(model.Coords{Lat: lat, Lon: lon}, model.Coords{Lat: sr.Lat, Lon: sr.Lon})
-			if d < 0.4 {
-				found = sr.ID
-				break
+			if st.Lon != nil {
+				lon = *st.Lon
 			}
-		}
-		if found == 0 {
-			sr := StationRow{Name: st.Name, Lat: lat, Lon: lon, RegionCode: st.Region, PrimaryProvider: "intercity"}
-			if lat == 0 && lon == 0 {
-				if cached, ok := tx.FindStation(ctx, st.Name, st.Region); ok {
-					sr.Lat, sr.Lon = cached.Lat, cached.Lon
-					sr.QualityFlags = 0
-				} else {
-					sr.QualityFlags = 1
-					if os.Getenv("ENABLE_GEOCODE") == "1" {
-						if nlat, nlon, ok := geocodeStation(st.Name, st.Region); ok {
-							sr.Lat, sr.Lon = nlat, nlon
-							sr.QualityFlags = 0
+			found := int64(0)
+			for _, sr := range stationRows {
+				if sr.Lat == 0 && sr.Lon == 0 || lat == 0 && lon == 0 {
+					continue
+				}
+				d := geo.Haversine(model.Coords{Lat: lat, Lon: lon}, model.Coords{Lat: sr.Lat, Lon: sr.Lon})
+				if d < 0.4 {
+					found = sr.ID
+					break
+				}
+			}
+			if found == 0 {
+				sr := StationRow{Name: st.Name, Lat: lat, Lon: lon, RegionCode: st.Region, PrimaryProvider: "intercity"}
+				if lat == 0 && lon == 0 {
+					if cached, ok := tx.FindStation(ctx, st.Name, st.Region); ok {
+						sr.Lat, sr.Lon = cached.Lat, cached.Lon
+						sr.QualityFlags = 0
+					} else {
+						sr.QualityFlags = 1
+						if os.Getenv("ENABLE_GEOCODE") == "1" {
+							if nlat, nlon, ok := geocodeStation(st.Name, st.Region); ok {
+								sr.Lat, sr.Lon = nlat, nlon
+								sr.QualityFlags = 0
+							}
 						}
 					}
 				}
+				id, _ := tx.UpsertStation(ctx, sr)
+				// memory store allocs ID inside; need to capture actual ID
+				// For memory store, Upsert returns allocated ID; we need to store it
+				// Use returned id as station id
+				sr.ID = id
+				stationRows = append(stationRows, sr)
+				stations[st.ID] = id
+				stopToStation[st.ID] = id
+				_ = stationKey{}
+			} else {
+				stopToStation[st.ID] = found
 			}
-			id, _ := tx.UpsertStation(ctx, sr)
-			// memory store allocs ID inside; need to capture actual ID
-			// For memory store, Upsert returns allocated ID; we need to store it
-			// Use returned id as station id
-			sr.ID = id
-			stationRows = append(stationRows, sr)
-			stations[st.ID] = id
-			stopToStation[st.ID] = id
-			_ = stationKey{}
-		} else {
-			stopToStation[st.ID] = found
 		}
-	}
-	logger.Info("stations grouped", "count", len(stationRows), "elapsed_ms", time.Since(t0).Milliseconds())
+		logger.Info("stations grouped", "count", len(stationRows), "elapsed_ms", time.Since(t0).Milliseconds())
 
-	// carriers
-	carrierMap := map[string]int64{}
-	for _, r := range ds.Routes {
-		key := r.Carrier + "|" + r.CarrierINN
-		if _, ok := carrierMap[key]; ok {
-			continue
+		// carriers
+		carrierMap := map[string]int64{}
+		for _, r := range ds.Routes {
+			key := r.Carrier + "|" + r.CarrierINN
+			if _, ok := carrierMap[key]; ok {
+				continue
+			}
+			id, _ := tx.UpsertCarrier(ctx, CarrierRow{ProviderID: "intercity", Name: r.Carrier, Code: r.CarrierINN, INN: r.CarrierINN})
+			carrierMap[key] = id
 		}
-		id, _ := tx.UpsertCarrier(ctx, CarrierRow{ProviderID: "intercity", Name: r.Carrier, Code: r.CarrierINN, INN: r.CarrierINN})
-		carrierMap[key] = id
-	}
-	logger.Info("carriers ready", "count", len(carrierMap), "elapsed_ms", time.Since(t0).Milliseconds())
+		logger.Info("carriers ready", "count", len(carrierMap), "elapsed_ms", time.Since(t0).Milliseconds())
 
-	// stops
-	stopIDMap := map[string]int64{}
-	for _, st := range ds.Stops {
-		stationID := stopToStation[st.ID]
-		sr := StopRow{StationID: stationID, ProviderID: "intercity", ExternalCode: st.ID, StopType: string(model.InferStopType(st.Name)), Name: st.Name, RawName: st.Name}
-		id, _ := tx.UpsertStop(ctx, sr)
-		stopIDMap[st.ID] = id
-		_ = tx.UpsertStationCode(ctx, StationCodeRow{StationID: stationID, ProviderID: "intercity", CodeType: "op_reg", Code: st.OpReg, NameForm: st.Name})
-	}
-	logger.Info("stops ready", "count", len(stopIDMap), "elapsed_ms", time.Since(t0).Milliseconds())
-
-	// routes
-	routeIDMap := map[string]int64{}
-	for _, r := range ds.Routes {
-		carrierKey := r.Carrier + "|" + r.CarrierINN
-		cid := carrierMap[carrierKey]
-		rr := RouteRow{ProviderID: "intercity", CarrierID: cid, ExternalCode: r.Reg, ShortName: r.Reg, LongName: r.Name, Mode: string(model.ModeBus)}
-		id, _ := tx.UpsertRoute(ctx, rr)
-		routeIDMap[r.Reg] = id
-	}
-	logger.Info("routes ready", "count", len(routeIDMap), "elapsed_ms", time.Since(t0).Milliseconds())
-
-	tripStart := time.Now()
-	type pendingTrip struct {
-		row   TripRow
-		times []struct {
-			stopID string
-			arrMin int
-			depMin int
+		// stops
+		stopIDMap := map[string]int64{}
+		for _, st := range ds.Stops {
+			stationID := stopToStation[st.ID]
+			sr := StopRow{StationID: stationID, ProviderID: "intercity", ExternalCode: st.ID, StopType: string(model.InferStopType(st.Name)), Name: st.Name, RawName: st.Name}
+			id, _ := tx.UpsertStop(ctx, sr)
+			stopIDMap[st.ID] = id
+			_ = tx.UpsertStationCode(ctx, StationCodeRow{StationID: stationID, ProviderID: "intercity", CodeType: "op_reg", Code: st.OpReg, NameForm: st.Name})
 		}
-	}
-	var pending []pendingTrip
-	var mu sync.Mutex
-	numCPU := runtime.NumCPU()
-	sem := make(chan struct{}, numCPU*2)
-	var wg sync.WaitGroup
-	for _, sc := range ds.Schedules {
-		routeID := routeIDMap[sc.Route]
-		period := pickPeriod(sc)
-		if period == "" {
-			continue
+		logger.Info("stops ready", "count", len(stopIDMap), "elapsed_ms", time.Since(t0).Milliseconds())
+
+		// routes
+		routeIDMap := map[string]int64{}
+		for _, r := range ds.Routes {
+			carrierKey := r.Carrier + "|" + r.CarrierINN
+			cid := carrierMap[carrierKey]
+			rr := RouteRow{ProviderID: "intercity", CarrierID: cid, ExternalCode: r.Reg, ShortName: r.Reg, LongName: r.Name, Mode: string(model.ModeBus)}
+			id, _ := tx.UpsertRoute(ctx, rr)
+			routeIDMap[r.Reg] = id
 		}
-		runs := runsCount(sc, period)
-		for run := 0; run < runs; run++ {
-			wg.Add(1)
-			sem <- struct{}{}
-			go func(sched reestrSched, routeID int64, period string, run int) {
-				defer wg.Done()
-				defer func() { <-sem }()
-				times := []struct {
-					stopID string
-					arrMin int
-					depMin int
-				}{}
-				prevEff := -1
-				for i := range sched.Stops {
-					if len(times) > 0 {
-						prevStation := stopToStation[times[len(times)-1].stopID]
-						curStation := stopToStation[sched.Stops[i].Stop]
-						if prevStation != 0 && curStation != 0 && prevStation == curStation {
-							continue
-						}
-					}
-					b := blockOf(sched.Stops[i], period)
-					if b == nil {
-						continue
-					}
-					arrMin, hasArr := timeAt(b.Arr, run)
-					depMin, hasDep := timeAt(b.Dep, run)
-					if !hasArr && !hasDep {
-						continue
-					}
-					if !hasArr {
-						arrMin = depMin
-					}
-					if !hasDep {
-						depMin = arrMin
-					}
-					arrOff := 0
-					for arrMin+arrOff*1440 < prevEff {
-						arrOff++
-					}
-					eff := arrMin + arrOff*1440
-					depOff := arrOff
-					for depMin+depOff*1440 < eff {
-						depOff++
-					}
-					effDep := depMin + depOff*1440
-					prevEff = effDep
-					times = append(times, struct {
+		logger.Info("routes ready", "count", len(routeIDMap), "elapsed_ms", time.Since(t0).Milliseconds())
+
+		tripStart := time.Now()
+		type pendingTrip struct {
+			row   TripRow
+			times []struct {
+				stopID string
+				arrMin int
+				depMin int
+			}
+		}
+		var pending []pendingTrip
+		var mu sync.Mutex
+		numCPU := runtime.NumCPU()
+		sem := make(chan struct{}, numCPU*2)
+		var wg sync.WaitGroup
+		for _, sc := range ds.Schedules {
+			routeID := routeIDMap[sc.Route]
+			period := pickPeriod(sc)
+			if period == "" {
+				continue
+			}
+			runs := runsCount(sc, period)
+			for run := 0; run < runs; run++ {
+				wg.Add(1)
+				sem <- struct{}{}
+				go func(sched reestrSched, routeID int64, period string, run int) {
+					defer wg.Done()
+					defer func() { <-sem }()
+					times := []struct {
 						stopID string
 						arrMin int
 						depMin int
-					}{stopID: sched.Stops[i].Stop, arrMin: eff, depMin: effDep})
-				}
-				if len(times) < 2 {
-					return
-				}
-				mu.Lock()
-				pending = append(pending, pendingTrip{row: TripRow{RouteID: routeID, ProviderID: "intercity", Direction: sched.Direction, ServiceID: sched.ServiceID}, times: times})
-				mu.Unlock()
-			}(sc, routeID, period, run)
-		}
-	}
-	wg.Wait()
-	sort.Slice(pending, func(i, j int) bool { return pending[i].row.RouteID < pending[j].row.RouteID })
-	logger.Info("trips prepared", "count", len(pending), "workers", numCPU, "elapsed_ms", time.Since(tripStart).Milliseconds())
-	for _, pt := range pending {
-		tid, _ := tx.UpsertTrip(ctx, pt.row)
-		for seq, tm := range pt.times {
-			sid, ok := stopIDMap[tm.stopID]
-			if !ok {
-				continue
+					}{}
+					prevEff := -1
+					for i := range sched.Stops {
+						if len(times) > 0 {
+							prevStation := stopToStation[times[len(times)-1].stopID]
+							curStation := stopToStation[sched.Stops[i].Stop]
+							if prevStation != 0 && curStation != 0 && prevStation == curStation {
+								continue
+							}
+						}
+						b := blockOf(sched.Stops[i], period)
+						if b == nil {
+							continue
+						}
+						arrMin, hasArr := timeAt(b.Arr, run)
+						depMin, hasDep := timeAt(b.Dep, run)
+						if !hasArr && !hasDep {
+							continue
+						}
+						if !hasArr {
+							arrMin = depMin
+						}
+						if !hasDep {
+							depMin = arrMin
+						}
+						arrOff := 0
+						for arrMin+arrOff*1440 < prevEff {
+							arrOff++
+						}
+						eff := arrMin + arrOff*1440
+						depOff := arrOff
+						for depMin+depOff*1440 < eff {
+							depOff++
+						}
+						effDep := depMin + depOff*1440
+						prevEff = effDep
+						times = append(times, struct {
+							stopID string
+							arrMin int
+							depMin int
+						}{stopID: sched.Stops[i].Stop, arrMin: eff, depMin: effDep})
+					}
+					if len(times) < 2 {
+						return
+					}
+					mu.Lock()
+					pending = append(pending, pendingTrip{row: TripRow{RouteID: routeID, ProviderID: "intercity", Direction: sched.Direction, ServiceID: sched.ServiceID}, times: times})
+					mu.Unlock()
+				}(sc, routeID, period, run)
 			}
-			_ = tx.UpsertStopTime(ctx, StopTimeRow{TripID: tid, StopID: sid, Seq: seq, Arrival: tm.arrMin * 60, Departure: tm.depMin * 60})
 		}
-	}
-	logger.Info("trips stored", "elapsed_ms", time.Since(tripStart).Milliseconds())
+		wg.Wait()
+		sort.Slice(pending, func(i, j int) bool { return pending[i].row.RouteID < pending[j].row.RouteID })
+		logger.Info("trips prepared", "count", len(pending), "workers", numCPU, "elapsed_ms", time.Since(tripStart).Milliseconds())
+		for _, pt := range pending {
+			tid, _ := tx.UpsertTrip(ctx, pt.row)
+			for seq, tm := range pt.times {
+				sid, ok := stopIDMap[tm.stopID]
+				if !ok {
+					continue
+				}
+				_ = tx.UpsertStopTime(ctx, StopTimeRow{TripID: tid, StopID: sid, Seq: seq, Arrival: tm.arrMin * 60, Departure: tm.depMin * 60})
+			}
+		}
+		logger.Info("trips stored", "elapsed_ms", time.Since(tripStart).Milliseconds())
 
 		for i := 0; i < len(stationRows); i++ {
 			for j := i + 1; j < len(stationRows); j++ {

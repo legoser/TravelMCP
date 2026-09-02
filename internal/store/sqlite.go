@@ -86,7 +86,7 @@ type txStore struct {
 	parent *SQLiteStore
 }
 
-func (t *txStore) Close() error { return nil }
+func (t *txStore) Close() error                      { return nil }
 func (t *txStore) Migrate(ctx context.Context) error { return nil }
 func (t *txStore) LoadNetwork(ctx context.Context, providers []string, day time.Time) (*model.Network, error) {
 	return t.parent.LoadNetwork(ctx, providers, day)
@@ -109,7 +109,7 @@ func (t *txStore) GetImport(ctx context.Context, providerID string) (ImportRow, 
 	return r, true
 }
 func (t *txStore) SaveQualityIssue(ctx context.Context, q QualityRow) error { return nil }
-func (t *txStore) UpsertFare(ctx context.Context, f FareRow) error { return nil }
+func (t *txStore) UpsertFare(ctx context.Context, f FareRow) error          { return nil }
 func (t *txStore) UpsertStation(ctx context.Context, r StationRow) (int64, error) {
 	if r.ID != 0 {
 		_, err := t.tx.ExecContext(ctx, `INSERT INTO stations(id, name, lat, lon, geo_cell, region_code, timezone, quality_flags, primary_provider) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, lat=excluded.lat, lon=excluded.lon`, r.ID, r.Name, r.Lat, r.Lon, r.GeoCell, r.RegionCode, r.Timezone, r.QualityFlags, r.PrimaryProvider)

@@ -50,8 +50,8 @@ func NewMemoryStore() *MemoryStore {
 
 func (m *MemoryStore) allocID() int64 { id := m.nextID; m.nextID++; return id }
 
-func (m *MemoryStore) Migrate(ctx context.Context) error { return nil }
-func (m *MemoryStore) Close() error                      { return nil }
+func (m *MemoryStore) Migrate(ctx context.Context) error                      { return nil }
+func (m *MemoryStore) Close() error                                           { return nil }
 func (m *MemoryStore) WithTx(ctx context.Context, fn func(Store) error) error { return fn(m) }
 func (m *MemoryStore) FindStation(ctx context.Context, name, region string) (StationRow, bool) {
 	m.mu.RLock()

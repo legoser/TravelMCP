@@ -1,5 +1,8 @@
 http:
   addr: ":8080"
+  read_header_timeout: "10s"
+  shutdown_timeout: "10s"
+  rate_limit: { rps: 100, burst: 200 }
 
 database:
   dsn: "postgres://postgres:postgres@localhost:5432/travelmcp?sslmode=disable"
@@ -19,13 +22,27 @@ providers:
     reestr_path: "data/reestr/regions.json"
 
 auth:
-  admin_token: "${ADMIN_TOKEN:-dev-secret}" # dev fallback; prod — env ADMIN_TOKEN
+  admin_token: "${ADMIN_TOKEN}" # dev: export ADMIN_TOKEN=dev-secret; prod — env ADMIN_TOKEN обязателен
 
 planner:
   engine: "csa" # csa|raptor (RAPTOR frequency-based для межгорода)
 
 log:
   level: "info" # debug|info|warn|error — переключение без пересборки (LOG_LEVEL env)
+  format: "json" # json|text
+  # per-модуль override: TRAVELMCP__LOG__LEVELS__STORE=debug
+  levels:
+    # http: "info"
+    # providers.intercity: "debug"
+
+store:
+  kind: "memory" # memory|sqlite|postgres (dsn)
+  dsn: "${DATABASE_DSN:-}"
+cache:
+  kind: "memory" # memory|redis
+  ttl: "5m"
+queue:
+  kind: "memory" # memory|nats
 
 # Секреты — только через env (или .env, gitignored); в YAML не заполняются.
 yandex:

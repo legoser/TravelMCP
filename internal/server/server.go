@@ -148,8 +148,12 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
+	statuses := s.registry.HealthStatusesCached()
+	if len(statuses) == 0 {
+		statuses = s.registry.HealthStatuses()
+	}
 	allUp := true
-	for id, st := range s.registry.HealthStatuses() {
+	for id, st := range statuses {
 		if !st.Up {
 			allUp = false
 			s.logger.Warn("provider not up", "provider", id)

@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"sync"
 	"time"
 
 	"travelmcp/internal/model"
@@ -22,9 +23,12 @@ type Provider interface {
 }
 
 type Registry struct {
+	mu            sync.RWMutex
 	byID          map[string]Provider
 	order         []string
 	intercityPath string
+	snapshot      map[string]HealthStatus
+	snapshotAt    time.Time
 }
 
 func NewRegistry(enabled []string) *Registry {
@@ -73,9 +77,39 @@ func (r *Registry) List() []Provider {
 }
 
 func (r *Registry) HealthStatuses() map[string]HealthStatus {
+	r.mu.RLock()
+	if time.Since(r.snapshotAt) < 10*time.Second && r.snapshot != nil {
+		cp := copyStatuses(r.snapshot)
+		r.mu.RUnlock()
+		return cp
+	}
+	r.mu.RUnlock()
 	out := map[string]HealthStatus{}
 	for _, id := range r.order {
 		out[id] = r.byID[id].Health()
 	}
-	return out
+	r.mu.Lock()
+	r.snapshot = copyStatuses(out)
+	r.snapshotAt = time.Now()
+	r.mu.Unlock()
+	return copyStatuses(out)
+}
+
+func (r *Registry) HealthStatusesCached() map[string]HealthStatus {
+	r.mu.RLock()
+	if r.snapshot != nil && time.Since(r.snapshotAt) < 10*time.Second {
+		cp := copyStatuses(r.snapshot)
+		r.mu.RUnlock()
+		return cp
+	}
+	r.mu.RUnlock()
+	return r.HealthStatuses()
+}
+
+func copyStatuses(m map[string]HealthStatus) map[string]HealthStatus {
+	cp := make(map[string]HealthStatus, len(m))
+	for k, v := range m {
+		cp[k] = v
+	}
+	return cp
 }

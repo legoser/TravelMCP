@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"travelmcp/internal/config"
+	"travelmcp/internal/logger"
 	"travelmcp/internal/providers"
 	"travelmcp/internal/server"
 	"travelmcp/internal/store"
@@ -30,7 +31,8 @@ func main() {
 		slog.New(slog.NewJSONHandler(os.Stdout, nil)).Error("config load failed", "error", err)
 		os.Exit(1)
 	}
-	logger := newLogger(cfg.Log.Level, cfg.Log.Format, cfg.Log.AddSource)
+	factory := logger.NewFactory(cfg.Log)
+	logger := factory.For("main")
 	slog.SetDefault(logger)
 	logger.Info("config loaded", "path", configPath, "addr", cfg.HTTP.Addr, "providers", strings.Join(cfg.Providers.Enabled, ","), "dsn", maskDSN(cfg.Database.DSN), "reestr", cfg.Providers.Intercity.ReestrPath, "log_level", cfg.Log.Level, "log_format", cfg.Log.Format)
 

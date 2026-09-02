@@ -97,9 +97,10 @@ yandex: { rasp_key: "${YANDEX_RASP_KEY}", geocode_key: "${YANDEX_GEOCODE_KEY}" }
 *Зависит от Фазы 2 (порты).*
 - [ ] `store/postgres` реализовать `pgx` + `PostGIS` миграции (заменить `pgStub` `store/store.go:45`), `docker-compose.yml:2` уже есть; `store.New(cfg StoreConfig)` фабрика по `dsn` (`memory|sqlite://|postgres://`).
 - [ ] `internal/cache` интерфейс `Get/Set/Delete with TTL` + реализации `memory` (sync.Map) и `redis` (`go-redis`); `queue` интерфейс `Enqueue(Job)` + `memory` (chan+workers) → `nats` (опционально). Пока поиск синхронный, очередь для фоновых `ImportIntercity`/`geocode`.
-- [ ] Поиск: `semaphore Weighted(NumCPU*2)` перед `planner.Plan` `planner/planner.go:60` + `context.WithTimeout 2s` + `rate limiter per-IP` на `/mcp` (`x/time/rate`). Очередь для поиска — не внедрять сейчас, интерфейс заложить.
+- [ ] Поиск: `semaphore Weighted(NumCPU*2)` перед `planner.Plan` `planner/planner.go:60` + `context.WithTimeout 2s`.
+- [ ] **RateLimit middleware** (перенесено из Фазы 0 review): `internal/middleware/ratelimit.go` — `Token bucket` per-IP (`golang.org/x/time/rate`), дефолт `RPS/burst` из `config.server.rate_limit {rps,burst}` + `overrides map[path]RateLimit` (напр. `POST /api/v1/login: 5/10`, `POST /mcp: 20/40`). Middleware на все методы, переопределяемые лимиты, `429 Retry-After`.
 
-**Критерий**: `DATABASE_DSN=postgres://...` и `CACHE_KIND=redis` переключаются конфигом без правки кода, `make integration` проходит на `memory` и `sqlite`.
+**Критерий**: `DATABASE_DSN=postgres://...` и `CACHE_KIND=redis` переключаются конфигом без правки кода, `make integration` проходит на `memory` и `sqlite`; `429` на превышение лимита.
 
 ### Фаза 4 — Наблюдаемость (4 дня)
 *Зависит от Фазы 1 (логгер) и Фазы 3 (метрики на всех слоях).*
