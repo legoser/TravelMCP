@@ -93,11 +93,11 @@
 
 #### Nominatim (OSM, бесплатно)
 
-- **Endpoint**: `https://nominatim.openstreetmap.org/search?q=<query>&format=json&limit=1&accept-language=ru&addressdetails=0` и `reverse?lat=&lon=&format=json&accept-language=ru` (`adapters/nominatim`, `httpx`, заголовок `User-Agent: travelmcp/1.0 (travelmcp@example.com)` обязателен по политике OSM, лимит ≤1 req/s).
+- **Endpoint**: `https://nominatim.openstreetmap.org/search?q=<query>&format=json&limit=1&accept-language=ru&addressdetails=0` и `reverse?lat=&lon=&format=json&accept-language=ru` (`adapters/nominatim`, `httpx`, заголовок `User-Agent: travelmcp/1.0 (https://github.com/anomalyco/travelmcp)` — без `@` в UA, иначе Varnish `403` — `urlencode` кириллицы обязателен, лимит ≤1 req/s).
 - **Запрос:**
   ```sh
-  curl -A "travelmcp/1.0 (travelmcp@example.com)" \
-    "https://nominatim.openstreetmap.org/search?q=Барнаул%20автовокзал&format=json&limit=1&accept-language=ru"
+  curl -A "travelmcp/1.0 (https://github.com/anomalyco/travelmcp)" \
+    "https://nominatim.openstreetmap.org/search?q=%D0%91%D0%B0%D1%80%D0%BD%D0%B0%D1%83%D0%BB%20%D0%B0%D0%B2%D1%82%D0%BE%D0%B2%D0%BE%D0%BA%D0%B7%D0%B0%D0%BB&format=json&limit=1&accept-language=ru"
   ```
 - **Ответ:**
   ```json
@@ -108,7 +108,7 @@
   → `Result{Lat:53.35182, Lon:83.75862, Name:"Автовокзал, 12, ... Барнаул ..."}`.
 - **Reverse:**
   ```sh
-  curl -A "travelmcp/1.0 (travelmcp@example.com)" \
+  curl -A "travelmcp/1.0 (https://github.com/anomalyco/travelmcp)" \
     "https://nominatim.openstreetmap.org/reverse?lat=55.0411&lon=83.0274&format=json&accept-language=ru"
   # {"display_name":"Новосибирский автовокзал-Главный, 37/2, Гусинобродское шоссе, ..., 630010, Россия","lat":"55.0410573","lon":"83.0273816","class":"amenity","type":"bus_station"}
   ```

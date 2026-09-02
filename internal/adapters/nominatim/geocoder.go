@@ -48,7 +48,7 @@ func (g *Geocoder) Geocode(ctx context.Context, query string) (*geocoder.Result,
 	q.Set("addressdetails", "0")
 	base.RawQuery = q.Encode()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base.String(), nil)
-	req.Header.Set("User-Agent", "travelmcp/1.0 (travelmcp@example.com)")
+	req.Header.Set("User-Agent", "travelmcp/1.0 (https://github.com/anomalyco/travelmcp)")
 	resp, err := g.client.Do(ctx, req)
 	if err != nil {
 		return nil, err
@@ -85,7 +85,7 @@ func (g *Geocoder) Reverse(ctx context.Context, lat, lon float64) (string, error
 	q.Set("accept-language", "ru")
 	base.RawQuery = q.Encode()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base.String(), nil)
-	req.Header.Set("User-Agent", "travelmcp/1.0 (travelmcp@example.com)")
+	req.Header.Set("User-Agent", "travelmcp/1.0 (https://github.com/anomalyco/travelmcp)")
 	resp, err := g.client.Do(ctx, req)
 	if err != nil {
 		return "", err

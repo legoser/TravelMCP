@@ -442,7 +442,7 @@ class NominatimGeoCoder:
             })
             url = NOMINATIM_GEO + "?" + params
             req = urllib.request.Request(url, headers={
-                "User-Agent": "travelmcp/1.0 (travelmcp@example.com)"
+                "User-Agent": "travelmcp/1.0 (https://github.com/anomalyco/travelmcp)"
             })
             with urllib.request.urlopen(req, timeout=15) as r:
                 body = json.load(r)
