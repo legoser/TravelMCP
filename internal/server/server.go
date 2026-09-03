@@ -97,7 +97,7 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 	adminFS, _ := fs.Sub(webFS, "web")
 	mux.Handle("GET /admin", http.HandlerFunc(s.handleAdminPage))
 	mux.Handle("GET /admin/", http.StripPrefix("/admin/", http.FileServer(http.FS(adminFS))))
-	mux.Handle("/mcp", s.auth(mcpHandler, "mcp:read"))
+	mux.Handle("/mcp", s.auth(s.mcpJSONValidation(mcpHandler), "mcp:read"))
 
 	rl := middleware.NewRateLimiter(cfg.HTTP)
 	handler := rl.Middleware(mux)
@@ -262,25 +262,24 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.logger.Warn("register invalid json", "error", err)
-		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		writeJSONDecodeError(w, err, s.logger, r.URL.Path)
 		return
 	}
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
 	s.logger.Debug("register payload", "email", req.Email)
 	if _, err := mail.ParseAddress(req.Email); err != nil || req.Email == "" {
-		s.logger.Warn("register invalid email", "email", req.Email)
-		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "valid email required"})
+		s.logger.Warn("register invalid email", "email", req.Email, "error", err)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "valid email required", "message": fmt.Sprintf("email %q невалиден: %v", req.Email, err), "field": "email"})
 		return
 	}
 	if len(req.Password) < 8 || len(req.Password) > 72 {
-		s.logger.Warn("register bad password length", "email", req.Email)
-		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "password 8..72 required"})
+		s.logger.Warn("register bad password length", "email", req.Email, "len", len(req.Password))
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "password 8..72 required", "message": fmt.Sprintf("password: длина %d, ожидается 8..72", len(req.Password)), "field": "password"})
 		return
 	}
 	if _, ok := s.store.GetUserByEmail(r.Context(), req.Email); ok {
 		s.logger.Warn("register user exists", "email", req.Email)
-		writeJSONResponse(w, http.StatusConflict, map[string]any{"error": "user already exists"})
+		writeJSONResponse(w, http.StatusConflict, map[string]any{"error": "user already exists", "field": "email"})
 		return
 	}
 	role := "user"
@@ -310,8 +309,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.logger.Warn("login invalid json", "error", err)
-		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		writeJSONDecodeError(w, err, s.logger, r.URL.Path)
 		return
 	}
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
@@ -319,12 +317,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.store.GetUserByEmail(r.Context(), req.Email)
 	if !ok || !checkPassword(user.PassHash, req.Password) {
 		s.logger.Warn("login invalid credentials", "email", req.Email)
-		writeJSONResponse(w, http.StatusUnauthorized, map[string]any{"error": "invalid credentials"})
+		writeJSONResponse(w, http.StatusUnauthorized, map[string]any{"error": "invalid credentials", "field": "email/password"})
 		return
 	}
 	if user.Status != "active" {
 		s.logger.Warn("login inactive", "email", req.Email, "status", user.Status)
-		writeJSONResponse(w, http.StatusForbidden, map[string]any{"error": "user not active", "status": user.Status})
+		writeJSONResponse(w, http.StatusForbidden, map[string]any{"error": "user not active", "status": user.Status, "field": "status"})
 		return
 	}
 	keys, _ := s.store.ListApiKeys(r.Context(), user.ID)
@@ -390,14 +388,13 @@ func (s *Server) handleModerateUser(w http.ResponseWriter, r *http.Request) {
 		Status string `json:"status"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.logger.Warn("moderate invalid json", "error", err)
-		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		writeJSONDecodeError(w, err, s.logger, r.URL.Path)
 		return
 	}
 	s.logger.Debug("moderate payload", "id", id, "status", req.Status, "actor", userEmail(actor))
 	if req.Status != "active" && req.Status != "blocked" && req.Status != "pending" {
 		s.logger.Warn("moderate bad status", "status", req.Status)
-		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "status must be active|blocked|pending"})
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "status must be active|blocked|pending", "field": "status", "message": fmt.Sprintf("status %q недопустим, ожидается active|blocked|pending", req.Status)})
 		return
 	}
 	if err := s.store.UpdateUserStatus(r.Context(), id, req.Status); err != nil {
@@ -583,21 +580,20 @@ func (s *Server) handlePatchUser(w http.ResponseWriter, r *http.Request) {
 		Config *string `json:"config"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.logger.Warn("patch user invalid json", "error", err)
-		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		writeJSONDecodeError(w, err, s.logger, r.URL.Path)
 		return
 	}
 	s.logger.Debug("patch user payload", "id", id, "status", req.Status, "role", req.Role, "actor", userEmail(actor))
 	if req.Status == nil && req.Role == nil && req.Config == nil {
 		s.logger.Warn("patch user nothing to update", "id", id)
-		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "nothing to update"})
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "nothing to update", "message": "укажите status, role или config"})
 		return
 	}
 	if req.Status != nil {
 		st := *req.Status
 		if st != "pending" && st != "active" && st != "blocked" {
 			s.logger.Warn("patch user bad status", "status", st)
-			writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "status must be pending|active|blocked"})
+			writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "status must be pending|active|blocked", "field": "status"})
 			return
 		}
 		if err := s.store.UpdateUserStatus(r.Context(), id, st); err != nil {
@@ -652,8 +648,7 @@ func (s *Server) handleUpdateUserConfig(w http.ResponseWriter, r *http.Request) 
 		Config string `json:"config"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.logger.Warn("update config invalid json", "error", err)
-		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		writeJSONDecodeError(w, err, s.logger, r.URL.Path)
 		return
 	}
 	s.logger.Debug("update config payload", "id", id, "len", len(req.Config))
@@ -813,8 +808,7 @@ func (s *Server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	var req map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.logger.Warn("put config invalid json", "error", err)
-		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		writeJSONDecodeError(w, err, s.logger, r.URL.Path)
 		return
 	}
 	s.logger.Debug("put config payload", "body", fmt.Sprint(req), "actor", userEmail(actor))
@@ -912,6 +906,38 @@ func toJSON(v any) string {
 	return string(b)
 }
 
+func jsonDecodeErrorMessage(err error) string {
+	if err == nil {
+		return "invalid json"
+	}
+	if se, ok := err.(*json.SyntaxError); ok {
+		return fmt.Sprintf("invalid json at offset %d: %v", se.Offset, err)
+	}
+	if ue, ok := err.(*json.UnmarshalTypeError); ok {
+		return fmt.Sprintf("invalid json: field %q expected %s got %q at offset %d", ue.Field, ue.Type, ue.Value, ue.Offset)
+	}
+	return fmt.Sprintf("invalid json: %v", err)
+}
+
+func writeJSONDecodeError(w http.ResponseWriter, err error, logger *slog.Logger, path string) {
+	msg := jsonDecodeErrorMessage(err)
+	if logger != nil {
+		logger.Warn("invalid json", "path", path, "error", err, "message", msg)
+	}
+	writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "message": msg, "details": err.Error()})
+}
+
+func writeJSONRPCParseError(w http.ResponseWriter, err error) {
+	msg := jsonDecodeErrorMessage(err)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusBadRequest)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      nil,
+		"error":   map[string]any{"code": -32700, "message": "Parse error: " + msg},
+	})
+}
+
 func writeJSONResponse(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -919,6 +945,27 @@ func writeJSONResponse(w http.ResponseWriter, status int, v any) {
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		slog.Default().Error("write json", "error", err)
 	}
+}
+
+func (s *Server) mcpJSONValidation(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+			body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+			if err != nil {
+				writeJSONRPCParseError(w, err)
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			if len(body) > 0 && !json.Valid(body) {
+				var tmp any
+				if err := json.Unmarshal(body, &tmp); err != nil {
+					writeJSONRPCParseError(w, err)
+					return
+				}
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func requestIDMiddleware(next http.Handler) http.Handler {

@@ -23,6 +23,27 @@ const (
 	ModeFlight Mode = "flight"
 )
 
+const (
+	BusMaxSpeed    = 120.0
+	TramMaxSpeed   = 120.0
+	MetroMaxSpeed  = 120.0
+	RailMaxSpeed   = 250.0
+	FlightMaxSpeed = 1000.0
+)
+
+func MaxSpeed(mode Mode) float64 {
+	switch mode {
+	case ModeFlight:
+		return FlightMaxSpeed
+	case ModeRail:
+		return RailMaxSpeed
+	case ModeBus, ModeTram, ModeMetro:
+		return BusMaxSpeed
+	default:
+		return BusMaxSpeed
+	}
+}
+
 type StopType string
 
 const (
@@ -52,6 +73,45 @@ func (s *Stop) IsHub() bool {
 	return s.Type == StopTypeHub
 }
 
+func (s *Stop) IsVillage() bool {
+	return IsVillageName(s.Name)
+}
+
+func IsVillageName(name string) bool {
+	lower := strings.ToLower(name)
+	if strings.Contains(lower, "остановочный пункт") || strings.Contains(lower, "ост. пункт") || strings.Contains(lower, "остановочный") {
+		return true
+	}
+	if strings.Contains(lower, "поворот") || strings.Contains(lower, "пов.") {
+		return true
+	}
+	for _, tok := range strings.Fields(lower) {
+		clean := strings.Trim(tok, " \t\"'«».,;:!*")
+		if clean == "оп" || clean == "оп." || clean == "о.п." || clean == "о.п" {
+			return true
+		}
+		if strings.HasPrefix(clean, "оп") && len([]rune(clean)) <= 5 {
+			if clean == "оп" || strings.HasPrefix(clean, "оп«") || strings.HasPrefix(clean, "оп\"") {
+				return true
+			}
+		}
+	}
+	if strings.HasPrefix(lower, "оп ") || strings.Contains(lower, " оп ") || strings.Contains(lower, " оп«") || strings.Contains(lower, "оп «") {
+		return true
+	}
+	if strings.Contains(lower, " пов ") || strings.HasPrefix(lower, "пов ") || strings.Contains(lower, "пов.") {
+		return true
+	}
+	return false
+}
+
+func VillagePenaltyMinutes(name string) int {
+	if IsVillageName(name) {
+		return 15
+	}
+	return 0
+}
+
 func InferStopType(name string) StopType {
 	lower := strings.ToLower(name)
 	if strings.Contains(lower, "аэропорт") {
@@ -64,6 +124,9 @@ func InferStopType(name string) StopType {
 	}
 	if strings.Contains(lower, "автовокзал") || strings.Contains(lower, "автостанция") {
 		return StopTypeHub
+	}
+	if IsVillageName(name) {
+		return StopTypePlatform
 	}
 	if strings.Contains(lower, "вокзал") {
 		return StopTypeStation

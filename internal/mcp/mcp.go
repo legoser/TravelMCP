@@ -86,17 +86,24 @@ func (a *App) handleFindRoute(ctx context.Context, req mcp.CallToolRequest) (*mc
 	if a.logger != nil {
 		a.logger.Debug("find_route request", "args", req.GetArguments())
 	}
+	for _, k := range []string{"from_place", "to_place", "departure", "arrival", "preference"} {
+		if v, ok := req.GetArguments()[k]; ok {
+			if _, ok := v.(string); !ok {
+				return mcp.NewToolResultError(fmt.Sprintf("%s: ожидается строка, получен %T %v", k, v, v)), nil
+			}
+		}
+	}
 	from, fromPlace, err := a.resolvePointWithPlace(req.GetArguments(), "from")
 	if err != nil {
 		if a.logger != nil {
-			a.logger.Warn("find_route bad args", "error", err)
+			a.logger.Warn("find_route bad args", "error", err, "args", req.GetArguments())
 		}
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	to, toPlace, err := a.resolvePointWithPlace(req.GetArguments(), "to")
 	if err != nil {
 		if a.logger != nil {
-			a.logger.Warn("find_route bad args", "error", err)
+			a.logger.Warn("find_route bad args", "error", err, "args", req.GetArguments())
 		}
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -106,50 +113,87 @@ func (a *App) handleFindRoute(ctx context.Context, req mcp.CallToolRequest) (*mc
 		MaxTransfers: -1,
 	}
 
-	if v, ok := argString(req.GetArguments(), "departure"); ok {
-		t, err := time.Parse(time.RFC3339, v)
+	if v, ok := req.GetArguments()["departure"]; ok {
+		s, ok := v.(string)
+		if !ok {
+			return mcp.NewToolResultError(fmt.Sprintf("departure: ожидается строка RFC3339, получен %T %v", v, v)), nil
+		}
+		t, err := time.Parse(time.RFC3339, s)
 		if err != nil {
-			return mcp.NewToolResultError("departure: ожидается RFC3339"), nil
+			return mcp.NewToolResultError(fmt.Sprintf("departure: ожидается RFC3339, получено %q: %v", s, err)), nil
 		}
 		params.Departure = t
 	}
-	if v, ok := argString(req.GetArguments(), "arrival"); ok {
-		t, err := time.Parse(time.RFC3339, v)
+	if v, ok := req.GetArguments()["arrival"]; ok {
+		s, ok := v.(string)
+		if !ok {
+			return mcp.NewToolResultError(fmt.Sprintf("arrival: ожидается строка RFC3339, получен %T %v", v, v)), nil
+		}
+		t, err := time.Parse(time.RFC3339, s)
 		if err != nil {
-			return mcp.NewToolResultError("arrival: ожидается RFC3339"), nil
+			return mcp.NewToolResultError(fmt.Sprintf("arrival: ожидается RFC3339, получено %q: %v", s, err)), nil
 		}
 		params.Arrival = &t
 	}
 	if v, ok := req.GetArguments()["allow_gap"]; ok {
-		if b, ok := v.(bool); ok {
-			params.AllowGap = b
-		} else if s, ok := v.(string); ok && (s == "true" || s == "1") {
-			params.AllowGap = true
+		switch x := v.(type) {
+		case bool:
+			params.AllowGap = x
+		case string:
+			switch strings.ToLower(strings.TrimSpace(x)) {
+			case "true", "1", "yes", "y":
+				params.AllowGap = true
+			case "false", "0", "no", "n", "":
+				params.AllowGap = false
+			default:
+				return mcp.NewToolResultError(fmt.Sprintf("allow_gap: ожидается boolean, получено %q (допустимо true/false)", x)), nil
+			}
+		default:
+			return mcp.NewToolResultError(fmt.Sprintf("allow_gap: ожидается boolean, получен %T %v", v, v)), nil
 		}
 	}
-	if v, ok := argString(req.GetArguments(), "preference"); ok {
-		switch v {
+	if v, ok := req.GetArguments()["preference"]; ok {
+		s, ok := v.(string)
+		if !ok {
+			return mcp.NewToolResultError(fmt.Sprintf("preference: ожидается строка arrival/transfers, получен %T %v", v, v)), nil
+		}
+		switch strings.ToLower(strings.TrimSpace(s)) {
 		case "transfers", "transfer":
 			params.Preference = model.PreferenceTransfers
 		case "arrival":
 			params.Preference = model.PreferenceArrival
 		default:
-			params.Preference = model.PreferenceArrival
+			return mcp.NewToolResultError(fmt.Sprintf("preference: ожидается \"arrival\" или \"transfers\", получено %q", s)), nil
 		}
 	} else {
 		params.Preference = model.PreferenceTransfers
 	}
-	if v, ok := argFloat(req.GetArguments(), "max_walk_minutes"); ok {
+	if _, exists := req.GetArguments()["max_walk_minutes"]; exists {
+		v, ok := argFloatStrict(req.GetArguments(), "max_walk_minutes")
+		if !ok {
+			return mcp.NewToolResultError(fmt.Sprintf("max_walk_minutes: ожидается число 0..180, получено %v (%T)", req.GetArguments()["max_walk_minutes"], req.GetArguments()["max_walk_minutes"])), nil
+		}
 		if v < 0 || v > 180 {
-			return mcp.NewToolResultError("max_walk_minutes: 0..180"), nil
+			return mcp.NewToolResultError(fmt.Sprintf("max_walk_minutes: ожидается 0..180, получено %.0f", v)), nil
 		}
 		params.MaxWalkMinutes = int(v)
 	}
-	if v, ok := argFloat(req.GetArguments(), "max_transfers"); ok {
+	if _, exists := req.GetArguments()["max_transfers"]; exists {
+		v, ok := argFloatStrict(req.GetArguments(), "max_transfers")
+		if !ok {
+			return mcp.NewToolResultError(fmt.Sprintf("max_transfers: ожидается число -1..20, получено %v (%T)", req.GetArguments()["max_transfers"], req.GetArguments()["max_transfers"])), nil
+		}
 		if v < -1 || v > 20 {
-			return mcp.NewToolResultError("max_transfers: -1..20"), nil
+			return mcp.NewToolResultError(fmt.Sprintf("max_transfers: ожидается -1..20, получено %.0f", v)), nil
 		}
 		params.MaxTransfers = int(v)
+	}
+	for _, k := range []string{"from_lat", "from_lon", "to_lat", "to_lon"} {
+		if _, exists := req.GetArguments()[k]; exists {
+			if _, ok := argFloatStrict(req.GetArguments(), k); !ok {
+				return mcp.NewToolResultError(fmt.Sprintf("%s: ожидается число, получено %v (%T)", k, req.GetArguments()[k], req.GetArguments()[k])), nil
+			}
+		}
 	}
 
 	day := params.Departure
@@ -203,8 +247,16 @@ func (a *App) resolvePoint(args map[string]any, kind string) (model.Coords, erro
 func (a *App) resolvePointWithPlace(args map[string]any, kind string) (model.Coords, *string, error) {
 	place, hasPlace := argString(args, kind+"_place")
 	hasPlace = hasPlace && strings.TrimSpace(place) != ""
+	hasLatRaw := args[kind+"_lat"] != nil
+	hasLonRaw := args[kind+"_lon"] != nil
 	lat, hasLat := argFloat(args, kind+"_lat")
 	lon, hasLon := argFloat(args, kind+"_lon")
+	if hasLatRaw && !hasLat {
+		return model.Coords{}, nil, fmt.Errorf("%s_lat: ожидается число, получено %v (%T)", kind, args[kind+"_lat"], args[kind+"_lat"])
+	}
+	if hasLonRaw && !hasLon {
+		return model.Coords{}, nil, fmt.Errorf("%s_lon: ожидается число, получено %v (%T)", kind, args[kind+"_lon"], args[kind+"_lon"])
+	}
 
 	if hasPlace && (hasLat || hasLon) {
 		return model.Coords{}, nil, fmt.Errorf("%s: укажите либо %s_place, либо %s_lat/%s_lon", kind, kind, kind, kind)
@@ -448,6 +500,11 @@ func argString(args map[string]any, key string) (string, bool) {
 }
 
 func argFloat(args map[string]any, key string) (float64, bool) {
+	f, ok := argFloatStrict(args, key)
+	return f, ok
+}
+
+func argFloatStrict(args map[string]any, key string) (float64, bool) {
 	v, ok := args[key]
 	if !ok {
 		return 0, false
@@ -468,10 +525,15 @@ func argFloat(args map[string]any, key string) (float64, bool) {
 		}
 		return f, true
 	case string:
-		f, err := strconv.ParseFloat(strings.TrimSpace(n), 64)
+		s := strings.TrimSpace(n)
+		if s == "" {
+			return 0, false
+		}
+		f, err := strconv.ParseFloat(s, 64)
 		if err == nil {
 			return f, true
 		}
+		return 0, false
 	}
 	return 0, false
 }

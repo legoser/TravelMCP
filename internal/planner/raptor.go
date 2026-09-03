@@ -132,6 +132,14 @@ func (p *Planner) raptor(net *model.Network, fromStop, toStop string, depart tim
 				if atFrom, ok := arr[fromST.StopID]; ok && dep.Before(atFrom) {
 					continue
 				}
+				// Speed filter: отсекать >120 bus / 1000 flight (model.MaxSpeed), без потери валидных Нск→Томск
+				if fromStopObj, ok1 := net.Stops[fromST.StopID]; ok1 {
+					if toStopObj, ok2 := net.Stops[toST.StopID]; ok2 {
+						if isImplausibleLeg(fromStopObj, toStopObj, dep, arrTime, trip.Mode) {
+							continue
+						}
+					}
+				}
 				arr[toST.StopID] = arrTime
 				pred[toST.StopID] = &prev{conn: &model.Connection{
 					TripID: trip.ID, ProviderID: trip.ProviderID, RouteID: trip.RouteID, Mode: trip.Mode,

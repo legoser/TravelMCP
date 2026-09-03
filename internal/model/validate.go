@@ -2,8 +2,17 @@ package model
 
 import (
 	"fmt"
+	"math"
 	"strings"
 )
+
+func haversine(lat1, lon1, lat2, lon2 float64) float64 {
+	const R = 6371
+	dLat := (lat2 - lat1) * math.Pi / 180
+	dLon := (lon2 - lon1) * math.Pi / 180
+	a := math.Sin(dLat/2)*math.Sin(dLat/2) + math.Cos(lat1*math.Pi/180)*math.Cos(lat2*math.Pi/180)*math.Sin(dLon/2)*math.Sin(dLon/2)
+	return 2 * R * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+}
 
 type IssueLevel string
 
@@ -67,6 +76,19 @@ func ValidateNetwork(net *Network) []Issue {
 		}
 		if c.TripID == "" {
 			issues = append(issues, Issue{Level: IssueWarn, ProviderID: c.ProviderID, Entity: fmt.Sprintf("connection:%d", i), Code: "empty_trip", Message: "пустой TripID"})
+		}
+		if fromS, ok := net.Stops[c.From]; ok {
+			if toS, ok := net.Stops[c.To]; ok {
+				distKm := haversine(fromS.Lat, fromS.Lon, toS.Lat, toS.Lon)
+				durMin := c.Arrival.Sub(c.Departure).Minutes()
+				if durMin > 0 && distKm > 5 {
+					limit := MaxSpeed(c.Mode)
+					speed := distKm / (durMin / 60)
+					if speed > limit {
+						issues = append(issues, Issue{Level: IssueWarn, ProviderID: c.ProviderID, Entity: fmt.Sprintf("connection:%d:%s", i, c.TripID), Code: "implausible_speed", Message: fmt.Sprintf("скорость %.0f км/ч %.1fкм за %.0f мин %s→%s лимит %.0f", speed, distKm, durMin, fromS.Name, toS.Name, limit)})
+					}
+				}
+			}
 		}
 	}
 	for i, tr := range net.Transfers {

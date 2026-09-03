@@ -242,6 +242,20 @@ func (p *Intercity) build(ds *reestrDataset, day time.Time) *model.Network {
 	p.addTransferLinks(net)
 	p.logger.Info("intercity build completed", "stops", len(net.Stops), "trips", len(net.Trips), "connections", len(net.Connections), "transfers", len(net.Transfers), "elapsed_ms", time.Since(t0).Milliseconds())
 
+	filtered := net.Connections[:0]
+	dropped := 0
+	for _, c := range net.Connections {
+		if p.isImplausible(c, net) {
+			dropped++
+			continue
+		}
+		filtered = append(filtered, c)
+	}
+	if dropped > 0 {
+		p.logger.Info("intercity filtered implausible", "dropped", dropped, "kept", len(filtered))
+	}
+	net.Connections = filtered
+
 	sort.Slice(net.Connections, func(i, j int) bool {
 		return net.Connections[i].Departure.Before(net.Connections[j].Departure)
 	})
@@ -475,4 +489,22 @@ func (p *Intercity) addRun(net *model.Network, sched reestrSched, period string,
 			DistanceM:  dist,
 		})
 	}
+}
+
+func (p *Intercity) isImplausible(c model.Connection, net *model.Network) bool {
+	fromS, ok1 := net.Stops[c.From]
+	toS, ok2 := net.Stops[c.To]
+	if !ok1 || !ok2 {
+		return false
+	}
+	if (fromS.Lat == 0 && fromS.Lon == 0) || (toS.Lat == 0 && toS.Lon == 0) {
+		return false
+	}
+	dist := geo.Haversine(fromS.Coordinates(), toS.Coordinates())
+	dur := c.Arrival.Sub(c.Departure).Minutes()
+	if dur <= 0 || dist < 5 {
+		return false
+	}
+	speed := dist / (dur / 60)
+	return speed > model.MaxSpeed(c.Mode)
 }

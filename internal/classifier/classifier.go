@@ -42,6 +42,9 @@ func (RuClassifier) Classify(name string, tags map[string]string) model.StopType
 	if strings.Contains(lower, "автовокзал") || strings.Contains(lower, "автостанция") {
 		return model.StopTypeHub
 	}
+	if model.IsVillageName(name) {
+		return model.StopTypePlatform
+	}
 	if strings.Contains(lower, "вокзал") {
 		return model.StopTypeStation
 	}

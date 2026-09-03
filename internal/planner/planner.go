@@ -73,6 +73,85 @@ type PlaceHint struct {
 	Name string
 }
 
+func isVillageStop(s *model.Stop) bool {
+	if s == nil {
+		return false
+	}
+	return model.IsVillageName(s.Name)
+}
+
+func speedLimit(m model.Mode) float64 {
+	return model.MaxSpeed(m)
+}
+
+func isImplausibleConnection(c *model.Connection, net *model.Network) bool {
+	fromS, ok1 := net.Stops[c.From]
+	toS, ok2 := net.Stops[c.To]
+	if !ok1 || !ok2 {
+		return false
+	}
+	if (fromS.Lat == 0 && fromS.Lon == 0) || (toS.Lat == 0 && toS.Lon == 0) {
+		return false
+	}
+	dist := geo.Haversine(fromS.Coordinates(), toS.Coordinates())
+	dur := c.Arrival.Sub(c.Departure).Minutes()
+	if dur <= 0 || dist < 5 {
+		return false
+	}
+	speed := dist / (dur / 60)
+	return speed > speedLimit(c.Mode)
+}
+
+func isImplausibleLeg(fromS, toS *model.Stop, dep, arr time.Time, mode model.Mode) bool {
+	if fromS == nil || toS == nil {
+		return false
+	}
+	if (fromS.Lat == 0 && fromS.Lon == 0) || (toS.Lat == 0 && toS.Lon == 0) {
+		return false
+	}
+	dist := geo.Haversine(fromS.Coordinates(), toS.Coordinates())
+	dur := arr.Sub(dep).Minutes()
+	if dur <= 0 || dist < 5 {
+		return false
+	}
+	speed := dist / (dur / 60)
+	return speed > speedLimit(mode)
+}
+
+func chooseBestStop(candidates []*model.Stop, origin map[string]bool) *model.Stop {
+	if len(candidates) == 0 {
+		return nil
+	}
+	for _, s := range candidates {
+		if origin != nil && origin[s.ID] && !isVillageStop(s) {
+			return s
+		}
+	}
+	for _, s := range candidates {
+		if origin != nil && origin[s.ID] {
+			return s
+		}
+	}
+	for _, s := range candidates {
+		if !isVillageStop(s) {
+			return s
+		}
+	}
+	return candidates[0]
+}
+
+func chooseBestToStop(candidates []*model.Stop) *model.Stop {
+	if len(candidates) == 0 {
+		return nil
+	}
+	for _, s := range candidates {
+		if !isVillageStop(s) {
+			return s
+		}
+	}
+	return candidates[0]
+}
+
 func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, params model.SearchParams, fromPlace, toPlace *PlaceHint) (*model.Journey, error) {
 	start := time.Now()
 	defer func() { telemetry.ObservePlanner(p.engine, time.Since(start)) }()
@@ -113,12 +192,9 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 		if len(fromStops) == 0 {
 			return nil, fmt.Errorf("planner: нет остановок, достижимых пешком (лимит %d мин) от точки отправления", maxWalk)
 		}
-		fromStop = fromStops[0]
-		for _, s := range fromStops {
-			if originStops[s.ID] {
-				fromStop = s
-				break
-			}
+		fromStop = chooseBestStop(fromStops, originStops)
+		if fromStop == nil {
+			fromStop = fromStops[0]
 		}
 	}
 
@@ -126,14 +202,18 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 		toStop, foundTo = findStopByPlace(net.Stops, toPlace.Name, to, maxWalk, nil)
 	}
 	if !foundTo {
-		toStops := idx.Nearest(to, maxWalk, 1)
+		toStops := idx.Nearest(to, maxWalk, 0)
 		if len(toStops) == 0 {
-			toStops = geo.NearestStops(net.Stops, to, maxWalk, 1)
+			toStops = geo.NearestStops(net.Stops, to, maxWalk, 0)
 		}
 		if len(toStops) == 0 {
 			return nil, fmt.Errorf("planner: нет остановок, достижимых пешком (лимит %d мин) от точки назначения", maxWalk)
 		}
-		toStop = toStops[0]
+		if best := chooseBestToStop(toStops); best != nil {
+			toStop = best
+		} else {
+			toStop = toStops[0]
+		}
 	}
 
 	accessMin := geo.WalkTimeMinutes(geo.Haversine(from, fromStop.Coordinates()))
@@ -394,13 +474,17 @@ func legPoint(stop *model.Stop) model.LegPoint {
 // Среди подходящих остановок предпочтение отдаётся автовокзалу (терминалу
 // отправления), затем терминалу отправления рейса (origin), и лишь затем —
 // «городской»/промежуточной остановке (например, вокзалу ЖД).
+// Деревенские остановки (ОП, пов.) штрафуются: среди равных по смыслу
+// предпочитаются не-деревенские, а деревня выбирается только если
+// альтернатив в радиусе пешей доступности нет.
 func findStopByPlace(stops map[string]*model.Stop, placeName string, coords model.Coords, maxWalkMinutes int, origin map[string]bool) (*model.Stop, bool) {
 	lowerPlace := strings.ToLower(placeName)
 
-	// 1. Ищем стопы с совпадающим или содержащим название
 	var nameMatch, nameAV, nameOrigin *model.Stop
+	var nameAVNonVillage, nameOriginNonVillage *model.Stop
 	nameDist := 1e9
 	avDist, originDist := 1e9, 1e9
+	avNonVillageDist, originNonVillageDist := 1e9, 1e9
 	for _, s := range stops {
 		if !(strings.Contains(strings.ToLower(s.Name), lowerPlace) ||
 			strings.Contains(lowerPlace, strings.ToLower(s.Name))) {
@@ -411,9 +495,17 @@ func findStopByPlace(stops map[string]*model.Stop, placeName string, coords mode
 			avDist = d
 			nameAV = s
 		}
+		if s.IsHub() && !isVillageStop(s) && d < avNonVillageDist {
+			avNonVillageDist = d
+			nameAVNonVillage = s
+		}
 		if origin != nil && origin[s.ID] && d < originDist {
 			originDist = d
 			nameOrigin = s
+		}
+		if origin != nil && origin[s.ID] && !isVillageStop(s) && d < originNonVillageDist {
+			originNonVillageDist = d
+			nameOriginNonVillage = s
 		}
 		if d < nameDist {
 			nameDist = d
@@ -431,18 +523,51 @@ func findStopByPlace(stops map[string]*model.Stop, placeName string, coords mode
 	}
 
 	if nameMatch != nil {
+		if nameAVNonVillage != nil {
+			return nameAVNonVillage, true
+		}
+		if nameOriginNonVillage != nil {
+			return nameOriginNonVillage, true
+		}
 		if nameAV != nil {
+			if av := nearestWith(func(s *model.Stop) bool { return s.IsHub() && !isVillageStop(s) }); av != nil {
+				return av, true
+			}
 			return nameAV, true
 		}
 		if nameOrigin != nil {
+			if o := nearestWith(func(s *model.Stop) bool { return origin[s.ID] && !isVillageStop(s) }); o != nil {
+				return o, true
+			}
 			return nameOrigin, true
 		}
+		if isVillageStop(nameMatch) {
+			if av := nearestWith(func(s *model.Stop) bool { return s.IsHub() && !isVillageStop(s) }); av != nil {
+				return av, true
+			}
+			if origin != nil {
+				if o := nearestWith(func(s *model.Stop) bool { return origin[s.ID] && !isVillageStop(s) }); o != nil {
+					return o, true
+				}
+			}
+			for _, s := range geo.NearestStops(stops, coords, maxWalkMinutes, 0) {
+				if !isVillageStop(s) {
+					return s, true
+				}
+			}
+		}
 		if !nameMatch.IsHub() {
+			if av := nearestWith(func(s *model.Stop) bool { return s.IsHub() && !isVillageStop(s) }); av != nil {
+				return av, true
+			}
 			if av := nearestWith(func(s *model.Stop) bool { return s.IsHub() }); av != nil {
 				return av, true
 			}
 		}
 		if origin != nil && !origin[nameMatch.ID] {
+			if o := nearestWith(func(s *model.Stop) bool { return origin[s.ID] && !isVillageStop(s) }); o != nil {
+				return o, true
+			}
 			if o := nearestWith(func(s *model.Stop) bool { return origin[s.ID] }); o != nil {
 				return o, true
 			}
@@ -450,18 +575,29 @@ func findStopByPlace(stops map[string]*model.Stop, placeName string, coords mode
 		return nameMatch, true
 	}
 
-	// 2. Ищем ближайший стоп в пределах доступности, предпочитая автовокзал,
-	// затем терминал отправления
 	best := geo.NearestStops(stops, coords, maxWalkMinutes, 0)
 	if len(best) > 0 {
+		if av := nearestWith(func(s *model.Stop) bool { return s.IsHub() && !isVillageStop(s) }); av != nil {
+			return av, true
+		}
 		if av := nearestWith(func(s *model.Stop) bool { return s.IsHub() }); av != nil {
 			return av, true
 		}
 		if origin != nil {
 			for _, s := range best {
+				if origin[s.ID] && !isVillageStop(s) {
+					return s, true
+				}
+			}
+			for _, s := range best {
 				if origin[s.ID] {
 					return s, true
 				}
+			}
+		}
+		for _, s := range best {
+			if !isVillageStop(s) {
+				return s, true
 			}
 		}
 		return best[0], true
@@ -539,6 +675,9 @@ func (p *Planner) csa(net *model.Network, fromStop, toStop string, depart time.T
 	for i := range conns {
 		c := &conns[i]
 		if len(allowed) > 0 && !allowed[c.Mode] {
+			continue
+		}
+		if isImplausibleConnection(c, net) {
 			continue
 		}
 		atFrom, ok := arr[c.From]
