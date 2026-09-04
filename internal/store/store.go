@@ -8,6 +8,7 @@ import (
 )
 
 type Store interface {
+	UpsertCity(ctx context.Context, c CityRow) (int64, error)
 	UpsertStation(ctx context.Context, s StationRow) (int64, error)
 	UpsertStop(ctx context.Context, s StopRow) (int64, error)
 	UpsertStationCode(ctx context.Context, c StationCodeRow) error
@@ -19,6 +20,10 @@ type Store interface {
 	UpsertTransfer(ctx context.Context, tr TransferRow) error
 	UpsertFare(ctx context.Context, f FareRow) error
 	SaveQualityIssue(ctx context.Context, q QualityRow) error
+	ClearQualityIssues(ctx context.Context, providerID string) error
+	UpsertService(ctx context.Context, s ServiceRow) error
+	UpsertServiceDay(ctx context.Context, d ServiceDayRow) error
+	UpsertServiceException(ctx context.Context, e ServiceExceptionRow) error
 
 	LoadNetwork(ctx context.Context, providers []string, day time.Time) (*model.Network, error)
 
@@ -29,6 +34,7 @@ type Store interface {
 	Close() error
 	WithTx(ctx context.Context, fn func(Store) error) error
 	FindStation(ctx context.Context, name, region string) (StationRow, bool)
+	FindStationAny(ctx context.Context, name, region string) (StationRow, bool)
 	CreateUser(ctx context.Context, email, passHash, role string) (int64, error)
 	GetUserByEmail(ctx context.Context, email string) (UserRow, bool)
 	GetUserByID(ctx context.Context, id int64) (UserRow, bool)
@@ -66,6 +72,9 @@ func New(ctx context.Context, dsn string) (Store, error) {
 type pgStub struct{ dsn string }
 
 func newPGStub(dsn string) (Store, error) { return &pgStub{dsn: dsn}, nil }
+func (p *pgStub) UpsertCity(ctx context.Context, c CityRow) (int64, error) {
+	return 0, errNotImplemented
+}
 func (p *pgStub) UpsertStation(ctx context.Context, s StationRow) (int64, error) {
 	return 0, errNotImplemented
 }
@@ -84,11 +93,19 @@ func (p *pgStub) UpsertRoute(ctx context.Context, r RouteRow) (int64, error) {
 func (p *pgStub) UpsertTrip(ctx context.Context, t TripRow) (int64, error) {
 	return 0, errNotImplemented
 }
-func (p *pgStub) UpsertFrequency(ctx context.Context, f FrequencyRow) error { return errNotImplemented }
-func (p *pgStub) UpsertStopTime(ctx context.Context, st StopTimeRow) error  { return errNotImplemented }
-func (p *pgStub) UpsertTransfer(ctx context.Context, tr TransferRow) error  { return errNotImplemented }
-func (p *pgStub) UpsertFare(ctx context.Context, f FareRow) error           { return errNotImplemented }
-func (p *pgStub) SaveQualityIssue(ctx context.Context, q QualityRow) error  { return errNotImplemented }
+func (p *pgStub) UpsertFrequency(ctx context.Context, f FrequencyRow) error       { return errNotImplemented }
+func (p *pgStub) UpsertStopTime(ctx context.Context, st StopTimeRow) error        { return errNotImplemented }
+func (p *pgStub) UpsertTransfer(ctx context.Context, tr TransferRow) error        { return errNotImplemented }
+func (p *pgStub) UpsertFare(ctx context.Context, f FareRow) error                 { return errNotImplemented }
+func (p *pgStub) SaveQualityIssue(ctx context.Context, q QualityRow) error        { return errNotImplemented }
+func (p *pgStub) ClearQualityIssues(ctx context.Context, providerID string) error { return nil }
+func (p *pgStub) UpsertService(ctx context.Context, s ServiceRow) error           { return errNotImplemented }
+func (p *pgStub) UpsertServiceDay(ctx context.Context, d ServiceDayRow) error {
+	return errNotImplemented
+}
+func (p *pgStub) UpsertServiceException(ctx context.Context, e ServiceExceptionRow) error {
+	return errNotImplemented
+}
 func (p *pgStub) LoadNetwork(ctx context.Context, providers []string, day time.Time) (*model.Network, error) {
 	return nil, errNotImplemented
 }
@@ -105,6 +122,9 @@ func (p *pgStub) Migrate(ctx context.Context) error                      { retur
 func (p *pgStub) Close() error                                           { return nil }
 func (p *pgStub) WithTx(ctx context.Context, fn func(Store) error) error { return fn(p) }
 func (p *pgStub) FindStation(ctx context.Context, name, region string) (StationRow, bool) {
+	return StationRow{}, false
+}
+func (p *pgStub) FindStationAny(ctx context.Context, name, region string) (StationRow, bool) {
 	return StationRow{}, false
 }
 func (p *pgStub) CreateUser(ctx context.Context, email, passHash, role string) (int64, error) {

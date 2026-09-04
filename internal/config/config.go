@@ -54,6 +54,10 @@ type GTFS struct {
 	Path string `yaml:"path"`
 }
 
+type Cities struct {
+	Path string `yaml:"path"`
+}
+
 type Providers struct {
 	Enabled   []string  `yaml:"enabled"`
 	Intercity Intercity `yaml:"intercity"`
@@ -140,6 +144,7 @@ type Config struct {
 	Queue     Queue     `yaml:"queue"`
 	Database  Database  `yaml:"database"`
 	Providers Providers `yaml:"providers"`
+	Cities    Cities    `yaml:"cities"`
 	Auth      Auth      `yaml:"auth"`
 	Geocoder  Geocoder  `yaml:"geocoder"`
 	Yandex    Yandex    `yaml:"yandex"`
@@ -167,6 +172,7 @@ func Defaults() *Config {
 				ReestrPath: "data/reestr/regions.json",
 			},
 		},
+		Cities:    Cities{Path: "configs/cities.yaml"},
 		Geocoder:  Geocoder{Kind: "", URL: "", Key: "", Attempts: 3},
 		Yandex:    Yandex{GeocodeURL: "https://geocode-maps.yandex.ru/1.x", GeocodeKind: ""},
 		Nominatim: Nominatim{URL: "https://nominatim.openstreetmap.org"},
@@ -230,6 +236,9 @@ func syncLegacy(cfg *Config) {
 	}
 	if cfg.Geocoder.Attempts <= 0 {
 		cfg.Geocoder.Attempts = 3
+	}
+	if cfg.Cities.Path == "" {
+		cfg.Cities.Path = "configs/cities.yaml"
 	}
 }
 
@@ -323,6 +332,12 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("LOG_ADD_SOURCE"); v != "" {
 		cfg.Log.AddSource = v == "1" || v == "true"
+	}
+	if v := os.Getenv("CITIES_PATH"); v != "" {
+		cfg.Cities.Path = v
+	}
+	if v := os.Getenv("CITIES_DATA_PATH"); v != "" {
+		cfg.Cities.Path = v
 	}
 }
 
@@ -441,6 +456,10 @@ func setByPath(cfg *Config, parts []string, v string) {
 	case "nominatim":
 		if len(parts) == 2 && (parts[1] == "url" || parts[1] == "base_url") {
 			cfg.Nominatim.URL = v
+		}
+	case "cities":
+		if len(parts) == 2 && parts[1] == "path" {
+			cfg.Cities.Path = v
 		}
 	}
 }

@@ -57,6 +57,9 @@ func main() {
 	registry := providers.NewRegistryWithLogger(cfg.Providers.Enabled, cfg.Providers.Intercity.ReestrPath, intercityLogger)
 	logger.Info("provider registry initialized", "enabled", cfg.Providers.Enabled, "elapsed", time.Since(regStart).String())
 
+	if cfg.Cities.Path != "" && os.Getenv("CITIES_PATH") == "" && os.Getenv("CITIES_DATA_PATH") == "" && os.Getenv("TRAVELMCP__CITIES__PATH") == "" {
+		_ = os.Setenv("CITIES_PATH", cfg.Cities.Path)
+	}
 	var st store.Store
 	if cfg.Database.DSN != "" {
 		s := time.Now()

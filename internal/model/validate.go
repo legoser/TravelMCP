@@ -79,12 +79,19 @@ func ValidateNetwork(net *Network) []Issue {
 		}
 		if fromS, ok := net.Stops[c.From]; ok {
 			if toS, ok := net.Stops[c.To]; ok {
+				if IsVillageName(fromS.Name) || IsVillageName(toS.Name) {
+					continue
+				}
 				distKm := haversine(fromS.Lat, fromS.Lon, toS.Lat, toS.Lon)
 				durMin := c.Arrival.Sub(c.Departure).Minutes()
-				if durMin > 0 && distKm > 5 {
+				if distKm > 800 {
+					issues = append(issues, Issue{Level: IssueWarn, ProviderID: c.ProviderID, Entity: fmt.Sprintf("connection:%d:%s", i, c.TripID), Code: "out_of_bounds", Message: fmt.Sprintf("дистанция %.0fкм %s→%s превышает 800км, вероятно ошибка координат", distKm, fromS.Name, toS.Name)})
+					continue
+				}
+				if durMin > 0 && distKm > 10 {
 					limit := MaxSpeed(c.Mode)
 					speed := distKm / (durMin / 60)
-					if speed > limit {
+					if speed > limit*1.5 {
 						issues = append(issues, Issue{Level: IssueWarn, ProviderID: c.ProviderID, Entity: fmt.Sprintf("connection:%d:%s", i, c.TripID), Code: "implausible_speed", Message: fmt.Sprintf("скорость %.0f км/ч %.1fкм за %.0f мин %s→%s лимит %.0f", speed, distKm, durMin, fromS.Name, toS.Name, limit)})
 					}
 				}

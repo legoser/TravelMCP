@@ -1,5 +1,16 @@
 package store
 
+type CityRow struct {
+	ID         int64
+	Name       string
+	RegionCode string
+	Lat, Lon   float64
+	Timezone   string
+	Population int
+	Kind       string
+	Source     string
+}
+
 type StationRow struct {
 	ID              int64
 	Name            string
@@ -9,6 +20,7 @@ type StationRow struct {
 	Timezone        string
 	QualityFlags    int
 	PrimaryProvider string
+	CityID          *int64
 }
 
 type StopRow struct {
@@ -100,8 +112,28 @@ type QualityRow struct {
 	Entity     string
 	EntityID   string
 	Level      string
+	Code       string
 	Msg        string
 	At         int64
+}
+
+type ServiceRow struct {
+	ID         int
+	ProviderID string
+	Name       string
+	StartDate  string
+	EndDate    string
+}
+
+type ServiceDayRow struct {
+	ServiceID int
+	Weekday   int
+}
+
+type ServiceExceptionRow struct {
+	ServiceID     int
+	Date          string
+	ExceptionType string
 }
 
 type FareRow struct {

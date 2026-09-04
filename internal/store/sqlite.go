@@ -82,6 +82,15 @@ func (s *SQLiteStore) FindStation(ctx context.Context, name, region string) (Sta
 	return r, true
 }
 
+func (s *SQLiteStore) FindStationAny(ctx context.Context, name, region string) (StationRow, bool) {
+	var r StationRow
+	err := s.db.QueryRowContext(ctx, `SELECT id, name, lat, lon, geo_cell, region_code, timezone, quality_flags, primary_provider FROM stations WHERE name=? AND region_code=? LIMIT 1`, name, region).Scan(&r.ID, &r.Name, &r.Lat, &r.Lon, &r.GeoCell, &r.RegionCode, &r.Timezone, &r.QualityFlags, &r.PrimaryProvider)
+	if err != nil {
+		return StationRow{}, false
+	}
+	return r, true
+}
+
 type txStore struct {
 	tx     *sql.Tx
 	parent *SQLiteStore
@@ -109,18 +118,67 @@ func (t *txStore) GetImport(ctx context.Context, providerID string) (ImportRow, 
 	}
 	return r, true
 }
-func (t *txStore) SaveQualityIssue(ctx context.Context, q QualityRow) error { return nil }
-func (t *txStore) UpsertFare(ctx context.Context, f FareRow) error          { return nil }
-func (t *txStore) UpsertStation(ctx context.Context, r StationRow) (int64, error) {
-	if r.ID != 0 {
-		_, err := t.tx.ExecContext(ctx, `INSERT INTO stations(id, name, lat, lon, geo_cell, region_code, timezone, quality_flags, primary_provider) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, lat=excluded.lat, lon=excluded.lon`, r.ID, r.Name, r.Lat, r.Lon, r.GeoCell, r.RegionCode, r.Timezone, r.QualityFlags, r.PrimaryProvider)
-		return r.ID, err
-	}
-	res, err := t.tx.ExecContext(ctx, `INSERT INTO stations(name, lat, lon, geo_cell, region_code, timezone, quality_flags, primary_provider) VALUES(?,?,?,?,?,?,?,?)`, r.Name, r.Lat, r.Lon, r.GeoCell, r.RegionCode, r.Timezone, r.QualityFlags, r.PrimaryProvider)
+func (t *txStore) SaveQualityIssue(ctx context.Context, q QualityRow) error {
+	_, err := t.tx.ExecContext(ctx, `INSERT INTO quality_issues(provider_id, entity, entity_id, level, code, msg, at) VALUES(?,?,?,?,?,?,?)`, q.ProviderID, q.Entity, q.EntityID, q.Level, q.Code, q.Msg, q.At)
+	return err
+}
+func (t *txStore) ClearQualityIssues(ctx context.Context, providerID string) error {
+	_, err := t.tx.ExecContext(ctx, `DELETE FROM quality_issues WHERE provider_id=?`, providerID)
+	return err
+}
+func (t *txStore) UpsertService(ctx context.Context, r ServiceRow) error {
+	_, err := t.tx.ExecContext(ctx, `INSERT INTO services(id, provider_id, name, start_date, end_date) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, start_date=excluded.start_date, end_date=excluded.end_date`, r.ID, r.ProviderID, r.Name, r.StartDate, r.EndDate)
+	return err
+}
+func (t *txStore) UpsertServiceDay(ctx context.Context, r ServiceDayRow) error {
+	_, err := t.tx.ExecContext(ctx, `INSERT INTO service_days(service_id, weekday) VALUES(?,?) ON CONFLICT(service_id, weekday) DO NOTHING`, r.ServiceID, r.Weekday)
+	return err
+}
+func (t *txStore) UpsertServiceException(ctx context.Context, r ServiceExceptionRow) error {
+	_, err := t.tx.ExecContext(ctx, `INSERT INTO service_exceptions(service_id, date, exception_type) VALUES(?,?,?) ON CONFLICT(service_id, date) DO UPDATE SET exception_type=excluded.exception_type`, r.ServiceID, r.Date, r.ExceptionType)
+	return err
+}
+func (t *txStore) UpsertFare(ctx context.Context, f FareRow) error { return nil }
+func (t *txStore) UpsertCity(ctx context.Context, c CityRow) (int64, error) {
+	res, err := t.tx.ExecContext(ctx, `INSERT INTO cities(name, region_code, lat, lon, timezone, population, kind, source) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(name, region_code) DO UPDATE SET lat=excluded.lat, lon=excluded.lon`, c.Name, c.RegionCode, c.Lat, c.Lon, c.Timezone, c.Population, c.Kind, c.Source)
 	if err != nil {
+		var existing int64
+		if e2 := t.tx.QueryRowContext(ctx, `SELECT id FROM cities WHERE name=? AND region_code=?`, c.Name, c.RegionCode).Scan(&existing); e2 == nil {
+			_, _ = t.tx.ExecContext(ctx, `UPDATE cities SET lat=?, lon=?, timezone=?, kind=? WHERE id=?`, c.Lat, c.Lon, c.Timezone, c.Kind, existing)
+			return existing, nil
+		}
 		return 0, err
 	}
-	return res.LastInsertId()
+	id, _ := res.LastInsertId()
+	if id == 0 {
+		_ = t.tx.QueryRowContext(ctx, `SELECT id FROM cities WHERE name=? AND region_code=?`, c.Name, c.RegionCode).Scan(&id)
+	}
+	return id, nil
+}
+
+func (t *txStore) UpsertStation(ctx context.Context, r StationRow) (int64, error) {
+	if r.ID != 0 {
+		_, err := t.tx.ExecContext(ctx, `INSERT INTO stations(id, name, lat, lon, geo_cell, region_code, timezone, quality_flags, primary_provider, city_id) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, lat=excluded.lat, lon=excluded.lon, geo_cell=excluded.geo_cell, quality_flags=excluded.quality_flags, city_id=excluded.city_id`, r.ID, r.Name, r.Lat, r.Lon, r.GeoCell, r.RegionCode, r.Timezone, r.QualityFlags, r.PrimaryProvider, r.CityID)
+		return r.ID, err
+	}
+	res, err := t.tx.ExecContext(ctx, `INSERT INTO stations(name, lat, lon, geo_cell, region_code, timezone, quality_flags, primary_provider, city_id) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(name, region_code) DO UPDATE SET lat=excluded.lat, lon=excluded.lon, geo_cell=excluded.geo_cell, quality_flags=excluded.quality_flags, city_id=excluded.city_id`, r.Name, r.Lat, r.Lon, r.GeoCell, r.RegionCode, r.Timezone, r.QualityFlags, r.PrimaryProvider, r.CityID)
+	if err != nil {
+		var existing int64
+		if e2 := t.tx.QueryRowContext(ctx, `SELECT id FROM stations WHERE name=? AND region_code=?`, r.Name, r.RegionCode).Scan(&existing); e2 == nil {
+			_, _ = t.tx.ExecContext(ctx, `UPDATE stations SET lat=?, lon=?, geo_cell=?, quality_flags=?, primary_provider=?, city_id=? WHERE id=?`, r.Lat, r.Lon, r.GeoCell, r.QualityFlags, r.PrimaryProvider, r.CityID, existing)
+			return existing, nil
+		}
+		return 0, err
+	}
+	id, _ := res.LastInsertId()
+	if id == 0 {
+		var existing int64
+		_ = t.tx.QueryRowContext(ctx, `SELECT id FROM stations WHERE name=? AND region_code=?`, r.Name, r.RegionCode).Scan(&existing)
+		if existing != 0 {
+			return existing, nil
+		}
+	}
+	return id, nil
 }
 func (t *txStore) UpsertStop(ctx context.Context, r StopRow) (int64, error) {
 	res, err := t.tx.ExecContext(ctx, `INSERT INTO stops(station_id, provider_id, external_code, stop_type, transport_type, name, raw_name) VALUES(?,?,?,?,?,?,?) ON CONFLICT(provider_id, external_code) DO UPDATE SET station_id=excluded.station_id, name=excluded.name`, r.StationID, r.ProviderID, r.ExternalCode, r.StopType, r.TransportType, r.Name, r.RawName)
@@ -141,7 +199,7 @@ func (t *txStore) UpsertStationCode(ctx context.Context, c StationCodeRow) error
 	return err
 }
 func (t *txStore) UpsertCarrier(ctx context.Context, r CarrierRow) (int64, error) {
-	res, err := t.tx.ExecContext(ctx, `INSERT INTO carriers(provider_id, name, code, inn, address, iata, icao, sirena) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(provider_id, code) DO UPDATE SET name=excluded.name`, r.ProviderID, r.Name, r.Code, r.INN, r.Address, r.IATA, r.ICAO, r.Sirena)
+	res, err := t.tx.ExecContext(ctx, `INSERT INTO carriers(provider_id, name, code, inn, address, iata, icao, sirena) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(provider_id, code) DO UPDATE SET name=excluded.name, inn=excluded.inn, address=excluded.address`, r.ProviderID, r.Name, r.Code, r.INN, r.Address, r.IATA, r.ICAO, r.Sirena)
 	if err != nil {
 		return 0, err
 	}
@@ -191,6 +249,15 @@ func (t *txStore) FindStation(ctx context.Context, name, region string) (Station
 	var r StationRow
 	err := t.tx.QueryRowContext(ctx, `SELECT id, name, lat, lon, geo_cell, region_code, timezone, quality_flags, primary_provider FROM stations WHERE name=? AND region_code=? LIMIT 1`, name, region).Scan(&r.ID, &r.Name, &r.Lat, &r.Lon, &r.GeoCell, &r.RegionCode, &r.Timezone, &r.QualityFlags, &r.PrimaryProvider)
 	if err != nil || (r.Lat == 0 && r.Lon == 0) {
+		return StationRow{}, false
+	}
+	return r, true
+}
+
+func (t *txStore) FindStationAny(ctx context.Context, name, region string) (StationRow, bool) {
+	var r StationRow
+	err := t.tx.QueryRowContext(ctx, `SELECT id, name, lat, lon, geo_cell, region_code, timezone, quality_flags, primary_provider FROM stations WHERE name=? AND region_code=? LIMIT 1`, name, region).Scan(&r.ID, &r.Name, &r.Lat, &r.Lon, &r.GeoCell, &r.RegionCode, &r.Timezone, &r.QualityFlags, &r.PrimaryProvider)
+	if err != nil {
 		return StationRow{}, false
 	}
 	return r, true
@@ -300,53 +367,85 @@ func (t *txStore) TouchApiKey(ctx context.Context, key string) error {
 
 func (s *SQLiteStore) Migrate(ctx context.Context) error {
 	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS cities (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL, region_code TEXT NOT NULL DEFAULT '', lat REAL NOT NULL, lon REAL NOT NULL, timezone TEXT, population INTEGER, kind TEXT, source TEXT,
+			UNIQUE(name, region_code)
+		)`,
 		`CREATE TABLE IF NOT EXISTS stations (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			name TEXT, lat REAL, lon REAL, geo_cell INTEGER,
-			region_code TEXT, timezone TEXT, quality_flags INTEGER, primary_provider TEXT
+			name TEXT NOT NULL, lat REAL NOT NULL DEFAULT 0, lon REAL NOT NULL DEFAULT 0, geo_cell INTEGER,
+			region_code TEXT NOT NULL DEFAULT '', timezone TEXT, quality_flags INTEGER, primary_provider TEXT, city_id INTEGER REFERENCES cities(id) ON DELETE SET NULL,
+			UNIQUE(name, region_code),
+			FOREIGN KEY(city_id) REFERENCES cities(id) ON DELETE SET NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS stops (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			station_id INTEGER REFERENCES stations(id),
-			provider_id TEXT, external_code TEXT, stop_type TEXT, transport_type TEXT, name TEXT, raw_name TEXT,
-			UNIQUE(provider_id, external_code)
+			station_id INTEGER NOT NULL REFERENCES stations(id) ON DELETE CASCADE ON UPDATE CASCADE,
+			provider_id TEXT NOT NULL, external_code TEXT NOT NULL, stop_type TEXT, transport_type TEXT, name TEXT, raw_name TEXT,
+			UNIQUE(provider_id, external_code),
+			FOREIGN KEY(station_id) REFERENCES stations(id) ON DELETE CASCADE
 		)`,
 		`CREATE TABLE IF NOT EXISTS station_codes (
-			station_id INTEGER REFERENCES stations(id),
+			station_id INTEGER NOT NULL REFERENCES stations(id) ON DELETE CASCADE,
 			provider_id TEXT, code_type TEXT, code TEXT, name_form TEXT, address TEXT,
-			PRIMARY KEY(station_id, provider_id, code_type)
+			PRIMARY KEY(station_id, provider_id, code_type),
+			FOREIGN KEY(station_id) REFERENCES stations(id) ON DELETE CASCADE
 		)`,
 		`CREATE TABLE IF NOT EXISTS carriers (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			provider_id TEXT, name TEXT, code TEXT, inn TEXT, address TEXT, iata TEXT, icao TEXT, sirena TEXT,
+			provider_id TEXT NOT NULL, name TEXT, code TEXT NOT NULL, inn TEXT, address TEXT, iata TEXT, icao TEXT, sirena TEXT,
 			UNIQUE(provider_id, code)
 		)`,
 		`CREATE TABLE IF NOT EXISTS routes (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			provider_id TEXT, carrier_id INTEGER REFERENCES carriers(id),
-			external_code TEXT, short_name TEXT, long_name TEXT, mode TEXT, external_uid TEXT, ord INTEGER,
-			UNIQUE(provider_id, external_code)
+			provider_id TEXT NOT NULL, carrier_id INTEGER REFERENCES carriers(id) ON DELETE SET NULL,
+			external_code TEXT NOT NULL, short_name TEXT, long_name TEXT, mode TEXT, external_uid TEXT, ord INTEGER,
+			UNIQUE(provider_id, external_code),
+			FOREIGN KEY(carrier_id) REFERENCES carriers(id) ON DELETE SET NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS trips (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			route_id INTEGER REFERENCES routes(id),
-			provider_id TEXT, direction TEXT, service_days TEXT, frequency_flag INTEGER, period TEXT, service_id INTEGER
+			route_id INTEGER NOT NULL REFERENCES routes(id) ON DELETE CASCADE,
+			provider_id TEXT NOT NULL, direction TEXT, service_days TEXT, frequency_flag INTEGER, period TEXT, service_id INTEGER REFERENCES services(id) ON DELETE SET NULL,
+			FOREIGN KEY(route_id) REFERENCES routes(id) ON DELETE CASCADE,
+			FOREIGN KEY(service_id) REFERENCES services(id) ON DELETE SET NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS stop_times (
-			trip_id INTEGER REFERENCES trips(id),
-			stop_id INTEGER REFERENCES stops(id),
+			trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+			stop_id INTEGER NOT NULL REFERENCES stops(id) ON DELETE CASCADE,
 			seq INTEGER, arrival INTEGER, departure INTEGER, pickup_type INTEGER, drop_off_type INTEGER, dwell INTEGER,
-			PRIMARY KEY(trip_id, stop_id, seq)
+			PRIMARY KEY(trip_id, stop_id, seq),
+			FOREIGN KEY(trip_id) REFERENCES trips(id) ON DELETE CASCADE,
+			FOREIGN KEY(stop_id) REFERENCES stops(id) ON DELETE CASCADE
 		)`,
 		`CREATE TABLE IF NOT EXISTS transfers (
-			from_stop_id INTEGER REFERENCES stops(id),
-			to_stop_id INTEGER REFERENCES stops(id),
+			from_stop_id INTEGER NOT NULL REFERENCES stops(id) ON DELETE CASCADE,
+			to_stop_id INTEGER NOT NULL REFERENCES stops(id) ON DELETE CASCADE,
 			minutes INTEGER, min_transfer_time INTEGER, distance_m INTEGER, within_station INTEGER,
-			PRIMARY KEY(from_stop_id, to_stop_id)
+			PRIMARY KEY(from_stop_id, to_stop_id),
+			FOREIGN KEY(from_stop_id) REFERENCES stops(id) ON DELETE CASCADE,
+			FOREIGN KEY(to_stop_id) REFERENCES stops(id) ON DELETE CASCADE
 		)`,
 		`CREATE TABLE IF NOT EXISTS quality_issues (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			provider_id TEXT, entity TEXT, entity_id TEXT, level TEXT, msg TEXT, at INTEGER
+			provider_id TEXT, entity TEXT, entity_id TEXT, level TEXT, code TEXT, msg TEXT, at INTEGER
+		)`,
+		`CREATE TABLE IF NOT EXISTS services (
+			id INTEGER PRIMARY KEY,
+			provider_id TEXT NOT NULL, name TEXT, start_date TEXT, end_date TEXT
+		)`,
+		`CREATE TABLE IF NOT EXISTS service_days (
+			service_id INTEGER NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+			weekday INTEGER,
+			PRIMARY KEY(service_id, weekday),
+			FOREIGN KEY(service_id) REFERENCES services(id) ON DELETE CASCADE
+		)`,
+		`CREATE TABLE IF NOT EXISTS service_exceptions (
+			service_id INTEGER NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+			date TEXT, exception_type TEXT,
+			PRIMARY KEY(service_id, date),
+			FOREIGN KEY(service_id) REFERENCES services(id) ON DELETE CASCADE
 		)`,
 		`CREATE TABLE IF NOT EXISTS imports (
 			provider_id TEXT PRIMARY KEY, at INTEGER, records INTEGER, status TEXT, snapshot TEXT, checksum TEXT, issues INTEGER
@@ -357,7 +456,8 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 		)`,
 		`CREATE TABLE IF NOT EXISTS api_keys (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			user_id INTEGER REFERENCES users(id), key TEXT UNIQUE, scopes TEXT, created_at INTEGER, last_used INTEGER
+			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, key TEXT UNIQUE, scopes TEXT, created_at INTEGER, last_used INTEGER,
+			FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_stops_station ON stops(station_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_routes_external ON routes(external_code)`,
@@ -369,6 +469,102 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 			return fmt.Errorf("migrate: %w", err)
 		}
 	}
+	for _, q := range []string{
+		`ALTER TABLE quality_issues ADD COLUMN code TEXT`,
+		`ALTER TABLE trips ADD COLUMN service_id INTEGER`,
+		`ALTER TABLE stations ADD COLUMN city_id INTEGER REFERENCES cities(id) ON DELETE SET NULL`,
+	} {
+		_, _ = s.db.ExecContext(ctx, q)
+	}
+	for _, q := range []string{
+		`CREATE INDEX IF NOT EXISTS idx_stop_times_stop_departure ON stop_times(stop_id, departure)`,
+		`CREATE INDEX IF NOT EXISTS idx_transfers_from ON transfers(from_stop_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_transfers_to ON transfers(to_stop_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_station_geo ON stations(geo_cell)`,
+		`CREATE INDEX IF NOT EXISTS idx_quality_provider_code ON quality_issues(provider_id, code)`,
+		`CREATE INDEX IF NOT EXISTS idx_stations_name_region ON stations(name, region_code)`,
+		`CREATE INDEX IF NOT EXISTS idx_trips_service ON trips(service_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_services_provider ON services(provider_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_cities_name_region ON cities(name, region_code)`,
+		`CREATE INDEX IF NOT EXISTS idx_stations_city ON stations(city_id)`,
+	} {
+		_, _ = s.db.ExecContext(ctx, q)
+	}
+	if err := s.deduplicateStations(ctx); err != nil {
+		return fmt.Errorf("dedup stations: %w", err)
+	}
+	if err := s.migrateForeignKeys(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *SQLiteStore) migrateForeignKeys(ctx context.Context) error {
+	var sql string
+	err := s.db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type='table' AND name='trips'`).Scan(&sql)
+	if err == nil && sql != "" && !strings.Contains(sql, "REFERENCES services") {
+		if _, err := s.db.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
+			return err
+		}
+		_, _ = s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS trips_new (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			route_id INTEGER NOT NULL REFERENCES routes(id) ON DELETE CASCADE,
+			provider_id TEXT NOT NULL, direction TEXT, service_days TEXT, frequency_flag INTEGER, period TEXT, service_id INTEGER REFERENCES services(id) ON DELETE SET NULL,
+			FOREIGN KEY(route_id) REFERENCES routes(id) ON DELETE CASCADE,
+			FOREIGN KEY(service_id) REFERENCES services(id) ON DELETE SET NULL
+		)`)
+		_, _ = s.db.ExecContext(ctx, `INSERT INTO trips_new(id, route_id, provider_id, direction, service_days, frequency_flag, period, service_id) SELECT id, route_id, provider_id, direction, service_days, frequency_flag, period, service_id FROM trips`)
+		_, _ = s.db.ExecContext(ctx, `DROP TABLE trips`)
+		_, _ = s.db.ExecContext(ctx, `ALTER TABLE trips_new RENAME TO trips`)
+		_, _ = s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_trips_route ON trips(route_id)`)
+		_, _ = s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_trips_service ON trips(service_id)`)
+		_, _ = s.db.ExecContext(ctx, `PRAGMA foreign_keys=ON`)
+		if rows, err := s.db.QueryContext(ctx, `PRAGMA foreign_key_check`); err == nil {
+			_ = rows.Close()
+		}
+	}
+	var stationSQL string
+	_ = s.db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type='table' AND name='stations'`).Scan(&stationSQL)
+	if stationSQL != "" && !strings.Contains(stationSQL, "UNIQUE(name, region_code)") {
+		_, _ = s.db.ExecContext(ctx, `PRAGMA foreign_keys=OFF`)
+		_, _ = s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS stations_new (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL, lat REAL NOT NULL DEFAULT 0, lon REAL NOT NULL DEFAULT 0, geo_cell INTEGER,
+			region_code TEXT NOT NULL DEFAULT '', timezone TEXT, quality_flags INTEGER, primary_provider TEXT,
+			UNIQUE(name, region_code)
+		)`)
+		_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO stations_new(id, name, lat, lon, geo_cell, region_code, timezone, quality_flags, primary_provider) SELECT id, name, lat, lon, geo_cell, region_code, timezone, quality_flags, primary_provider FROM stations`)
+		_, _ = s.db.ExecContext(ctx, `DROP TABLE stations`)
+		_, _ = s.db.ExecContext(ctx, `ALTER TABLE stations_new RENAME TO stations`)
+		_, _ = s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_station_geo ON stations(geo_cell)`)
+		_, _ = s.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS uq_stations_name_region ON stations(name, region_code)`)
+		_, _ = s.db.ExecContext(ctx, `PRAGMA foreign_keys=ON`)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) deduplicateStations(ctx context.Context) error {
+	var dups []struct{ name, region string }
+	rows, err := s.db.QueryContext(ctx, `SELECT name, region_code FROM stations GROUP BY name, region_code HAVING COUNT(*) > 1`)
+	if err == nil {
+		for rows.Next() {
+			var n, r string
+			_ = rows.Scan(&n, &r)
+			dups = append(dups, struct{ name, region string }{n, r})
+		}
+		_ = rows.Close()
+	}
+	for _, d := range dups {
+		var keepID int64
+		err := s.db.QueryRowContext(ctx, `SELECT id FROM stations WHERE name=? AND region_code=? ORDER BY CASE WHEN lat=0 AND lon=0 THEN 1 ELSE 0 END, id LIMIT 1`, d.name, d.region).Scan(&keepID)
+		if err != nil {
+			continue
+		}
+		_, _ = s.db.ExecContext(ctx, `UPDATE stops SET station_id=? WHERE station_id IN (SELECT id FROM stations WHERE name=? AND region_code=? AND id != ?)`, keepID, d.name, d.region, keepID)
+		_, _ = s.db.ExecContext(ctx, `UPDATE station_codes SET station_id=? WHERE station_id IN (SELECT id FROM stations WHERE name=? AND region_code=? AND id != ?)`, keepID, d.name, d.region, keepID)
+		_, _ = s.db.ExecContext(ctx, `DELETE FROM stations WHERE name=? AND region_code=? AND id != ?`, d.name, d.region, keepID)
+	}
+	_, _ = s.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS uq_stations_name_region ON stations(name, region_code)`)
 	return nil
 }
 
@@ -530,21 +726,68 @@ func (s *SQLiteStore) TouchApiKey(ctx context.Context, key string) error {
 	return err
 }
 func (s *SQLiteStore) SaveQualityIssue(ctx context.Context, q QualityRow) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO quality_issues(provider_id, entity, entity_id, level, msg, at) VALUES(?,?,?,?,?,?)`, q.ProviderID, q.Entity, q.EntityID, q.Level, q.Msg, q.At)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO quality_issues(provider_id, entity, entity_id, level, code, msg, at) VALUES(?,?,?,?,?,?,?)`, q.ProviderID, q.Entity, q.EntityID, q.Level, q.Code, q.Msg, q.At)
+	return err
+}
+func (s *SQLiteStore) ClearQualityIssues(ctx context.Context, providerID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM quality_issues WHERE provider_id=?`, providerID)
+	return err
+}
+func (s *SQLiteStore) UpsertService(ctx context.Context, r ServiceRow) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO services(id, provider_id, name, start_date, end_date) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, start_date=excluded.start_date, end_date=excluded.end_date`, r.ID, r.ProviderID, r.Name, r.StartDate, r.EndDate)
+	return err
+}
+func (s *SQLiteStore) UpsertServiceDay(ctx context.Context, r ServiceDayRow) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO service_days(service_id, weekday) VALUES(?,?) ON CONFLICT(service_id, weekday) DO NOTHING`, r.ServiceID, r.Weekday)
+	return err
+}
+func (s *SQLiteStore) UpsertServiceException(ctx context.Context, r ServiceExceptionRow) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO service_exceptions(service_id, date, exception_type) VALUES(?,?,?) ON CONFLICT(service_id, date) DO UPDATE SET exception_type=excluded.exception_type`, r.ServiceID, r.Date, r.ExceptionType)
 	return err
 }
 func (s *SQLiteStore) UpsertFare(ctx context.Context, f FareRow) error { return nil }
 
-func (s *SQLiteStore) UpsertStation(ctx context.Context, r StationRow) (int64, error) {
-	if r.ID != 0 {
-		_, err := s.db.ExecContext(ctx, `INSERT INTO stations(id, name, lat, lon, geo_cell, region_code, timezone, quality_flags, primary_provider) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, lat=excluded.lat, lon=excluded.lon`, r.ID, r.Name, r.Lat, r.Lon, r.GeoCell, r.RegionCode, r.Timezone, r.QualityFlags, r.PrimaryProvider)
-		return r.ID, err
-	}
-	res, err := s.db.ExecContext(ctx, `INSERT INTO stations(name, lat, lon, geo_cell, region_code, timezone, quality_flags, primary_provider) VALUES(?,?,?,?,?,?,?,?)`, r.Name, r.Lat, r.Lon, r.GeoCell, r.RegionCode, r.Timezone, r.QualityFlags, r.PrimaryProvider)
+func (s *SQLiteStore) UpsertCity(ctx context.Context, c CityRow) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `INSERT INTO cities(name, region_code, lat, lon, timezone, population, kind, source) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(name, region_code) DO UPDATE SET lat=excluded.lat, lon=excluded.lon`, c.Name, c.RegionCode, c.Lat, c.Lon, c.Timezone, c.Population, c.Kind, c.Source)
 	if err != nil {
+		var existing int64
+		if e2 := s.db.QueryRowContext(ctx, `SELECT id FROM cities WHERE name=? AND region_code=?`, c.Name, c.RegionCode).Scan(&existing); e2 == nil {
+			return existing, nil
+		}
 		return 0, err
 	}
-	return res.LastInsertId()
+	id, _ := res.LastInsertId()
+	if id == 0 {
+		_ = s.db.QueryRowContext(ctx, `SELECT id FROM cities WHERE name=? AND region_code=?`, c.Name, c.RegionCode).Scan(&id)
+	}
+	return id, nil
+}
+
+func (s *SQLiteStore) UpsertStation(ctx context.Context, r StationRow) (int64, error) {
+	if r.ID != 0 {
+		_, err := s.db.ExecContext(ctx, `INSERT INTO stations(id, name, lat, lon, geo_cell, region_code, timezone, quality_flags, primary_provider, city_id) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, lat=excluded.lat, lon=excluded.lon, geo_cell=excluded.geo_cell, region_code=excluded.region_code, quality_flags=excluded.quality_flags, city_id=excluded.city_id`, r.ID, r.Name, r.Lat, r.Lon, r.GeoCell, r.RegionCode, r.Timezone, r.QualityFlags, r.PrimaryProvider, r.CityID)
+		return r.ID, err
+	}
+	res, err := s.db.ExecContext(ctx, `INSERT INTO stations(name, lat, lon, geo_cell, region_code, timezone, quality_flags, primary_provider, city_id) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(name, region_code) DO UPDATE SET lat=excluded.lat, lon=excluded.lon, geo_cell=excluded.geo_cell, quality_flags=excluded.quality_flags, city_id=excluded.city_id`, r.Name, r.Lat, r.Lon, r.GeoCell, r.RegionCode, r.Timezone, r.QualityFlags, r.PrimaryProvider, r.CityID)
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE") || strings.Contains(err.Error(), "unique") {
+			var existing int64
+			if e2 := s.db.QueryRowContext(ctx, `SELECT id FROM stations WHERE name=? AND region_code=?`, r.Name, r.RegionCode).Scan(&existing); e2 == nil {
+				_, _ = s.db.ExecContext(ctx, `UPDATE stations SET lat=?, lon=?, geo_cell=?, quality_flags=?, primary_provider=?, city_id=? WHERE id=?`, r.Lat, r.Lon, r.GeoCell, r.QualityFlags, r.PrimaryProvider, r.CityID, existing)
+				return existing, nil
+			}
+		}
+		return 0, err
+	}
+	id, _ := res.LastInsertId()
+	if id == 0 {
+		var existing int64
+		_ = s.db.QueryRowContext(ctx, `SELECT id FROM stations WHERE name=? AND region_code=?`, r.Name, r.RegionCode).Scan(&existing)
+		if existing != 0 {
+			return existing, nil
+		}
+	}
+	return id, nil
 }
 func (s *SQLiteStore) UpsertStop(ctx context.Context, r StopRow) (int64, error) {
 	res, err := s.db.ExecContext(ctx, `INSERT INTO stops(station_id, provider_id, external_code, stop_type, transport_type, name, raw_name) VALUES(?,?,?,?,?,?,?) ON CONFLICT(provider_id, external_code) DO UPDATE SET station_id=excluded.station_id, name=excluded.name`, r.StationID, r.ProviderID, r.ExternalCode, r.StopType, r.TransportType, r.Name, r.RawName)
@@ -567,7 +810,7 @@ func (s *SQLiteStore) UpsertStationCode(ctx context.Context, c StationCodeRow) e
 	return err
 }
 func (s *SQLiteStore) UpsertCarrier(ctx context.Context, r CarrierRow) (int64, error) {
-	res, err := s.db.ExecContext(ctx, `INSERT INTO carriers(provider_id, name, code, inn, address, iata, icao, sirena) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(provider_id, code) DO UPDATE SET name=excluded.name`, r.ProviderID, r.Name, r.Code, r.INN, r.Address, r.IATA, r.ICAO, r.Sirena)
+	res, err := s.db.ExecContext(ctx, `INSERT INTO carriers(provider_id, name, code, inn, address, iata, icao, sirena) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(provider_id, code) DO UPDATE SET name=excluded.name, inn=excluded.inn, address=excluded.address`, r.ProviderID, r.Name, r.Code, r.INN, r.Address, r.IATA, r.ICAO, r.Sirena)
 	if err != nil {
 		return 0, err
 	}

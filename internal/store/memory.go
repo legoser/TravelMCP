@@ -15,6 +15,7 @@ import (
 
 type MemoryStore struct {
 	mu           sync.RWMutex
+	cities       map[int64]CityRow
 	stations     map[int64]StationRow
 	stops        map[int64]StopRow
 	stationCodes []StationCodeRow
@@ -35,6 +36,7 @@ type MemoryStore struct {
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
+		cities:       make(map[int64]CityRow),
 		stations:     make(map[int64]StationRow),
 		stops:        make(map[int64]StopRow),
 		carriers:     make(map[int64]CarrierRow),
@@ -59,6 +61,17 @@ func (m *MemoryStore) FindStation(ctx context.Context, name, region string) (Sta
 	defer m.mu.RUnlock()
 	for _, s := range m.stations {
 		if s.Name == name && s.RegionCode == region && s.Lat != 0 {
+			return s, true
+		}
+	}
+	return StationRow{}, false
+}
+
+func (m *MemoryStore) FindStationAny(ctx context.Context, name, region string) (StationRow, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, s := range m.stations {
+		if s.Name == name && s.RegionCode == region {
 			return s, true
 		}
 	}
@@ -246,7 +259,43 @@ func (m *MemoryStore) SaveQualityIssue(ctx context.Context, q QualityRow) error 
 	m.mu.Unlock()
 	return nil
 }
+func (m *MemoryStore) ClearQualityIssues(ctx context.Context, providerID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	filtered := m.quality[:0]
+	for _, q := range m.quality {
+		if q.ProviderID != providerID {
+			filtered = append(filtered, q)
+		}
+	}
+	m.quality = filtered
+	return nil
+}
+func (m *MemoryStore) UpsertService(ctx context.Context, s ServiceRow) error { return nil }
+func (m *MemoryStore) UpsertServiceDay(ctx context.Context, d ServiceDayRow) error {
+	return nil
+}
+func (m *MemoryStore) UpsertServiceException(ctx context.Context, e ServiceExceptionRow) error {
+	return nil
+}
 func (m *MemoryStore) UpsertFare(ctx context.Context, f FareRow) error { return nil }
+
+func (m *MemoryStore) UpsertCity(ctx context.Context, c CityRow) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if c.ID == 0 {
+		for _, ex := range m.cities {
+			if ex.Name == c.Name && ex.RegionCode == c.RegionCode {
+				c.ID = ex.ID
+				m.cities[c.ID] = c
+				return c.ID, nil
+			}
+		}
+		c.ID = m.allocID()
+	}
+	m.cities[c.ID] = c
+	return c.ID, nil
+}
 
 func (m *MemoryStore) UpsertStation(ctx context.Context, s StationRow) (int64, error) {
 	m.mu.Lock()

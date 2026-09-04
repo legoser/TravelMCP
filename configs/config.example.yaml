@@ -67,6 +67,9 @@ log:
 telemetry:
   prometheus_addr: ":9090"
 
+cities:
+  path: "configs/cities.yaml" # справочник городов для ImportIntercity; переопределение: CITIES_PATH / TRAVELMCP__CITIES__PATH
+
 geocoder:
   # Приоритет по умолчанию: nominatim (OSM, бесплатно) -> yandex (требует ключ).
   # Провайдеры регистрируются, kind — опциональный приоритет (пусто = nominatim first).

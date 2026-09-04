@@ -10,6 +10,7 @@
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -170,18 +171,45 @@ def parse_period(period_str, snapshot=""):
     return "{0}-01-01".format(year), "{0}-12-31".format(year)
 
 
+TRANSLIT_MAP = {
+    'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'yo', 'ж': 'zh',
+    'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm', 'н': 'n', 'о': 'o',
+    'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u', 'ф': 'f', 'х': 'kh', 'ц': 'ts',
+    'ч': 'ch', 'ш': 'sh', 'щ': 'shch', 'ъ': '', 'ы': 'y', 'ь': '', 'э': 'e', 'ю': 'yu', 'я': 'ya',
+    'А': 'A', 'Б': 'B', 'В': 'V', 'Г': 'G', 'Д': 'D', 'Е': 'E', 'Ё': 'Yo', 'Ж': 'Zh',
+    'З': 'Z', 'И': 'I', 'Й': 'Y', 'К': 'K', 'Л': 'L', 'М': 'M', 'Н': 'N', 'О': 'O',
+    'П': 'P', 'Р': 'R', 'С': 'S', 'Т': 'T', 'У': 'U', 'Ф': 'F', 'Х': 'Kh', 'Ц': 'Ts',
+    'Ч': 'Ch', 'Ш': 'Sh', 'Щ': 'Shch', 'Ъ': '', 'Ы': 'Y', 'Ь': '', 'Э': 'E', 'Ю': 'Yu', 'Я': 'Ya',
+}
+
+
+def translit(s):
+    out = []
+    for ch in s:
+        if ch in TRANSLIT_MAP:
+            out.append(TRANSLIT_MAP[ch])
+        elif 'А' <= ch <= 'я' or ch in 'ёЁ':
+            out.append('')
+        else:
+            out.append(ch)
+    t = ''.join(out)
+    t = re.sub(r'[^A-Za-z0-9]+', '-', t)
+    t = re.sub(r'-+', '-', t).strip('-').lower()
+    return t[:40] or 'stop'
+
+
+def op_hash(name, region):
+    h = hashlib.sha256((name + '|' + region).encode('utf-8')).hexdigest()[:8]
+    return h
+
+
 STOPWORDS = set("""оп остановочный пункт автовокзал автостанция автобусная станция
 ас ав дкп г с п р.п рп пгт пов кассовый аэропорт межд города вокзал название
 транспортный остановка""".split())
 
 
-# Проверенные координаты для городов/сёл, где автоматический OSM/газетерный
-# метчинг двусмыслен (одноимённые населённые пункты в разных регионах) либо
-# данных нет вовсе. Значения для "yandex:" получены через Яндекс-Геокодер и
-# сохраняются в кэш; "osm:" — сверены с локальным OSM датасетом.
-# Расширено 2026-09-02: все столицы регионов (85) + крупные нестоличные города
-# (>300k или райцентры) — отправная точка покрытия всей страны без API-затрат.
-CITY_OVERRIDE = {
+def _load_city_override():
+    raw = {
     "болотное": ("osm", 55.6468, 84.3594),
     "прокопьевск": ("osm", 53.9061, 86.7450),
     "рубцовск": ("osm", 51.5155, 81.2030),
@@ -306,7 +334,37 @@ CITY_OVERRIDE = {
     "альметьевск": ("osm", 54.9010, 52.3045),
     "волгодонск": ("osm", 47.5167, 42.1570),
     "череповец": ("osm", 59.1343, 37.9014),
-}
+    }
+    for _p in [os.environ.get("CITIES_PATH"), os.environ.get("CITIES_DATA_PATH"), os.environ.get("TRAVELMCP__CITIES__PATH"), "configs/cities.yaml", "internal/store/cities.yaml"]:
+        if _p and os.path.exists(_p):
+            try:
+                import yaml as _y
+                with open(_p, encoding="utf-8") as _f:
+                    _d = _y.safe_load(_f) or {}
+                _cities = _d.get("cities") if isinstance(_d, dict) else None
+                if _cities:
+                    _out = {}
+                    for _c in _cities:
+                        _name = str(_c.get("name", "")).strip().lower()
+                        if not _name:
+                            continue
+                        try:
+                            _lat = float(_c.get("lat", 0))
+                            _lon = float(_c.get("lon", 0))
+                        except Exception:
+                            continue
+                        _src = str(_c.get("source", "osm") or "osm")
+                        _out[_name] = (_src, _lat, _lon)
+                    if _out:
+                        print(f"city_override: loaded {len(_out)} from {_p}", file=sys.stderr, flush=True)
+                        return _out
+            except Exception as _e:
+                print(f"city_override: yaml load failed {_p}: {_e}", file=sys.stderr, flush=True)
+                pass
+    return raw
+
+
+CITY_OVERRIDE = _load_city_override()
 
 YANDEX_CACHE = "data/reestr/yandex_geo.json"
 YANDEX_GEO = "https://geocode-maps.yandex.ru/1.x/"
@@ -375,25 +433,52 @@ class YandexGeoCoder:
         if not self.key:
             self.key = os.environ.get("YANDEX_GEOCODE_KEY", "")
 
-    def lookup(self, query):
-        """Возвращает (lat, lon) для query или None. Кэширует по query."""
+    def lookup(self, query, region_code=None):
+        """Возвращает (lat, lon) для query или None. Кэширует только успешные ответы. Пробует results=5 и фильтрует по региону."""
         if query in self.data:
-            return tuple(self.data[query])
+            v = self.data[query]
+            if v is None:
+                return None
+            try:
+                return tuple(v)
+            except Exception:
+                return None
         if not self.key or self.used >= self.limit:
             return None
         try:
-            url = YANDEX_GEO + "?format=json&results=1&apikey=" + urllib.parse.quote(self.key) \
+            url = YANDEX_GEO + "?format=json&results=5&apikey=" + urllib.parse.quote(self.key) \
                 + "&geocode=" + urllib.parse.quote(query)
             with urllib.request.urlopen(url, timeout=15) as r:
                 body = json.load(r)
-            fm = body.get("response", {}).get("GeoObjectCollection", {}).get("featureMember", [])
-            if not fm:
+            fms = body.get("response", {}).get("GeoObjectCollection", {}).get("featureMember", [])
+            if not fms:
                 return None
-            pos = fm[0]["GeoObject"]["Point"]["pos"].split()
-            lon, lat = float(pos[0]), float(pos[1])
+            region_name = REGION_KW.get(region_code, "").lower() if region_code else ""
+            best = None
+            for fm in fms:
+                try:
+                    pos = fm["GeoObject"]["Point"]["pos"].split()
+                    lon, lat = float(pos[0]), float(pos[1])
+                    descr = fm["GeoObject"].get("description", "").lower()
+                    name = fm["GeoObject"].get("name", "").lower()
+                    meta = fm["GeoObject"].get("metaDataProperty", {}).get("GeocoderMetaData", {})
+                    kind = meta.get("kind", "")
+                    text = (descr + " " + name).lower()
+                    if region_name and region_name.lower() not in text and kind not in ("locality", "province"):
+                        if fm != fms[0]:
+                            continue
+                    best = (lat, lon)
+                    if kind in ("locality", "district", "province"):
+                        break
+                    if best and fm == fms[0]:
+                        pass
+                except Exception:
+                    continue
+            if best is None:
+                return None
             self.used += 1
-            self.data[query] = [lat, lon]
-            return (lat, lon)
+            self.data[query] = [best[0], best[1]]
+            return best
         except Exception:
             return None
 
@@ -425,38 +510,84 @@ class NominatimGeoCoder:
         except OSError:
             self.data = {}
 
-    def lookup(self, query):
-        """Возвращает (lat, lon) для query или None. Кэширует, throttles 1 req/s."""
-        if query in self.data:
-            return tuple(self.data[query])
+    def lookup(self, query, viewbox=None, region_code=None):
+        """Возвращает (lat, lon) для query или None. Кэширует только успешные ответы, throttles 1 req/s. Поддерживает viewbox и фильтрацию по региону."""
+        cache_key = query if not viewbox else query + "|vb:" + viewbox
+        if cache_key in self.data:
+            v = self.data[cache_key]
+            if v is None:
+                return None
+            print("nominatim: cache hit {0!r} -> {1}".format(query, v), file=sys.stderr, flush=True)
+            try:
+                return tuple(v)
+            except Exception:
+                return None
+        if query in self.data and not viewbox:
+            v = self.data[query]
+            if v is not None:
+                print("nominatim: cache hit {0!r} -> {1}".format(query, v), file=sys.stderr, flush=True)
+                try:
+                    return tuple(v)
+                except Exception:
+                    return None
         if self.used >= self.limit:
+            print("nominatim: limit hit {0}/{1} for {2!r}".format(self.used, self.limit, query), file=sys.stderr, flush=True)
             return None
-        # throttle 1 req/s по политике Nominatim
         import time as _time
         now = _time.time()
         if self.last_ts and now - self.last_ts < 1.1:
-            _time.sleep(1.1 - (now - self.last_ts))
+            wait = 1.1 - (now - self.last_ts)
+            print("nominatim: throttle sleep {0:.2f}s for {1!r}".format(wait, query), file=sys.stderr, flush=True)
+            _time.sleep(wait)
         try:
-            params = urllib.parse.urlencode({
-                "q": query, "format": "json", "limit": 1, "accept-language": "ru"
-            })
-            url = NOMINATIM_GEO + "?" + params
+            params = {
+                "q": query, "format": "json", "limit": 5, "accept-language": "ru",
+                "countrycodes": "ru", "addressdetails": 1, "extratags": 1
+            }
+            if viewbox:
+                params["viewbox"] = viewbox
+                params["bounded"] = 1
+            url = NOMINATIM_GEO + "?" + urllib.parse.urlencode(params)
+            print("nominatim: request {0!r} -> {1}".format(query, url[:160]), file=sys.stderr, flush=True)
             req = urllib.request.Request(url, headers={
                 "User-Agent": "travelmcp/1.0 (https://github.com/anomalyco/travelmcp)"
             })
+            t0 = _time.time()
             with urllib.request.urlopen(req, timeout=15) as r:
                 body = json.load(r)
+            print("nominatim: response {0!r} {1} items in {2:.2f}s".format(query, len(body) if isinstance(body, list) else type(body), _time.time()-t0), file=sys.stderr, flush=True)
             if not body or not isinstance(body, list) or len(body) == 0:
                 return None
-            lat = float(body[0].get("lat", 0))
-            lon = float(body[0].get("lon", 0))
-            if not lat or not lon:
+            best = None
+            region_name = REGION_KW.get(region_code, "").lower() if region_code else ""
+            for item in body:
+                try:
+                    lat = float(item.get("lat", 0)); lon = float(item.get("lon", 0))
+                except Exception:
+                    continue
+                if not lat or not lon:
+                    continue
+                disp = (item.get("display_name") or "").lower()
+                addr = item.get("address") or {}
+                state = (addr.get("state") or addr.get("region") or "").lower()
+                if region_name and region_name.lower() not in disp and region_name.lower() not in state:
+                    if item != body[0]:
+                        continue
+                if item.get("class") == "amenity" and item.get("type") in ("bus_station", "bus_stop"):
+                    best = (lat, lon)
+                    break
+                if best is None:
+                    best = (lat, lon)
+            if best is None:
                 return None
             self.used += 1
             self.last_ts = _time.time()
-            self.data[query] = [lat, lon]
-            return (lat, lon)
-        except Exception:
+            self.data[cache_key] = [best[0], best[1]]
+            if cache_key != query:
+                self.data[query] = [best[0], best[1]]
+            return best
+        except Exception as e:
+            print("nominatim: error {0!r} -> {1}".format(query, e), file=sys.stderr, flush=True)
             return None
 
     def save(self):
@@ -477,6 +608,9 @@ def geocode_stops(stops, osm_path, gazetteer_path):
     Nominatim (дешево, 1 req/s, кэш) → Yandex (500/сутки, кэш) ротация.
     Остановки без уверенного совпадения оставляем без координат (lat/lon = 0).
     """
+    import time as _gt
+    _geocode_t0 = _gt.time()
+    print("geocode: старт stops={0} osm={1} gazetteer={2}".format(len(stops), osm_path, gazetteer_path), file=sys.stderr, flush=True)
     stopwords = STOPWORDS
 
     def norm(s):
@@ -503,8 +637,9 @@ def geocode_stops(stops, osm_path, gazetteer_path):
                 osm_bus.append((nn, o.get("lat", 0), o.get("lon", 0)))
     except OSError as e:
         print("geocode: не удалось прочитать OSM {0}: {1}".format(osm_path, e),
-              file=sys.stderr)
+              file=sys.stderr, flush=True)
         return stops
+    print("geocode: OSM loaded {0} exact={1} bus={2} elapsed={3:.1f}s".format(osm_path, len(exact), len(osm_bus), _gt.time()-_geocode_t0), file=sys.stderr, flush=True)
 
     g = []
     try:
@@ -516,8 +651,16 @@ def geocode_stops(stops, osm_path, gazetteer_path):
                 g.append((norm(a), p.get("lat", 0), p.get("lon", 0)))
     except OSError as e:
         print("geocode: не удалось прочитать газетир {0}: {1}".format(
-            gazetteer_path, e), file=sys.stderr)
+            gazetteer_path, e), file=sys.stderr, flush=True)
         return stops
+    print("geocode: gazetteer loaded {0} entries={1} elapsed={2:.1f}s".format(gazetteer_path, len(g), _gt.time()-_geocode_t0), file=sys.stderr, flush=True)
+
+    GENERIC_HINTS = set([
+        "южный", "северный", "западный", "восточный", "центральный", "главный",
+        "пригородный", "новый", "старый", "верхний", "нижний", "большой", "малый",
+        "автопавильон", "автостанция", "автовокзал", "станция", "остановка",
+        "диспетчерско", "кассовый", "поворот", "аэропорт", "вокзал",
+    ])
 
     def related(tok, gn):
         if tok == gn:
@@ -550,24 +693,57 @@ def geocode_stops(stops, osm_path, gazetteer_path):
 
     def is_generic(tok):
         return tok in stopwords or tok in (
-            "пов", "дкп", "ост", "остоп", "село", "деревня", "поселок", "города")
+            "пов", "дкп", "ост", "остоп", "село", "деревня", "поселок", "города") or tok in GENERIC_HINTS
+
+    CITY_MARKERS = re.compile(r'\b(?:г\.?|с\.?|п\.?|д\.?|р\.п\.?|пос\.?|посёлок|село|деревня|поселок)\s+([А-ЯЁа-яё][А-ЯЁа-яё\- ]{2,})', re.I)
+
+    def extract_city_explicit(name):
+        m = CITY_MARKERS.search(name)
+        if m:
+            raw = m.group(1).strip()
+            raw = re.sub(r'\s+', ' ', raw)
+            raw = raw.split('/')[0].split(',')[0].strip()
+            raw = raw.strip(' "«»()')
+            parts = raw.split()
+            if parts:
+                cand = parts[0]
+                if len(parts) > 1 and parts[1][0].isupper() and len(parts[1]) >= 3:
+                    cand = parts[0] + " " + parts[1]
+                return cand
+        return None
 
     def city_hint(name):
         """Возвращает город-основу из имени остановки или None."""
+        explicit = extract_city_explicit(name)
+        if explicit:
+            ex_norm = norm(explicit).split()
+            if ex_norm:
+                cand = ex_norm[0]
+                if cand not in stopwords and cand not in GENERIC_HINTS and len(cand) >= 3:
+                    return cand
+                if len(ex_norm) > 1:
+                    cand2 = ex_norm[1]
+                    if cand2 not in stopwords and cand2 not in GENERIC_HINTS and len(cand2) >= 3:
+                        return cand2
         toks = [t for t in tokens(name) if not is_generic(t) and len(t) >= 3]
         if not toks:
             return None
-        best = max(toks, key=len)
-        stem = city_stem(best)
-        if stem in CITY_OVERRIDE:
-            return stem
+        for t in toks:
+            if city_stem(t) in CITY_OVERRIDE:
+                return t
+        filtered = [t for t in toks if t not in GENERIC_HINTS and len(t) >= 4]
+        if filtered:
+            toks = filtered
+        best = max(toks, key=len) if toks else None
+        if best and best in GENERIC_HINTS:
+            return None
+        if best and len(best) < 4 and best not in CITY_OVERRIDE:
+            return None
         return best
 
     def override_coord(stem):
         rec = CITY_OVERRIDE.get(stem)
         return (rec[1], rec[2]) if rec else None
-
-    yc = YandexGeoCoder()
 
     def match(name, region_code):
         nn = norm(name)
@@ -597,33 +773,43 @@ def geocode_stops(stops, osm_path, gazetteer_path):
                 continue
             for gn, lat, lon in g:
                 if related(t, gn) and len(gn) > bl:
+                    # регион-фильтр для газетира: без него "Березовка" тянет в другой край
+                    if not region_plausible(lat, lon, region_code):
+                        continue
                     bl = len(gn)
                     best = (lat, lon)
-        if best:
+        if best and region_plausible(best[0], best[1], region_code):
             return best
         for onn, lat, lon in osm_bus:
             hit = [t for t in toks if len(t) >= 3 and (t in onn or related(t, onn))]
             score = sum(len(t) for t in hit)
             if hit and score > bl:
+                if not region_plausible(lat, lon, region_code):
+                    continue
                 bl = score
                 best = (lat, lon)
-        if best:
+        if best and region_plausible(best[0], best[1], region_code):
             return best
         for gn, lat, lon in g:
             # gn должен быть отдельным словом в nn, а не подстрокой внутри него:
             # иначе газетир "Станция" цепляется к любому "*станция*" (автостАнция)
             # и тянет остановку на координаты своей записи.
             if gn and len(gn) > bl and gn in toks:
+                if not region_plausible(lat, lon, region_code):
+                    continue
                 bl = len(gn)
                 best = (lat, lon)
-        if best:
+        if best and region_plausible(best[0], best[1], region_code):
             return best
         for t in toks:
             if len(t) >= 3 and t in exact:
                 # скаттер по точному узлу OSM — хорош для однозначных сёл
                 # (Сростки, Манжерок), но для одноимённых в разных регионах
                 # (Березовка→Берёзовский) координаты перекрыты шагом 0 выше.
-                return exact[t]
+                lat, lon = exact[t]
+                if not region_plausible(lat, lon, region_code):
+                    continue
+                return (lat, lon)
         if is_terminal_name(low):
             tks = [t for t in toks if len(t) >= 3]
             best = None
@@ -643,6 +829,34 @@ def geocode_stops(stops, osm_path, gazetteer_path):
             return best
         return None
 
+    REGION_CENTER = {
+        "22": (53.35, 83.78), "04": (51.96, 85.96), "42": (55.36, 86.08), "54": (55.01, 82.93), "70": (56.50, 84.97),
+        "24": (56.01, 92.89), "26": (45.04, 41.97), "07": (43.49, 43.61), "02": (54.73, 55.95), "12": (56.64, 47.89),
+        "16": (55.79, 49.12), "19": (53.72, 91.44), "66": (56.84, 60.60), "74": (55.16, 61.40), "50": (55.75, 37.61),
+        "77": (55.75, 37.61), "78": (59.93, 30.33), "61": (47.22, 39.71), "23": (45.03, 38.97), "34": (48.70, 44.51),
+        "36": (51.66, 39.20), "01": (44.60, 40.10), "03": (51.83, 107.58), "05": (42.98, 47.50), "06": (43.16, 44.81),
+    }
+
+    def region_viewbox(region_code):
+        if region_code not in REGION_CENTER:
+            return None
+        clat, clon = REGION_CENTER[region_code]
+        delta = 4.5 if region_code in ("24", "14", "28", "27", "86", "89") else 2.8
+        return "{:.3f},{:.3f},{:.3f},{:.3f}".format(clon - delta, clat + delta, clon + delta, clat - delta)
+
+    def region_plausible(lat, lon, region_code):
+        if region_code in REGION_CENTER:
+            clat, clon = REGION_CENTER[region_code]
+            import math
+            R = 6371
+            dlat = (lat - clat) * math.pi / 180
+            dlon = (lon - clon) * math.pi / 180
+            a = math.sin(dlat/2)**2 + math.cos(clat*math.pi/180)*math.cos(lat*math.pi/180)*math.sin(dlon/2)**2
+            d = 2 * R * math.asin(math.sqrt(a))
+            limit = 800 if region_code in ("24", "14", "28", "27", "86", "89") else 600
+            return d < limit
+        return plausible(lat, lon)
+
     def plausible(lat, lon):
         if not (lat and lon):
             return False
@@ -651,48 +865,118 @@ def geocode_stops(stops, osm_path, gazetteer_path):
     yc = YandexGeoCoder()
     nc = NominatimGeoCoder()
     enable_external = os.environ.get("ENABLE_GEOCODE") == "1" or os.environ.get("ENABLE_EXTERNAL_GEOCODE") == "1"
+    print("geocode: external={0} yandex_key={1} y_limit={2} n_cache={3} y_cache={4}".format(enable_external, bool(yc.key), yc.limit, len(nc.data), len(yc.data)), file=sys.stderr, flush=True)
     found = 0
     y_used = 0
     n_used = 0
-    for s in stops:
+    total = len(stops)
+    for idx, s in enumerate(stops, 1):
         region_code = s.get("region", "")
         hint = city_hint(s["name"])
+        if hint and (hint.lower() in GENERIC_HINTS or len(hint) < 4):
+            hint = None
         hstem = city_stem(hint) if hint else None
         c = match(s["name"], region_code)
-        if c and plausible(*c):
+        if c and plausible(*c) and region_plausible(c[0], c[1], region_code):
             s["lat"] = c[0]
             s["lon"] = c[1]
             found += 1
             continue
+        elif c and plausible(*c):
+            print("geocode: [{0}/{1}] reject implausible region {2!r} {3},{4}".format(idx, total, s["name"], c[0], c[1]), file=sys.stderr, flush=True)
         if not enable_external:
-            # без ENABLE_GEOCODE — используем только OSM/газетир/CITY_OVERRIDE якоря
-            # для якорей yandex без внешнего геокодера оставляем без координат
             continue
-        # Ротация при ENABLE_GEOCODE=1: сначала Nominatim (дешево), затем Yandex 500/сутки
+        region_name = REGION_KW.get(region_code, "")
+        vb = region_viewbox(region_code)
+        variants = []
         if hint and hint.strip():
-            q = "Россия, " + REGION_KW.get(region_code, "") + ", " + hint
-            if hstem and hstem in CITY_OVERRIDE and CITY_OVERRIDE[hstem][0] == "yandex":
-                got = yc.lookup(q)
-                if got:
-                    s["lat"] = got[0]; s["lon"] = got[1]; found += 1; y_used += 1
-                    continue
-                got = nc.lookup(q)
-                if got:
-                    s["lat"] = got[0]; s["lon"] = got[1]; found += 1; n_used += 1
-                    continue
+            base = hint.strip()
+            if region_name:
+                variants.append(f"{base}, {region_name}, Россия")
             else:
-                got = nc.lookup(q)
-                if got and plausible(*got):
-                    s["lat"] = got[0]; s["lon"] = got[1]; found += 1; n_used += 1
-                    continue
-                got = yc.lookup(q)
-                if got and plausible(*got):
+                variants.append(f"{base}, Россия")
+            variants.append(f"автовокзал {base}, {region_name}, Россия" if region_name else f"автовокзал {base}, Россия")
+            variants.append(f"автостанция {base}, {region_name}, Россия" if region_name else f"автостанция {base}, Россия")
+        else:
+            clean = re.sub(r'[«»"\'\(\)]+', ' ', s["name"])
+            clean = " ".join(clean.split())
+            low_clean = clean.lower()
+            toks_clean = low_clean.split()
+            is_generic_clean = low_clean in GENERIC_HINTS or low_clean in ("ас автостанция", "ас", "оп", "оп лпк", "ав центральный", "ас «автостанция»") or any(t in GENERIC_HINTS for t in toks_clean)
+            if clean and len(clean) >= 4 and not is_generic_clean:
+                if region_name:
+                    variants.append(f"{clean}, {region_name}, Россия")
+                else:
+                    variants.append(f"{clean}, Россия")
+        yandex_first = hstem and hstem in CITY_OVERRIDE and CITY_OVERRIDE[hstem][0] == "yandex"
+        got = None
+        for q in variants:
+            print("geocode: [{0}/{1}] try {2!r} hint={3!r} region={4}".format(idx, total, q, hint, region_code), file=sys.stderr, flush=True)
+            if yandex_first:
+                got = yc.lookup(q, region_code=region_code)
+                print("geocode: [{0}/{1}] yandex result {2}".format(idx, total, got), file=sys.stderr, flush=True)
+                if got and plausible(*got) and region_plausible(got[0], got[1], region_code):
                     s["lat"] = got[0]; s["lon"] = got[1]; found += 1; y_used += 1
-                    continue
+                    print("geocode: [{0}/{1}] yandex hit {2!r} -> {3:.4f},{4:.4f} (found {5})".format(idx, total, q, got[0], got[1], found), file=sys.stderr, flush=True)
+                    break
+                elif got:
+                    print("geocode: [{0}/{1}] yandex implausible {2!r} -> {3},{4}".format(idx, total, q, got[0], got[1]), file=sys.stderr, flush=True)
+                    got = None
+                got = nc.lookup(q, viewbox=vb, region_code=region_code)
+                print("geocode: [{0}/{1}] nominatim result {2}".format(idx, total, got), file=sys.stderr, flush=True)
+                if got and plausible(*got) and region_plausible(got[0], got[1], region_code):
+                    s["lat"] = got[0]; s["lon"] = got[1]; found += 1; n_used += 1
+                    print("geocode: [{0}/{1}] nominatim hit {2!r} -> {3:.4f},{4:.4f} (found {5})".format(idx, total, q, got[0], got[1], found), file=sys.stderr, flush=True)
+                    break
+                elif got:
+                    print("geocode: [{0}/{1}] nominatim implausible {2!r} -> {3},{4}".format(idx, total, q, got[0], got[1]), file=sys.stderr, flush=True)
+                    got = None
+            else:
+                got = nc.lookup(q, viewbox=vb, region_code=region_code)
+                print("geocode: [{0}/{1}] nominatim result {2}".format(idx, total, got), file=sys.stderr, flush=True)
+                if got and plausible(*got) and region_plausible(got[0], got[1], region_code):
+                    s["lat"] = got[0]; s["lon"] = got[1]; found += 1; n_used += 1
+                    print("geocode: [{0}/{1}] nominatim hit {2!r} -> {3:.4f},{4:.4f} (found {5})".format(idx, total, q, got[0], got[1], found), file=sys.stderr, flush=True)
+                    break
+                elif got:
+                    print("geocode: [{0}/{1}] nominatim implausible {2!r} -> {3},{4}".format(idx, total, q, got[0], got[1]), file=sys.stderr, flush=True)
+                    got = None
+                got = yc.lookup(q, region_code=region_code)
+                print("geocode: [{0}/{1}] yandex result {2}".format(idx, total, got), file=sys.stderr, flush=True)
+                if got and plausible(*got) and region_plausible(got[0], got[1], region_code):
+                    s["lat"] = got[0]; s["lon"] = got[1]; found += 1; y_used += 1
+                    print("geocode: [{0}/{1}] yandex hit {2!r} -> {3:.4f},{4:.4f} (found {5})".format(idx, total, q, got[0], got[1], found), file=sys.stderr, flush=True)
+                    break
+                elif got:
+                    print("geocode: [{0}/{1}] yandex implausible {2!r} -> {3},{4}".format(idx, total, q, got[0], got[1]), file=sys.stderr, flush=True)
+                    got = None
+        if got is not None:
+            continue
+        if variants:
+            print("geocode: [{0}/{1}] miss {2!r}".format(idx, total, variants[0]), file=sys.stderr, flush=True)
+        if idx % 100 == 0 or idx == total:
+            elapsed = _gt.time() - _geocode_t0
+            print("geocode: прогресс {0}/{1} found={2} n={3} y={4} elapsed={5:.1f}s rate={6:.2f}/s".format(idx, total, found, n_used, y_used, elapsed, idx/max(elapsed, 0.1)), file=sys.stderr, flush=True)
+            yc.save(); nc.save()
+            print("geocode: кэш сохранён n={0} y={1}".format(len(nc.data), len(yc.data)), file=sys.stderr, flush=True)
     yc.save()
     nc.save()
-    print("geocode: координат получено {0} из {1} (nominatim={2}, yandex={3}, used y/n {4}/{5})".format(found, len(stops), n_used, y_used, yc.used, nc.used),
-          file=sys.stderr)
+    missing = [s for s in stops if not s.get("lat") or not s.get("lon") or s.get("lat") == 0 or s.get("lon") == 0]
+    if missing:
+        miss_path = "data/reestr/missing_stops.json"
+        try:
+            os.makedirs(os.path.dirname(miss_path), exist_ok=True)
+            with open(miss_path, "w", encoding="utf-8") as mf:
+                json.dump(missing, mf, ensure_ascii=False, indent=2)
+            print("geocode: без координат {0} → {1}".format(len(missing), miss_path), file=sys.stderr, flush=True)
+            for s in missing[:20]:
+                print("  missing: {0!r} region={1} id={2}".format(s.get("name"), s.get("region"), s.get("id")), file=sys.stderr, flush=True)
+            if len(missing) > 20:
+                print("  ... и ещё {0}".format(len(missing)-20), file=sys.stderr, flush=True)
+        except OSError as e:
+            print("geocode: не удалось записать missing {0}: {1}".format(miss_path, e), file=sys.stderr, flush=True)
+    print("geocode: координат получено {0} из {1} (nominatim={2}, yandex={3}, used y/n {4}/{5}) elapsed={6:.1f}s".format(found, len(stops), n_used, y_used, yc.used, nc.used, _gt.time()-_geocode_t0),
+          file=sys.stderr, flush=True)
     return stops
 
 
@@ -707,6 +991,9 @@ def main():
                     help="газетир городов для геокодинга")
     ap.add_argument("--out", dest="output", required=True, help="путь к JSON")
     args = ap.parse_args()
+    import time as _mt
+    _main_t0 = _mt.time()
+    print("main: старт xlsx={0} regions={1} snapshot={2} osm={3}".format(args.xlsx, args.regions, args.snapshot, args.osm), file=sys.stderr, flush=True)
 
     raw_regions = args.regions.strip().lower()
     if raw_regions in ("all", "*", ""):
@@ -729,11 +1016,21 @@ def main():
         routes[reg] = OrderedDict([("order", order), ("name", d.get(RNAME, "")),
                                    ("carrier", d.get(CARRIER, ""))])
     perevoz = {}
+    carriers_map = {}
     for d in sheet_rows(args.xlsx, "sheet3"):
         reg = d.get(ROUTE, "")
         if not reg or reg.startswith("Регистрационный номер"):
             continue
         perevoz[reg] = d
+        inn = str(d.get(3, "")).strip()
+        if inn and inn not in carriers_map:
+            carriers_map[inn] = {
+                "name": d.get(2, "").strip(),
+                "inn": inn,
+                "ogrn": str(d.get(4, "")).strip(),
+                "address": d.get(5, "").strip() if d.get(5) else "",
+                "email": d.get(6, "").strip() if d.get(6) else "",
+            }
 
     # проход 1: какие маршруты затронуты хотя бы одной остановкой в регионах
     touched = set()
@@ -755,8 +1052,15 @@ def main():
     def stop_ref(name, region, opreg):
         key = (name, region)
         if key not in stops:
-            sid = "op:{0}:{1}".format(region, opreg) if opreg else "nr:" + name
-            stops[key] = {"id": sid, "name": name, "region": region, "op_reg": opreg}
+            if opreg and opreg.strip():
+                sid = "op:{0}:{1}".format(region, opreg.strip())
+                code = opreg.strip()
+            else:
+                h = op_hash(name, region)
+                slug = translit(name)
+                sid = "nr:{0}-{1}".format(slug, h)
+                code = "op:{0}:{1}".format(region, h)
+            stops[key] = {"id": sid, "name": name, "region": region, "op_reg": code}
         return stops[key]["id"]
 
     by_route = OrderedDict()
@@ -820,8 +1124,12 @@ def main():
                "carrier": info.get("carrier", "")}
         pv = perevoz.get(reg)
         if pv:
-            row["carrier_inn"] = pv.get(3, "")
+            row["carrier_inn"] = str(pv.get(3, "")).strip()
+            row["carrier_ogrn"] = str(pv.get(4, "")).strip()
+            row["carrier_address"] = pv.get(5, "").strip() if pv.get(5) else ""
+            row["carrier_email"] = pv.get(6, "").strip() if pv.get(6) else ""
         routes_out.append(row)
+    carriers_out = list(carriers_map.values())
 
     stops_out = []
     for (name, region), s in stops.items():
@@ -852,6 +1160,7 @@ def main():
         "services": services_out,
         "service_days": service_days_out,
         "service_exceptions": [],
+        "carriers": carriers_out,
         "schedules": sched_out,
     }
 
@@ -862,8 +1171,8 @@ def main():
     else:
         print(blob)
 
-    print("маршрутов touched: {0}, остановок: {1}, блоков расписания: {2}".format(
-        len(touched), len(stops_out), len(sched_out)), file=sys.stderr)
+    print("маршрутов touched: {0}, остановок: {1}, блоков расписания: {2} elapsed={3:.1f}s".format(
+        len(touched), len(stops_out), len(sched_out), _mt.time()-_main_t0), file=sys.stderr, flush=True)
 
 
 if __name__ == "__main__":
