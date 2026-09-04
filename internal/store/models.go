@@ -173,3 +173,27 @@ type ApiKeyRow struct {
 	CreatedAt int64
 	LastUsed  int64
 }
+
+type PlaceRow struct {
+	ID         int64
+	ParentID   *int64
+	AdminLevel int
+	Level      int
+	Lat, Lon   *float64
+	Tz         string
+	ValidFrom  string
+	ValidTo    *string
+}
+
+type TerminalRow struct {
+	ID             int64
+	PlaceID        *int64
+	Lat, Lon       float64
+	Tz             string
+	ValidityFrom   *string
+	ValidityTo     *string
+	OsmName        string
+	ValidFrom      string
+	ValidTo        *string
+	LastVerifiedAt *int64
+}

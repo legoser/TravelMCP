@@ -79,6 +79,8 @@ configs/               YAML-конфиги
 - После изменения конфигурации opencode (включая этот файл) — напомни
   пользователю перезапустить opencode: конфиг читается при старте.
 - значения определяющие параметры поведения кода и допустимые к изменению, должны быть в едином месте для конфигурирования.
+- Придерживаться SOLID/ООП и изоляции слоёв: SRP — один тип/файл = одна ответственность (не раскидывать `SQLiteStore` по `sqlite.go` + `places_sqlite.go`); OCP — расширять через интерфейсы `Store`/`PlaceStore`, не правя ядро `model`; LSP — `PostgresStore`/`SQLiteStore`/`MemoryStore` взаимозаменяемы по `Store`; ISP — узкие интерфейсы (`PlaceStore`, `TerminalStore`); DIP — верх зависит от `Store`, а не от `*sql.DB`/`*SQLiteStore`. Проверять при разработке: `go vet`, `grep -r "store.*sqlite" --include="*.go" | grep -v "_test\|deprecated"` и `grep -r "import.*store" internal/providers` — `store` не импортирует `providers/server/mcp`.
+- После каждого пункта `docs/14-plan.md` проверять устаревание: `grep -rn "Deprecated\|TODO.*phase\|seed_pilot\|places_sqlite"`, удалять `*_deprecated.go`/`seed_*.go`/`import_intercity.go` из `store`, переносить в `adapters`/`testdata`, проверять что `places_test.go` лежит в слое теста (`internal/places` unit vs `test/integration` — сейчас sqlite-специфичный `store/places_test.go` актуален только как `store/sqlite_places_test.go` до удаления sqlite).
 
 ## Команды
 

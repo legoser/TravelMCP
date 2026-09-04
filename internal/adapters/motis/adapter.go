@@ -96,6 +96,46 @@ func nameForEnglish(m Match) string {
 	return translate.TransliterateGOST779(m.Name)
 }
 
+func AreasToAdaptedRecords(m Match, source string) []model.AdaptedRecord {
+	if source == "" {
+		source = "motis"
+	}
+	var out []model.AdaptedRecord
+	var parentCode string
+	for i, a := range m.Areas {
+		ident := model.AdaptedIdentifier{System: "motis", CodeType: "area", Code: a.Name}
+		admin := int(a.AdminLevel)
+		var level *int
+		if lvl, ok := model.LevelForAdminLevel(admin); ok {
+			li := int(lvl)
+			level = &li
+		}
+		nameRu := a.Name
+		nameEn := translate.TranslateAdminName(nameRu)
+		raw, _ := json.Marshal(a)
+		rec := model.AdaptedRecord{
+			Kind:        model.AdaptedPlace,
+			Identifiers: []model.AdaptedIdentifier{ident},
+			NameRu:      nameRu,
+			NameEn:      nameEn,
+			AdminLevel:  &admin,
+			Level:       level,
+			ParentCode:  parentCode,
+			Source:      source,
+			Raw:         raw,
+		}
+		if lvl, ok := model.LevelForAdminLevel(admin); ok {
+			_ = lvl
+		}
+		out = append(out, rec)
+		parentCode = a.Name
+		_ = i
+	}
+	term, _ := MatchToAdapted(m, source)
+	out = append(out, term)
+	return out
+}
+
 func deref(s *string) string {
 	if s == nil {
 		return ""

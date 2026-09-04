@@ -1,3 +1,5 @@
+// Deprecated: логика импорта реестра Минтранса — должна жить в internal/providers/intercity,
+// а не в store. Файл оставлен для неразрушающей совместимости, будет перенесён в фазе 2.
 package store
 
 import (

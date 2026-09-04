@@ -5,9 +5,9 @@ import (
 	"sort"
 	"time"
 
-	"travelmcp/internal/support/classifier"
 	"travelmcp/internal/geo"
 	"travelmcp/internal/model"
+	"travelmcp/internal/support/classifier"
 )
 
 const SynthID = "synth"

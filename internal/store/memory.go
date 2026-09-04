@@ -9,10 +9,11 @@ import (
 	"sync"
 	"time"
 
-	"travelmcp/internal/support/classifier"
 	"travelmcp/internal/model"
+	"travelmcp/internal/support/classifier"
 )
 
+// Deprecated: MemoryStore для unit-тестов, не для продакшена. Используйте PostgresStore.
 type MemoryStore struct {
 	mu           sync.RWMutex
 	cities       map[int64]CityRow
@@ -365,6 +366,22 @@ func (m *MemoryStore) UpsertTransfer(ctx context.Context, tr TransferRow) error 
 	m.transfers = append(m.transfers, tr)
 	m.mu.Unlock()
 	return nil
+}
+func (m *MemoryStore) UpsertPlace(ctx context.Context, r PlaceRow, names map[string]string) (int64, error) {
+	return 0, fmt.Errorf("memory store: UpsertPlace not implemented")
+}
+func (m *MemoryStore) UpsertTerminal(ctx context.Context, r TerminalRow, names map[string]string, identifiers []model.AdaptedIdentifier) (int64, error) {
+	return 0, fmt.Errorf("memory store: UpsertTerminal not implemented")
+}
+func (m *MemoryStore) SaveProvenance(ctx context.Context, p model.Provenance) error { return nil }
+func (m *MemoryStore) SaveReviewQueue(ctx context.Context, e model.ReviewQueueEntry) error {
+	return nil
+}
+func (m *MemoryStore) GetPlaceCity(ctx context.Context, placeID int64) (int64, string, error) {
+	return 0, "", fmt.Errorf("memory store: GetPlaceCity not implemented")
+}
+func (m *MemoryStore) ImportAdaptedRecords(ctx context.Context, records []model.AdaptedRecord) (int, int, error) {
+	return 0, 0, fmt.Errorf("memory store: ImportAdaptedRecords not implemented")
 }
 
 func (m *MemoryStore) LoadNetwork(ctx context.Context, providers []string, day time.Time) (*model.Network, error) {

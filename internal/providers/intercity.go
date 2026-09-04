@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"travelmcp/internal/support/timeutil"
-	"travelmcp/internal/support/classifier"
 	"travelmcp/internal/geo"
 	"travelmcp/internal/model"
+	"travelmcp/internal/support/classifier"
+	"travelmcp/internal/support/timeutil"
 )
 
 const IntercityID = "intercity"

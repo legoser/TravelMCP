@@ -84,6 +84,16 @@ geocoder:
 nominatim:
   url: "https://nominatim.openstreetmap.org"
 
+verification:
+  confidence_threshold: 0.6
+  distance_m: 500
+  strong_distance_m: 200
+  lev_threshold: 0.15
+  density_thresholds:
+    rural: { distance_m: 500, strong_distance_m: 200, lev_threshold: 0.15 }
+    urban: { distance_m: 200, strong_distance_m: 100, lev_threshold: 0.10 }
+    metro: { distance_m: 100, strong_distance_m: 50, lev_threshold: 0.10 }
+
 # Секреты — только через env (или .env, gitignored); в YAML не заполняются.
 yandex:
   rasp_key: "${YANDEX_RASP_KEY}"

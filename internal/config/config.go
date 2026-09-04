@@ -130,6 +130,21 @@ type Planner struct {
 	SemaphoreEnable bool   `yaml:"semaphore_enable"`
 }
 
+type Verification struct {
+	ConfidenceThreshold float64                     `yaml:"confidence_threshold"`
+	DistanceM           int                         `yaml:"distance_m"`
+	StrongDistanceM     int                         `yaml:"strong_distance_m"`
+	LevThreshold        float64                     `yaml:"lev_threshold"`
+	DensityThresholds   map[string]DensityThreshold `yaml:"density_thresholds"`
+}
+
+type DensityThreshold struct {
+	DistanceM           *int     `yaml:"distance_m"`
+	StrongDistanceM     *int     `yaml:"strong_distance_m"`
+	LevThreshold        *float64 `yaml:"lev_threshold"`
+	ConfidenceThreshold *float64 `yaml:"confidence_threshold"`
+}
+
 type Log struct {
 	Level     string            `yaml:"level"`
 	Format    string            `yaml:"format"`
@@ -142,21 +157,22 @@ type Telemetry struct {
 }
 
 type Config struct {
-	HTTP      HTTP      `yaml:"http"`
-	Store     Store     `yaml:"store"`
-	Cache     Cache     `yaml:"cache"`
-	Queue     Queue     `yaml:"queue"`
-	Database  Database  `yaml:"database"`
-	Providers Providers `yaml:"providers"`
-	Cities    Cities    `yaml:"cities"`
-	Auth      Auth      `yaml:"auth"`
-	Geocoder  Geocoder  `yaml:"geocoder"`
-	Yandex    Yandex    `yaml:"yandex"`
-	Nominatim Nominatim `yaml:"nominatim"`
-	Motis     Motis     `yaml:"motis"`
-	Planner   Planner   `yaml:"planner"`
-	Log       Log       `yaml:"log"`
-	Telemetry Telemetry `yaml:"telemetry"`
+	HTTP         HTTP         `yaml:"http"`
+	Store        Store        `yaml:"store"`
+	Cache        Cache        `yaml:"cache"`
+	Queue        Queue        `yaml:"queue"`
+	Database     Database     `yaml:"database"`
+	Providers    Providers    `yaml:"providers"`
+	Cities       Cities       `yaml:"cities"`
+	Auth         Auth         `yaml:"auth"`
+	Geocoder     Geocoder     `yaml:"geocoder"`
+	Yandex       Yandex       `yaml:"yandex"`
+	Nominatim    Nominatim    `yaml:"nominatim"`
+	Motis        Motis        `yaml:"motis"`
+	Planner      Planner      `yaml:"planner"`
+	Log          Log          `yaml:"log"`
+	Telemetry    Telemetry    `yaml:"telemetry"`
+	Verification Verification `yaml:"verification"`
 }
 
 func Defaults() *Config {
@@ -184,6 +200,13 @@ func Defaults() *Config {
 		Motis:     Motis{URL: "http://192.168.57.14:8077"},
 		Planner:   Planner{Engine: "csa", SemaphoreSize: runtime.NumCPU() * 2, SemaphoreEnable: true},
 		Log:       Log{Level: "info", Format: "json", Levels: map[string]string{}},
+		Verification: Verification{
+			ConfidenceThreshold: 0.6,
+			DistanceM:           500,
+			StrongDistanceM:     200,
+			LevThreshold:        0.15,
+			DensityThresholds:   map[string]DensityThreshold{},
+		},
 	}
 }
 
@@ -245,6 +268,21 @@ func syncLegacy(cfg *Config) {
 	}
 	if cfg.Cities.Path == "" {
 		cfg.Cities.Path = "configs/cities.yaml"
+	}
+	if cfg.Verification.ConfidenceThreshold == 0 {
+		cfg.Verification.ConfidenceThreshold = 0.6
+	}
+	if cfg.Verification.DistanceM == 0 {
+		cfg.Verification.DistanceM = 500
+	}
+	if cfg.Verification.StrongDistanceM == 0 {
+		cfg.Verification.StrongDistanceM = 200
+	}
+	if cfg.Verification.LevThreshold == 0 {
+		cfg.Verification.LevThreshold = 0.15
+	}
+	if cfg.Verification.DensityThresholds == nil {
+		cfg.Verification.DensityThresholds = map[string]DensityThreshold{}
 	}
 }
 
@@ -350,6 +388,26 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("MOTIS_BASE"); v != "" {
 		cfg.Motis.URL = v
+	}
+	if v := os.Getenv("VERIFICATION_CONFIDENCE_THRESHOLD"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			cfg.Verification.ConfidenceThreshold = f
+		}
+	}
+	if v := os.Getenv("VERIFICATION_DISTANCE_M"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Verification.DistanceM = n
+		}
+	}
+	if v := os.Getenv("VERIFICATION_STRONG_DISTANCE_M"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Verification.StrongDistanceM = n
+		}
+	}
+	if v := os.Getenv("VERIFICATION_LEV_THRESHOLD"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			cfg.Verification.LevThreshold = f
+		}
 	}
 }
 
@@ -476,6 +534,27 @@ func setByPath(cfg *Config, parts []string, v string) {
 	case "motis":
 		if len(parts) == 2 && (parts[1] == "url" || parts[1] == "base_url") {
 			cfg.Motis.URL = v
+		}
+	case "verification":
+		if len(parts) == 2 && parts[1] == "confidence_threshold" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				cfg.Verification.ConfidenceThreshold = f
+			}
+		}
+		if len(parts) == 2 && parts[1] == "distance_m" {
+			if n, err := strconv.Atoi(v); err == nil {
+				cfg.Verification.DistanceM = n
+			}
+		}
+		if len(parts) == 2 && parts[1] == "strong_distance_m" {
+			if n, err := strconv.Atoi(v); err == nil {
+				cfg.Verification.StrongDistanceM = n
+			}
+		}
+		if len(parts) == 2 && parts[1] == "lev_threshold" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				cfg.Verification.LevThreshold = f
+			}
 		}
 	}
 }

@@ -9,8 +9,8 @@ import (
 	"sort"
 	"time"
 
-	"travelmcp/internal/support/classifier"
 	"travelmcp/internal/model"
+	"travelmcp/internal/support/classifier"
 )
 
 const ProviderID = "gtfs"
