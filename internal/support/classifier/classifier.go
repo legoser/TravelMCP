@@ -30,23 +30,8 @@ type RuClassifier struct {
 }
 
 func (RuClassifier) Classify(name string, tags map[string]string) model.StopType {
-	lower := strings.ToLower(name)
-	if strings.Contains(lower, "аэропорт") {
-		return model.StopTypeAirport
-	}
-	for _, t := range strings.Fields(lower) {
-		if t == "ав" || t == "авт" || t == "а/в" || strings.Contains(t, "автовокзал") || strings.Contains(t, "автостанция") {
-			return model.StopTypeHub
-		}
-	}
-	if strings.Contains(lower, "автовокзал") || strings.Contains(lower, "автостанция") {
-		return model.StopTypeHub
-	}
-	if model.IsVillageName(name) {
-		return model.StopTypePlatform
-	}
-	if strings.Contains(lower, "вокзал") {
-		return model.StopTypeStation
+	if inferred := model.InferStopType(name); inferred != model.StopTypeStation {
+		return inferred
 	}
 	return DefaultClassifier{}.Classify(name, tags)
 }

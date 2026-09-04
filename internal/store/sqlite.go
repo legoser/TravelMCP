@@ -12,7 +12,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"travelmcp/internal/classifier"
+	"travelmcp/internal/support/classifier"
 	"travelmcp/internal/model"
 )
 

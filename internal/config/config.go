@@ -58,6 +58,10 @@ type Cities struct {
 	Path string `yaml:"path"`
 }
 
+type Motis struct {
+	URL string `yaml:"url"`
+}
+
 type Providers struct {
 	Enabled   []string  `yaml:"enabled"`
 	Intercity Intercity `yaml:"intercity"`
@@ -149,6 +153,7 @@ type Config struct {
 	Geocoder  Geocoder  `yaml:"geocoder"`
 	Yandex    Yandex    `yaml:"yandex"`
 	Nominatim Nominatim `yaml:"nominatim"`
+	Motis     Motis     `yaml:"motis"`
 	Planner   Planner   `yaml:"planner"`
 	Log       Log       `yaml:"log"`
 	Telemetry Telemetry `yaml:"telemetry"`
@@ -176,6 +181,7 @@ func Defaults() *Config {
 		Geocoder:  Geocoder{Kind: "", URL: "", Key: "", Attempts: 3},
 		Yandex:    Yandex{GeocodeURL: "https://geocode-maps.yandex.ru/1.x", GeocodeKind: ""},
 		Nominatim: Nominatim{URL: "https://nominatim.openstreetmap.org"},
+		Motis:     Motis{URL: "http://192.168.57.14:8077"},
 		Planner:   Planner{Engine: "csa", SemaphoreSize: runtime.NumCPU() * 2, SemaphoreEnable: true},
 		Log:       Log{Level: "info", Format: "json", Levels: map[string]string{}},
 	}
@@ -339,6 +345,12 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("CITIES_DATA_PATH"); v != "" {
 		cfg.Cities.Path = v
 	}
+	if v := os.Getenv("MOTIS_URL"); v != "" {
+		cfg.Motis.URL = v
+	}
+	if v := os.Getenv("MOTIS_BASE"); v != "" {
+		cfg.Motis.URL = v
+	}
 }
 
 func applyPrefixedEnv(cfg *Config) {
@@ -460,6 +472,10 @@ func setByPath(cfg *Config, parts []string, v string) {
 	case "cities":
 		if len(parts) == 2 && parts[1] == "path" {
 			cfg.Cities.Path = v
+		}
+	case "motis":
+		if len(parts) == 2 && (parts[1] == "url" || parts[1] == "base_url") {
+			cfg.Motis.URL = v
 		}
 	}
 }

@@ -9,7 +9,7 @@ import (
 	"sort"
 	"time"
 
-	"travelmcp/internal/classifier"
+	"travelmcp/internal/support/classifier"
 	"travelmcp/internal/model"
 )
 

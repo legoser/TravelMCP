@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"travelmcp/internal/adapters/timeutil"
-	"travelmcp/internal/classifier"
+	"travelmcp/internal/support/timeutil"
+	"travelmcp/internal/support/classifier"
 	"travelmcp/internal/geo"
 	"travelmcp/internal/model"
 )
