@@ -95,7 +95,30 @@
 - **Скрейпинг (парсинг страниц)** — хрупкость: селекторы «ломаются за ночь»; антибот-защита; неопределённость по условия сайтов; риск «200 OK с неверными данными». Поэтому: точечно, модульно, с валидацией данных и метриками здоровья.
 - **152-ФЗ** — закон о персональных данных; учитывается при работе с учётными записями пользователей и логированием.
 
-## H. Доменные термины «для пользователя проекта»
+## H. Иерархия мест и верификация
+
+* **places.level** — каноническая глубина иерархии (0..5), денормализация `admin_level` для быстрых фильтров. Единственная шкала (см. `14-plan.md:3.2`):
+
+| level | admin_level | смысл | пример |
+|---|---|---|---|
+| 0 | 2 | страна | РФ |
+| 1 | 3 | федеральный округ | Сибирский ФО |
+| 2 | 4 | регион | Кемеровская область |
+| 3 | 6 | район / городской округ | Кемеровский ГО |
+| 4 | 8 | город / населённый пункт | Кемерово |
+| 5 | 9–10 | район города | Центральный район |
+
+Запрос города терминала: `JOIN places p ON p.id = pc.ancestor_id WHERE pc.descendant_id=:place_id AND p.level=4`.
+
+* **place_closure** — closure table + adjacency list (`parent_id DEFERRABLE INITIALLY DEFERRED` + `ancestor/descendant/depth`). `PK(ancestor,descendant)` покрывает «все потомки X»; индекс `idx_place_closure_descendant(descendant_id)` покрывает hot-path «все предки Y». Консистентность триггером `trg_places_closure_sync` (`SECURITY DEFINER` + bulk `DISABLE TRIGGER → rebuild_closure_all()`) + ночной сверкой.
+* **Независимые источники верификации** — `A=OSM/MOTIS` считается одним источником; независимыми являются `B=Минтранс`, `C=Яндекс`, `D=Nominatim/OpenAddresses`. `confidence ≥0.6` (`<500м`+`lev<0.15`; сильный одиночный `B`/`C` с `<200м`+`lev==0` уже `0.6`) → verified, иначе `review_queue` (калибруется до Фазы 1, см. `14-plan.md:3.8`).
+* **AdaptedRecord** — единый промежуточный формат коннекторов перед верификацией (`kind, identifiers, names_ru/en, geom, validity, source, raw`).
+* **Provider vs Carrier** — `providers` = источник данных (`mintrans`/`yandex`/`gtfs`/`osm`/`google` — для `provenance`/`terminal_identifiers.system`), `carriers` = реальный перевозчик (юрлицо с `INN` — для `routes.carrier_id NOT NULL → agency.txt`). Дедуп: `UNIQUE INDEX ... WHERE inn IS NOT NULL` + `carrier_identifiers(carrier_id,system,code)` для случаев без `INN`; `routes.carrier_id=0` placeholder «Неизвестный перевозчик» — GTFS-совместимость, но компилятор по умолчанию исключает такие routes из `gtfs.zip` (в `review_queue` до верификации). Разведены, `provider ≠ carrier`.
+* **Мульти-агентный GTFS** — один `gtfs.zip` содержит N `agency` из `carriers` (`agency_id = carriers.id`), без префикса `provider:`; `stop_id/route_id/trip_id` — канонические `BIGSERIAL` PK (глобально уникальны), `feed_info.feed_version` стабилен (`never reuse ID`). Все внешние фиды проходят реконсиляцию в канон, pass-through запрещён. Пороги верификации пилота не переносятся в Фазу 6 без ре-калибровки на плотной городской сети.
+* **Резерв Яндекса — Google** — MobilityDatabase open GTFS (без квот) — основной резерв; Google Maps Platform Routes `travelMode=TRANSIT` (`3000 QPM`, `10k free`, `$5–10/1k`, ToS 30д хранение) — только аварийный fallback, не канон (см. `14-plan.md:1`).
+* **SCD2 / last_verified_at / партиционирование** — `valid_from/valid_to` на `places/terminals/routes`, `last_verified_at` для свежести, `PARTITION BY RANGE` ключи выбраны в Фазе 1 (отложены до Фазы 6), см. `14-plan.md:3.9`.
+
+## I. Доменные термины «для пользователя проекта»
 
 - **Цифровизованное сообщение** — наличие машиночитаемых расписаний для населённого пункта/направления.
 - **Ответственность пользователя за участок (self-leg)** — сегмент маршрута, который нужно преодолеть самостоятельно (пешком/вело/такси/авто); помечается в маршруте явно.

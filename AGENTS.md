@@ -10,8 +10,8 @@
 перемещений (автобус/трамвай/поезд/самолёт + пешие подходы) через ядро
 CSA-планировщика по канонической сети провайдеров данных.
 
-Полное описание — `docs/01-description.md`, целевая архитектура —
-`docs/03-architecture.md`, фактическая структура — `docs/06-structure.md`.
+Миссия — `docs/13-mission.md`, план и структура БД — `docs/14-plan.md`, MOTIS API — `docs/12-motis-api.md`.
+Исторические `docs/01-description.md` / `docs/03-architecture.md` / `docs/05-roadmap.md` / `docs/07-first-provider-plan.md` — архив (см. `13`/`14`).
 
 ## Технологии и среда
 
@@ -21,8 +21,7 @@ CSA-планировщика по канонической сети провай
   `initialize`/сессий (включается `WithStateLess`), вместо сессий —
   API-ключ в запросе.
 - `gopkg.in/yaml.v3` — конфигурация.
-- PostgreSQL + PostGIS — зарезервированы (`docker-compose.yml`), в коде
-  каркаса **не используются**.
+- PostgreSQL + PostGIS — прод-стор (`docs/14-plan.md:3`), `PostGIS` для `places/terminals` гео.
 - Внешние платные API не используются (только открытые источники). Продакшн-
   источников по умолчанию нет (пустой `PROVIDERS_ENABLED`); синтетический
   `synth` — мок-сеть **только** для тестов/демо, включается явно через
@@ -106,7 +105,7 @@ python3 scripts/extract-minstran.py --in data/raw/minstran/reestr.xlsx \
   -out ../../data/osm/stations.json)  # PBF → JSON гео-меток
 ```
 
-Обязательная проверка после изменений: `gofmt` + `go vet ./...` + `make test`.
+Обязательная проверка после изменений если это программный код, аначе пропустить: `gofmt` + `go vet ./...` + `make test`.
 
 ## Референс мок-данных (synth, только для тестов/демо)
 
@@ -138,10 +137,8 @@ python3 scripts/extract-minstran.py --in data/raw/minstran/reestr.xlsx \
 
 ## Документация
 
-- `docs/01-description.md` — цель, сценарии, принципы, границы.
-- `docs/02-glossary.md` — термины и технологии.
-- `docs/03-architecture.md` — целевая компонентная архитектура.
-- `docs/04-data-sources.md` — источники данных.
-- `docs/05-roadmap.md` — дорожная карта.
-- `docs/06-structure.md` — структура репозитория и связи (актуальный каркас).
-- `docs/07-first-provider-plan.md` — рабочий план провайдера междугородних автобусов (этапы 0–3).
+- `docs/13-mission.md` — миссия (полноценная БД, один `gtfs.zip`).
+- `docs/14-plan.md` — план, структура БД и связи.
+- `docs/12-motis-api.md` — MOTIS API (`v6` + кириллица `urlencode`).
+- `docs/02-glossary.md` — термины.
+- `docs/01/03/05/06/07` — архив до `13/14`.
