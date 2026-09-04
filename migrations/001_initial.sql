@@ -1,5 +1,6 @@
--- 001_phase1_places_terminals.sql — Фаза 1 (§3.1-3.3, §3.8-3.9)
--- Postgres + PostGIS, компилируется для prod. SQLite-версия — в internal/store/sqlite.go:Migrate
+-- 001_initial.sql — единая миграция для первой загрузки (Фазы 1-2)
+-- Чистая модель без ALTER, соответствует docs/14-plan.md §3
+-- PostGIS + pg_trgm + unaccent
 
 CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE EXTENSION IF NOT EXISTS unaccent;
@@ -34,9 +35,16 @@ CREATE TABLE IF NOT EXISTS carriers (
   id bigserial PRIMARY KEY,
   inn text,
   name_ru text NOT NULL,
-  name_en text
+  name_en text,
+  provider_id text,
+  code text,
+  address text,
+  iata text,
+  icao text,
+  sirena text
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_carriers_inn ON carriers(inn) WHERE inn IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_carriers_provider_code ON carriers(provider_id, code) WHERE provider_id IS NOT NULL AND code IS NOT NULL;
 INSERT INTO carriers(id, inn, name_ru) VALUES (0, NULL, 'Неизвестный перевозчик') ON CONFLICT DO NOTHING;
 SELECT setval('carriers_id_seq', (SELECT GREATEST(MAX(id),0)+1 FROM carriers), false);
 
@@ -83,11 +91,8 @@ CREATE TABLE IF NOT EXISTS place_names (
   PRIMARY KEY (place_id, lang)
 );
 CREATE INDEX IF NOT EXISTS idx_place_names_normalized ON place_names USING gin (normalized gin_trgm_ops);
--- GiST geom already indexed via geography; add bbox gist if needed
--- CREATE INDEX IF NOT EXISTS idx_places_geom ON places USING gist(geom);
--- CREATE INDEX IF NOT EXISTS idx_places_bbox ON places USING gist(bbox);
 
--- 3.3 терминалы и остановки
+-- 3.3 терминалы и остановки (канон)
 CREATE TABLE IF NOT EXISTS terminals (
   id bigserial PRIMARY KEY,
   place_id bigint REFERENCES places(id) ON DELETE SET NULL,
@@ -166,13 +171,203 @@ CREATE TABLE IF NOT EXISTS review_queue (
   PRIMARY KEY (entity_type, entity_id)
 );
 
+-- Legacy группировки для импорта Минтранса (совместимо с sqlite, но как чистые таблицы первой загрузки)
+CREATE TABLE IF NOT EXISTS cities (
+  id bigserial PRIMARY KEY,
+  name text NOT NULL,
+  region_code text NOT NULL DEFAULT '',
+  lat double precision NOT NULL,
+  lon double precision NOT NULL,
+  timezone text,
+  population int,
+  kind text,
+  source text,
+  UNIQUE(name, region_code)
+);
+CREATE INDEX IF NOT EXISTS idx_cities_name_region ON cities(name, region_code);
+
+CREATE TABLE IF NOT EXISTS stations (
+  id bigserial PRIMARY KEY,
+  name text NOT NULL,
+  lat double precision NOT NULL DEFAULT 0,
+  lon double precision NOT NULL DEFAULT 0,
+  geo_cell bigint,
+  region_code text NOT NULL DEFAULT '',
+  timezone text,
+  quality_flags int,
+  primary_provider text,
+  city_id bigint REFERENCES cities(id) ON DELETE SET NULL,
+  UNIQUE(name, region_code)
+);
+CREATE INDEX IF NOT EXISTS idx_stations_name_region ON stations(name, region_code);
+CREATE INDEX IF NOT EXISTS idx_station_geo ON stations(geo_cell);
+CREATE INDEX IF NOT EXISTS idx_stations_city ON stations(city_id);
+
+CREATE TABLE IF NOT EXISTS station_codes (
+  station_id bigint NOT NULL REFERENCES stations(id) ON DELETE CASCADE,
+  provider_id text,
+  code_type text,
+  code text,
+  name_form text,
+  address text,
+  PRIMARY KEY(station_id, provider_id, code_type)
+);
+
+CREATE TABLE IF NOT EXISTS stops (
+  id bigserial PRIMARY KEY,
+  station_id bigint NOT NULL REFERENCES stations(id) ON DELETE CASCADE,
+  provider_id text NOT NULL,
+  external_code text NOT NULL,
+  stop_type text,
+  transport_type text,
+  name text,
+  raw_name text,
+  UNIQUE(provider_id, external_code)
+);
+CREATE INDEX IF NOT EXISTS idx_stops_station ON stops(station_id);
+
+-- 3.4 расписания
+CREATE TABLE IF NOT EXISTS routes (
+  id bigserial PRIMARY KEY,
+  provider_id text NOT NULL,
+  carrier_id bigint REFERENCES carriers(id) ON DELETE SET NULL,
+  external_code text NOT NULL,
+  short_name text,
+  long_name text,
+  mode text REFERENCES transport_modes(mode),
+  external_uid text,
+  ord int,
+  source_provider text REFERENCES providers(code),
+  valid_from date NOT NULL DEFAULT CURRENT_DATE,
+  valid_to date,
+  last_verified_at timestamptz,
+  UNIQUE(provider_id, external_code)
+);
+CREATE INDEX IF NOT EXISTS idx_routes_external ON routes(external_code);
+CREATE INDEX IF NOT EXISTS idx_routes_carrier ON routes(carrier_id);
+
+CREATE TABLE IF NOT EXISTS services (
+  id int PRIMARY KEY,
+  provider_id text NOT NULL REFERENCES providers(code),
+  name text,
+  start_date text,
+  end_date text
+);
+CREATE INDEX IF NOT EXISTS idx_services_provider ON services(provider_id);
+
+CREATE TABLE IF NOT EXISTS service_days (
+  service_id int NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  weekday int CHECK(weekday >=0 AND weekday <=6),
+  PRIMARY KEY(service_id, weekday)
+);
+
+CREATE TABLE IF NOT EXISTS service_exceptions (
+  service_id int NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  date text,
+  exception_type text CHECK(exception_type IN ('added','removed')),
+  PRIMARY KEY(service_id, date)
+);
+
+CREATE TABLE IF NOT EXISTS trips (
+  id bigserial PRIMARY KEY,
+  route_id bigint NOT NULL REFERENCES routes(id) ON DELETE CASCADE,
+  provider_id text NOT NULL,
+  direction text,
+  service_days text,
+  frequency_flag int,
+  period text,
+  service_id int REFERENCES services(id) ON DELETE SET NULL,
+  headsign_ru text,
+  headsign_en text
+);
+CREATE INDEX IF NOT EXISTS idx_trips_route ON trips(route_id);
+CREATE INDEX IF NOT EXISTS idx_trips_service ON trips(service_id);
+
+CREATE TABLE IF NOT EXISTS stop_times (
+  trip_id bigint NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+  stop_id bigint NOT NULL REFERENCES stops(id) ON DELETE CASCADE,
+  seq int,
+  arrival int,
+  departure int,
+  pickup_type smallint DEFAULT 0 CHECK(pickup_type IN (0,1,2,3)),
+  drop_off_type smallint DEFAULT 0 CHECK(drop_off_type IN (0,1,2,3)),
+  dwell int,
+  PRIMARY KEY(trip_id, stop_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_stop_times_trip ON stop_times(trip_id, seq);
+CREATE INDEX IF NOT EXISTS idx_stop_times_stop_departure ON stop_times(stop_id, departure);
+
+CREATE TABLE IF NOT EXISTS transfers (
+  from_stop_id bigint NOT NULL REFERENCES stops(id) ON DELETE CASCADE,
+  to_stop_id bigint NOT NULL REFERENCES stops(id) ON DELETE CASCADE,
+  minutes int,
+  min_transfer_time int,
+  distance_m int,
+  within_station int,
+  type text,
+  PRIMARY KEY(from_stop_id, to_stop_id)
+);
+CREATE INDEX IF NOT EXISTS idx_transfers_from ON transfers(from_stop_id);
+CREATE INDEX IF NOT EXISTS idx_transfers_to ON transfers(to_stop_id);
+
+CREATE TABLE IF NOT EXISTS frequencies (
+  trip_id bigint NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+  start_time int,
+  end_time int,
+  headway_secs int,
+  exact_times int DEFAULT 0,
+  PRIMARY KEY(trip_id, start_time)
+);
+
+-- качество, импорты, пользователи
+CREATE TABLE IF NOT EXISTS quality_issues (
+  id bigserial PRIMARY KEY,
+  provider_id text,
+  entity text,
+  entity_id text,
+  level text,
+  code text,
+  msg text,
+  at bigint
+);
+CREATE INDEX IF NOT EXISTS idx_quality_provider_code ON quality_issues(provider_id, code);
+
+CREATE TABLE IF NOT EXISTS imports (
+  provider_id text PRIMARY KEY,
+  at bigint,
+  records int,
+  status text,
+  snapshot text,
+  checksum text,
+  issues int
+);
+
+CREATE TABLE IF NOT EXISTS users (
+  id bigserial PRIMARY KEY,
+  email text UNIQUE,
+  pass_hash text,
+  status text,
+  role text,
+  created_at bigint,
+  config text
+);
+
+CREATE TABLE IF NOT EXISTS api_keys (
+  id bigserial PRIMARY KEY,
+  user_id bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  key text UNIQUE,
+  scopes text,
+  created_at bigint,
+  last_used bigint
+);
+CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
+
 -- триггеры §3.2 closure
 CREATE OR REPLACE FUNCTION fn_rebuild_closure_subtree(p_root bigint) RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
   r record;
 BEGIN
   DELETE FROM place_closure WHERE descendant_id IN (SELECT descendant_id FROM place_closure WHERE ancestor_id = p_root);
-  -- рекурсивно собрать поддерево
   WITH RECURSIVE subtree(id, depth) AS (
     SELECT p_root, 0
     UNION ALL
@@ -188,7 +383,6 @@ BEGIN
   INSERT INTO place_closure(ancestor_id, descendant_id, depth)
   SELECT ancestor_id, descendant_id, depth FROM ancestors
   ON CONFLICT DO NOTHING;
-  -- fallback полный rebuild если пусто
   IF NOT EXISTS (SELECT 1 FROM place_closure WHERE descendant_id = p_root) THEN
     WITH RECURSIVE chain(id, ancestor_id, depth) AS (
       SELECT p_root, p_root, 0
@@ -211,7 +405,6 @@ BEGIN
   )
   INSERT INTO place_closure(ancestor_id, descendant_id, depth)
   SELECT ancestor_id, id, depth FROM tree;
-  -- добавить транзитивные через WITH RECURSIVE если выше не покрыло
 END; $$;
 
 CREATE OR REPLACE FUNCTION fn_sync_closure_trigger() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -236,7 +429,6 @@ CREATE TRIGGER trg_places_closure_sync
 AFTER INSERT OR UPDATE OF parent_id OR DELETE ON places
 FOR EACH ROW EXECUTE FUNCTION fn_sync_closure_trigger();
 
--- trigger osm_compatible_name §3.3
 CREATE OR REPLACE FUNCTION fn_sync_osm_name() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF TG_OP = 'DELETE' THEN
@@ -259,7 +451,6 @@ CREATE TRIGGER trg_sync_osm_name
 AFTER INSERT OR UPDATE OF name OR DELETE ON terminal_names
 FOR EACH ROW EXECUTE FUNCTION fn_sync_osm_name();
 
--- проверка консистентности closure vs parent_id
 CREATE OR REPLACE FUNCTION verify_closure_consistency() RETURNS TABLE(descendant_id bigint, expected_ancestors bigint[], actual_ancestors bigint[]) LANGUAGE sql AS $$
   WITH RECURSIVE expected(descendant_id, ancestor_id, depth) AS (
     SELECT id, id, 0 FROM places
@@ -272,7 +463,6 @@ CREATE OR REPLACE FUNCTION verify_closure_consistency() RETURNS TABLE(descendant
   GROUP BY e.descendant_id HAVING count(*) FILTER (WHERE pc.ancestor_id IS NULL) >0 OR count(*) FILTER (WHERE e.ancestor_id IS NULL)>0;
 $$;
 
--- provenance orphan check trigger
 CREATE OR REPLACE FUNCTION trg_provenance_no_orphan() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF NEW.entity_type='place' AND NOT EXISTS (SELECT 1 FROM places WHERE id=NEW.entity_id) THEN RAISE EXCEPTION 'provenance orphan place %', NEW.entity_id; END IF;
