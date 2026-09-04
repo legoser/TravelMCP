@@ -272,6 +272,54 @@ func (m *MemoryStore) ClearQualityIssues(ctx context.Context, providerID string)
 	m.quality = filtered
 	return nil
 }
+func (m *MemoryStore) ClearProviderData(ctx context.Context, providerID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for k, v := range m.stops {
+		if v.ProviderID == providerID {
+			delete(m.stops, k)
+		}
+	}
+	for k, v := range m.routes {
+		if v.ProviderID == providerID {
+			delete(m.routes, k)
+		}
+	}
+	for k, v := range m.carriers {
+		if v.ProviderID == providerID {
+			delete(m.carriers, k)
+		}
+	}
+	for k, v := range m.trips {
+		if v.ProviderID == providerID {
+			delete(m.trips, k)
+		}
+	}
+	filterST := m.stopTimes[:0]
+	for _, st := range m.stopTimes {
+		if trip, ok := m.trips[st.TripID]; ok && trip.ProviderID == providerID {
+			continue
+		}
+		filterST = append(filterST, st)
+	}
+	m.stopTimes = filterST
+	filterTr := m.transfers[:0]
+	for _, tr := range m.transfers {
+		from, ok1 := m.stops[tr.FromStopID]
+		to, ok2 := m.stops[tr.ToStopID]
+		if (ok1 && from.ProviderID == providerID) || (ok2 && to.ProviderID == providerID) {
+			continue
+		}
+		filterTr = append(filterTr, tr)
+	}
+	m.transfers = filterTr
+	for k, v := range m.stations {
+		if v.PrimaryProvider == providerID {
+			delete(m.stations, k)
+		}
+	}
+	return nil
+}
 func (m *MemoryStore) UpsertService(ctx context.Context, s ServiceRow) error { return nil }
 func (m *MemoryStore) UpsertServiceDay(ctx context.Context, d ServiceDayRow) error {
 	return nil

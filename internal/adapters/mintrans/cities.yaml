@@ -1,0 +1,497 @@
+cities:
+  - name: болотное
+    lat: 55.6468
+    lon: 84.3594
+    source: osm
+  - name: прокопьевск
+    lat: 53.9061
+    lon: 86.745
+    source: osm
+  - name: рубцовск
+    lat: 51.5155
+    lon: 81.203
+    source: osm
+  - name: панкрушиха
+    lat: 53.8356
+    lon: 80.3481
+    source: osm
+  - name: хабары
+    lat: 53.6203
+    lon: 79.5354
+    source: osm
+  - name: березовка
+    lat: 53.4
+    lon: 83.99
+    source: osm
+  - name: топучая
+    lat: 51.13
+    lon: 85.59
+    source: osm
+  - name: хабаровка
+    lat: 50.68
+    lon: 86.29
+    source: osm
+  - name: камень-на-оби
+    lat: 53.7915
+    lon: 81.3546
+    source: yandex
+  - name: майма
+    lat: 52.0048
+    lon: 85.9021
+    source: yandex
+  - name: киселевск
+    lat: 54.0061
+    lon: 86.6367
+    source: yandex
+  - name: стрежевой
+    lat: 60.7329
+    lon: 77.604
+    source: yandex
+  - name: павловск
+    lat: 53.3135
+    lon: 82.9895
+    source: yandex
+  - name: топки
+    lat: 55.3416
+    lon: 86.061
+    source: osm
+  - name: турочак
+    lat: 52.2556
+    lon: 87.1153
+    source: osm
+  - name: туран
+    lat: 51.64
+    lon: 93.9
+    source: yandex
+  - name: майкоп
+    lat: 44.60667
+    lon: 40.10778
+    source: osm
+  - name: уфа
+    lat: 54.7352
+    lon: 55.9587
+    source: osm
+  - name: улан-удэ
+    lat: 51.8345
+    lon: 107.5846
+    source: osm
+  - name: горно-алтайск
+    lat: 51.9578
+    lon: 85.9617
+    source: osm
+  - name: махачкала
+    lat: 42.9849
+    lon: 47.5047
+    source: osm
+  - name: магас
+    lat: 43.1667
+    lon: 44.8167
+    source: osm
+  - name: нальчик
+    lat: 43.4853
+    lon: 43.6071
+    source: osm
+  - name: элиста
+    lat: 46.308
+    lon: 44.2704
+    source: osm
+  - name: черкесск
+    lat: 44.2233
+    lon: 42.0574
+    source: osm
+  - name: петрозаводск
+    lat: 61.785
+    lon: 34.3469
+    source: osm
+  - name: сыктывкар
+    lat: 61.6687
+    lon: 50.8353
+    source: osm
+  - name: йошкар-ола
+    lat: 56.6388
+    lon: 47.8908
+    source: osm
+  - name: саранск
+    lat: 54.1842
+    lon: 45.1817
+    source: osm
+  - name: якутск
+    lat: 62.0355
+    lon: 129.6755
+    source: osm
+  - name: владикавказ
+    lat: 43.0205
+    lon: 44.6819
+    source: osm
+  - name: казань
+    lat: 55.7887
+    lon: 49.1221
+    source: osm
+  - name: кызыл
+    lat: 51.7189
+    lon: 94.4378
+    source: osm
+  - name: ижевск
+    lat: 56.8526
+    lon: 53.2116
+    source: osm
+  - name: абакан
+    lat: 53.722
+    lon: 91.4432
+    source: osm
+  - name: грозный
+    lat: 43.3178
+    lon: 45.6982
+    source: osm
+  - name: чебоксары
+    lat: 56.1439
+    lon: 47.2489
+    source: osm
+  - name: барнаул
+    lat: 53.3481
+    lon: 83.7754
+    source: osm
+  - name: краснодар
+    lat: 45.0355
+    lon: 38.9753
+    source: osm
+  - name: красноярск
+    lat: 56.0158
+    lon: 92.8932
+    source: osm
+  - name: владивосток
+    lat: 43.1332
+    lon: 131.9113
+    source: osm
+  - name: ставрополь
+    lat: 45.0428
+    lon: 41.9734
+    source: osm
+  - name: хабаровск
+    lat: 48.4808
+    lon: 135.0777
+    source: osm
+  - name: благовещенск
+    lat: 50.2907
+    lon: 127.5272
+    source: osm
+  - name: архангельск
+    lat: 64.5401
+    lon: 40.5433
+    source: osm
+  - name: астрахань
+    lat: 46.3497
+    lon: 48.0408
+    source: osm
+  - name: белгород
+    lat: 50.5956
+    lon: 36.5873
+    source: osm
+  - name: брянск
+    lat: 53.2521
+    lon: 34.3717
+    source: osm
+  - name: владимир
+    lat: 56.129
+    lon: 40.4075
+    source: osm
+  - name: волгоград
+    lat: 48.708
+    lon: 44.5133
+    source: osm
+  - name: вологда
+    lat: 58.1939
+    lon: 39.6401
+    source: osm
+  - name: воронеж
+    lat: 51.6673
+    lon: 39.2003
+    source: osm
+  - name: иваново
+    lat: 57.0003
+    lon: 40.9737
+    source: osm
+  - name: иркутск
+    lat: 52.2869
+    lon: 104.2806
+    source: osm
+  - name: калининград
+    lat: 54.7104
+    lon: 20.4521
+    source: osm
+  - name: калуга
+    lat: 54.5072
+    lon: 36.2527
+    source: osm
+  - name: петропавловск-камчатский
+    lat: 53.0438
+    lon: 158.6453
+    source: osm
+  - name: кемерово
+    lat: 55.3552
+    lon: 86.0861
+    source: osm
+  - name: киров
+    lat: 58.6036
+    lon: 49.668
+    source: osm
+  - name: кострома
+    lat: 57.7666
+    lon: 40.9266
+    source: osm
+  - name: курган
+    lat: 55.4404
+    lon: 65.3411
+    source: osm
+  - name: курск
+    lat: 51.7303
+    lon: 36.193
+    source: osm
+  - name: гатчина
+    lat: 59.5653
+    lon: 30.1228
+    source: osm
+  - name: липецк
+    lat: 52.6088
+    lon: 39.599
+    source: osm
+  - name: магадан
+    lat: 59.5608
+    lon: 150.8006
+    source: osm
+  - name: красногорск
+    lat: 55.8207
+    lon: 37.3297
+    source: osm
+  - name: мурманск
+    lat: 68.9585
+    lon: 33.0827
+    source: osm
+  - name: нижний новгород
+    lat: 56.2965
+    lon: 43.9361
+    source: osm
+  - name: великий новгород
+    lat: 58.5215
+    lon: 31.2755
+    source: osm
+  - name: новосибирск
+    lat: 55.0084
+    lon: 82.9357
+    source: osm
+  - name: омск
+    lat: 54.9885
+    lon: 73.3242
+    source: osm
+  - name: оренбург
+    lat: 51.7682
+    lon: 55.097
+    source: osm
+  - name: орел
+    lat: 52.9672
+    lon: 36.0696
+    source: osm
+  - name: пенза
+    lat: 53.2006
+    lon: 45.0046
+    source: osm
+  - name: пермь
+    lat: 58.0104
+    lon: 56.2502
+    source: osm
+  - name: псков
+    lat: 57.8136
+    lon: 28.3496
+    source: osm
+  - name: ростов-на-дону
+    lat: 47.2225
+    lon: 39.7187
+    source: osm
+  - name: рязань
+    lat: 54.6269
+    lon: 39.6915
+    source: osm
+  - name: самара
+    lat: 53.2415
+    lon: 50.2212
+    source: osm
+  - name: саратов
+    lat: 51.5406
+    lon: 46.0087
+    source: osm
+  - name: южно-сахалинск
+    lat: 46.9581
+    lon: 142.743
+    source: osm
+  - name: екатеринбург
+    lat: 56.8389
+    lon: 60.6057
+    source: osm
+  - name: смоленск
+    lat: 54.7826
+    lon: 32.0453
+    source: osm
+  - name: тамбов
+    lat: 52.7212
+    lon: 41.4523
+    source: osm
+  - name: тверь
+    lat: 56.8587
+    lon: 35.9006
+    source: osm
+  - name: томск
+    lat: 56.4977
+    lon: 84.9744
+    source: osm
+  - name: тула
+    lat: 54.1931
+    lon: 37.6173
+    source: osm
+  - name: тюмень
+    lat: 57.1522
+    lon: 65.5272
+    source: osm
+  - name: ульяновск
+    lat: 54.3142
+    lon: 48.363
+    source: osm
+  - name: челябинск
+    lat: 55.16
+    lon: 61.4026
+    source: osm
+  - name: чита
+    lat: 52.0336
+    lon: 113.499
+    source: osm
+  - name: ярославль
+    lat: 57.6261
+    lon: 39.8845
+    source: osm
+  - name: москва
+    lat: 55.7558
+    lon: 37.6176
+    source: osm
+  - name: санкт-петербург
+    lat: 59.9343
+    lon: 30.3351
+    source: osm
+  - name: биробиджан
+    lat: 48.793
+    lon: 132.9291
+    source: osm
+  - name: симферополь
+    lat: 44.9572
+    lon: 34.1108
+    source: osm
+  - name: ханты-мансийск
+    lat: 61.0042
+    lon: 69.0357
+    source: osm
+  - name: анадырь
+    lat: 64.7342
+    lon: 177.5101
+    source: osm
+  - name: салехард
+    lat: 66.5299
+    lon: 66.6145
+    source: osm
+  - name: севастополь
+    lat: 44.6167
+    lon: 33.5254
+    source: osm
+  - name: нарьян-мар
+    lat: 67.638
+    lon: 53.0069
+    source: osm
+  - name: набережные челны
+    lat: 55.7027
+    lon: 52.3141
+    source: osm
+  - name: сочи
+    lat: 43.5855
+    lon: 39.7203
+    source: osm
+  - name: новороссийск
+    lat: 44.723
+    lon: 37.7687
+    source: osm
+  - name: пятигорск
+    lat: 44.0486
+    lon: 43.0594
+    source: osm
+  - name: новокузнецк
+    lat: 53.7557
+    lon: 87.1099
+    source: osm
+  - name: таганрог
+    lat: 47.2123
+    lon: 38.9353
+    source: osm
+  - name: тольятти
+    lat: 53.5303
+    lon: 49.3461
+    source: osm
+  - name: нижний тагил
+    lat: 57.919
+    lon: 60.0069
+    source: osm
+  - name: магнитогорск
+    lat: 53.4129
+    lon: 58.9791
+    source: osm
+  - name: сургут
+    lat: 61.254
+    lon: 73.3964
+    source: osm
+  - name: нижневартовск
+    lat: 60.9385
+    lon: 76.5585
+    source: osm
+  - name: волжский
+    lat: 48.7875
+    lon: 44.7695
+    source: osm
+  - name: балашиха
+    lat: 55.8094
+    lon: 37.9581
+    source: osm
+  - name: подольск
+    lat: 55.4231
+    lon: 37.5447
+    source: osm
+  - name: химки
+    lat: 55.8899
+    lon: 37.4453
+    source: osm
+  - name: сызрань
+    lat: 53.1605
+    lon: 48.4742
+    source: osm
+  - name: каменск-уральский
+    lat: 56.4145
+    lon: 61.917
+    source: osm
+  - name: златоуст
+    lat: 55.1713
+    lon: 59.6508
+    source: osm
+  - name: нефтеюганск
+    lat: 61.088
+    lon: 72.6037
+    source: osm
+  - name: березники
+    lat: 59.4101
+    lon: 56.8214
+    source: osm
+  - name: альметьевск
+    lat: 54.901
+    lon: 52.3045
+    source: osm
+  - name: волгодонск
+    lat: 47.5167
+    lon: 42.157
+    source: osm
+  - name: череповец
+    lat: 59.1343
+    lon: 37.9014
+    source: osm

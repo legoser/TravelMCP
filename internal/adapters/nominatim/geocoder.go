@@ -10,7 +10,7 @@ import (
 
 	"travelmcp/internal/config"
 	"travelmcp/internal/geocoder"
-	"travelmcp/internal/httpx"
+	"travelmcp/internal/support/httpx"
 )
 
 type Geocoder struct {

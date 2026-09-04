@@ -5,7 +5,7 @@ import (
 	"sync"
 
 	"travelmcp/internal/config"
-	"travelmcp/internal/httpx"
+	"travelmcp/internal/support/httpx"
 )
 
 var (

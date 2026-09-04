@@ -12,13 +12,14 @@ import (
 	"syscall"
 	"time"
 
+	"travelmcp/internal/adapters/mintrans"
 	"travelmcp/internal/config"
 	"travelmcp/internal/geocoder"
-	"travelmcp/internal/httpx"
 	"travelmcp/internal/logger"
 	"travelmcp/internal/providers"
 	"travelmcp/internal/server"
 	"travelmcp/internal/store"
+	"travelmcp/internal/support/httpx"
 	"travelmcp/internal/telemetry"
 
 	_ "travelmcp/internal/adapters/nominatim"
@@ -83,7 +84,7 @@ func main() {
 				if id == providers.IntercityID {
 					is := time.Now()
 					logger.Info("import started", "provider", id, "path", cfg.Providers.Intercity.ReestrPath)
-					if err := store.ImportIntercity(context.Background(), st, cfg.Providers.Intercity.ReestrPath, logger); err != nil {
+					if err := mintrans.ImportIntercity(context.Background(), st, cfg.Providers.Intercity.ReestrPath, logger); err != nil {
 						logger.Warn("import failed", "provider", id, "error", err, "elapsed_ms", time.Since(is).Milliseconds())
 					} else {
 						logger.Info("import completed", "provider", id, "path", cfg.Providers.Intercity.ReestrPath, "elapsed_ms", time.Since(is).Milliseconds())

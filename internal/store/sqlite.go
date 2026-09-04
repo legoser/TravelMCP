@@ -134,6 +134,20 @@ func (t *txStore) ClearQualityIssues(ctx context.Context, providerID string) err
 	_, err := t.tx.ExecContext(ctx, `DELETE FROM quality_issues WHERE provider_id=?`, providerID)
 	return err
 }
+func (t *txStore) ClearProviderData(ctx context.Context, providerID string) error {
+	_, _ = t.tx.ExecContext(ctx, `DELETE FROM stop_times WHERE trip_id IN (SELECT id FROM trips WHERE provider_id=?)`, providerID)
+	_, _ = t.tx.ExecContext(ctx, `DELETE FROM transfers WHERE from_stop_id IN (SELECT id FROM stops WHERE provider_id=?) OR to_stop_id IN (SELECT id FROM stops WHERE provider_id=?)`, providerID, providerID)
+	_, _ = t.tx.ExecContext(ctx, `DELETE FROM station_codes WHERE provider_id=?`, providerID)
+	_, _ = t.tx.ExecContext(ctx, `DELETE FROM stops WHERE provider_id=?`, providerID)
+	_, _ = t.tx.ExecContext(ctx, `DELETE FROM trips WHERE provider_id=?`, providerID)
+	_, _ = t.tx.ExecContext(ctx, `DELETE FROM routes WHERE provider_id=?`, providerID)
+	_, _ = t.tx.ExecContext(ctx, `DELETE FROM carriers WHERE provider_id=?`, providerID)
+	_, _ = t.tx.ExecContext(ctx, `DELETE FROM service_days WHERE service_id IN (SELECT id FROM services WHERE provider_id=?)`, providerID)
+	_, _ = t.tx.ExecContext(ctx, `DELETE FROM service_exceptions WHERE service_id IN (SELECT id FROM services WHERE provider_id=?)`, providerID)
+	_, _ = t.tx.ExecContext(ctx, `DELETE FROM services WHERE provider_id=?`, providerID)
+	_, _ = t.tx.ExecContext(ctx, `DELETE FROM stations WHERE primary_provider=?`, providerID)
+	return nil
+}
 func (t *txStore) UpsertService(ctx context.Context, r ServiceRow) error {
 	_, err := t.tx.ExecContext(ctx, `INSERT INTO services(id, provider_id, name, start_date, end_date) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, start_date=excluded.start_date, end_date=excluded.end_date`, r.ID, r.ProviderID, r.Name, r.StartDate, r.EndDate)
 	return err
@@ -951,6 +965,20 @@ func (s *SQLiteStore) SaveQualityIssue(ctx context.Context, q QualityRow) error 
 func (s *SQLiteStore) ClearQualityIssues(ctx context.Context, providerID string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM quality_issues WHERE provider_id=?`, providerID)
 	return err
+}
+func (s *SQLiteStore) ClearProviderData(ctx context.Context, providerID string) error {
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM stop_times WHERE trip_id IN (SELECT id FROM trips WHERE provider_id=?)`, providerID)
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM transfers WHERE from_stop_id IN (SELECT id FROM stops WHERE provider_id=?) OR to_stop_id IN (SELECT id FROM stops WHERE provider_id=?)`, providerID, providerID)
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM station_codes WHERE provider_id=?`, providerID)
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM stops WHERE provider_id=?`, providerID)
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM trips WHERE provider_id=?`, providerID)
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM routes WHERE provider_id=?`, providerID)
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM carriers WHERE provider_id=?`, providerID)
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM service_days WHERE service_id IN (SELECT id FROM services WHERE provider_id=?)`, providerID)
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM service_exceptions WHERE service_id IN (SELECT id FROM services WHERE provider_id=?)`, providerID)
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM services WHERE provider_id=?`, providerID)
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM stations WHERE primary_provider=?`, providerID)
+	return nil
 }
 func (s *SQLiteStore) UpsertService(ctx context.Context, r ServiceRow) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO services(id, provider_id, name, start_date, end_date) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, start_date=excluded.start_date, end_date=excluded.end_date`, r.ID, r.ProviderID, r.Name, r.StartDate, r.EndDate)

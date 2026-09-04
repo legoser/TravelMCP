@@ -1,6 +1,6 @@
-// Deprecated: логика импорта реестра Минтранса — должна жить в internal/providers/intercity,
-// а не в store. Файл оставлен для неразрушающей совместимости, будет перенесён в фазе 2.
-package store
+// Package importer — импорт реестра Минтранса в Store (фаза 2, SRP).
+
+package mintrans
 
 import (
 	"context"
@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"travelmcp/internal/store"
 	"travelmcp/internal/support/classifier"
 
 	"travelmcp/internal/geo"
@@ -95,7 +96,7 @@ type reestrBlock struct {
 	Period any      `json:"period"`
 }
 
-func ImportIntercity(ctx context.Context, s Store, path string, logger *slog.Logger) error {
+func ImportIntercity(ctx context.Context, s store.Store, path string, logger *slog.Logger) error {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -127,35 +128,9 @@ func ImportIntercity(ctx context.Context, s Store, path string, logger *slog.Log
 	}
 	// Use transaction for batch insert - Store.WithTx hides sqlite details
 	var importErr error
-	importErr = s.WithTx(ctx, func(tx Store) error {
+	importErr = s.WithTx(ctx, func(tx store.Store) error {
 		_ = tx.ClearQualityIssues(ctx, "intercity")
-		if sqlite, ok := tx.(*SQLiteStore); ok {
-			_, _ = sqlite.db.ExecContext(ctx, `DELETE FROM stop_times WHERE trip_id IN (SELECT id FROM trips WHERE provider_id='intercity')`)
-			_, _ = sqlite.db.ExecContext(ctx, `DELETE FROM transfers WHERE from_stop_id IN (SELECT id FROM stops WHERE provider_id='intercity') OR to_stop_id IN (SELECT id FROM stops WHERE provider_id='intercity')`)
-			_, _ = sqlite.db.ExecContext(ctx, `DELETE FROM station_codes WHERE provider_id='intercity'`)
-			_, _ = sqlite.db.ExecContext(ctx, `DELETE FROM stops WHERE provider_id='intercity'`)
-			_, _ = sqlite.db.ExecContext(ctx, `DELETE FROM trips WHERE provider_id='intercity'`)
-			_, _ = sqlite.db.ExecContext(ctx, `DELETE FROM routes WHERE provider_id='intercity'`)
-			_, _ = sqlite.db.ExecContext(ctx, `DELETE FROM carriers WHERE provider_id='intercity'`)
-			_, _ = sqlite.db.ExecContext(ctx, `DELETE FROM service_days WHERE service_id IN (SELECT id FROM services WHERE provider_id='intercity')`)
-			_, _ = sqlite.db.ExecContext(ctx, `DELETE FROM service_exceptions WHERE service_id IN (SELECT id FROM services WHERE provider_id='intercity')`)
-			_, _ = sqlite.db.ExecContext(ctx, `DELETE FROM services WHERE provider_id='intercity'`)
-			_, _ = sqlite.db.ExecContext(ctx, `DELETE FROM stations WHERE primary_provider='intercity'`)
-		} else if ttx, ok := tx.(*txStore); ok {
-			_, _ = ttx.tx.ExecContext(ctx, `DELETE FROM stop_times WHERE trip_id IN (SELECT id FROM trips WHERE provider_id='intercity')`)
-			_, _ = ttx.tx.ExecContext(ctx, `DELETE FROM transfers WHERE from_stop_id IN (SELECT id FROM stops WHERE provider_id='intercity') OR to_stop_id IN (SELECT id FROM stops WHERE provider_id='intercity')`)
-			_, _ = ttx.tx.ExecContext(ctx, `DELETE FROM station_codes WHERE provider_id='intercity'`)
-			_, _ = ttx.tx.ExecContext(ctx, `DELETE FROM stops WHERE provider_id='intercity'`)
-			_, _ = ttx.tx.ExecContext(ctx, `DELETE FROM trips WHERE provider_id='intercity'`)
-			_, _ = ttx.tx.ExecContext(ctx, `DELETE FROM routes WHERE provider_id='intercity'`)
-			_, _ = ttx.tx.ExecContext(ctx, `DELETE FROM carriers WHERE provider_id='intercity'`)
-			_, _ = ttx.tx.ExecContext(ctx, `DELETE FROM service_days WHERE service_id IN (SELECT id FROM services WHERE provider_id='intercity')`)
-			_, _ = ttx.tx.ExecContext(ctx, `DELETE FROM service_exceptions WHERE service_id IN (SELECT id FROM services WHERE provider_id='intercity')`)
-			_, _ = ttx.tx.ExecContext(ctx, `DELETE FROM services WHERE provider_id='intercity'`)
-			_, _ = ttx.tx.ExecContext(ctx, `DELETE FROM stations WHERE primary_provider='intercity'`)
-		} else {
-			// memory store: clear via reflection not needed, entries will be overwritten
-		}
+		_ = tx.ClearProviderData(ctx, "intercity")
 		logger.Info("station grouping started")
 		cityMap := map[string]int64{}
 		for cname, v := range getCityOverrides() {
@@ -164,7 +139,7 @@ func ImportIntercity(ctx context.Context, s Store, path string, logger *slog.Log
 			if len(display) > 0 {
 				display = strings.ToUpper(display[:1]) + display[1:]
 			}
-			id, _ := tx.UpsertCity(ctx, CityRow{Name: display, RegionCode: region, Lat: v.lat, Lon: v.lon, Source: v.source, Kind: "city"})
+			id, _ := tx.UpsertCity(ctx, store.CityRow{Name: display, RegionCode: region, Lat: v.lat, Lon: v.lon, Source: v.source, Kind: "city"})
 			cityMap[strings.ToLower(cname)] = id
 			cityMap[strings.ToLower(display)] = id
 		}
@@ -172,7 +147,7 @@ func ImportIntercity(ctx context.Context, s Store, path string, logger *slog.Log
 		type stationKey struct{ id int64 }
 		stations := map[string]int64{}
 		stopToStation := map[string]int64{}
-		var stationRows []StationRow
+		var stationRows []store.StationRow
 
 		for _, st := range ds.Stops {
 			lat, lon := 0.0, 0.0
@@ -203,7 +178,7 @@ func ImportIntercity(ctx context.Context, s Store, path string, logger *slog.Log
 						break
 					}
 				}
-				sr := StationRow{Name: st.Name, Lat: lat, Lon: lon, RegionCode: st.Region, PrimaryProvider: "intercity", CityID: cityID}
+				sr := store.StationRow{Name: st.Name, Lat: lat, Lon: lon, RegionCode: st.Region, PrimaryProvider: "intercity", CityID: cityID}
 				if lat == 0 && lon == 0 {
 					if cached, ok := tx.FindStation(ctx, st.Name, st.Region); ok {
 						sr.Lat, sr.Lon = cached.Lat, cached.Lon
@@ -241,7 +216,7 @@ func ImportIntercity(ctx context.Context, s Store, path string, logger *slog.Log
 				if _, ok := carrierMap[key]; ok {
 					continue
 				}
-				id, _ := tx.UpsertCarrier(ctx, CarrierRow{ProviderID: "intercity", Name: c.Name, Code: c.INN, INN: c.INN, Address: c.Address})
+				id, _ := tx.UpsertCarrier(ctx, store.CarrierRow{ProviderID: "intercity", Name: c.Name, Code: c.INN, INN: c.INN, Address: c.Address})
 				carrierMap[key] = id
 			}
 		}
@@ -256,20 +231,20 @@ func ImportIntercity(ctx context.Context, s Store, path string, logger *slog.Log
 				// fallback when dataset without carriers section
 				addr = ""
 			}
-			id, _ := tx.UpsertCarrier(ctx, CarrierRow{ProviderID: "intercity", Name: r.Carrier, Code: in, INN: in, Address: addr})
+			id, _ := tx.UpsertCarrier(ctx, store.CarrierRow{ProviderID: "intercity", Name: r.Carrier, Code: in, INN: in, Address: addr})
 			carrierMap[key] = id
 		}
 		logger.Info("carriers ready", "count", len(carrierMap), "elapsed_ms", time.Since(t0).Milliseconds())
 
 		// services (canonical calendar)
 		for _, svc := range ds.Services {
-			_ = tx.UpsertService(ctx, ServiceRow{ID: svc.ID, ProviderID: "intercity", Name: svc.Name, StartDate: svc.StartDate, EndDate: svc.EndDate})
+			_ = tx.UpsertService(ctx, store.ServiceRow{ID: svc.ID, ProviderID: "intercity", Name: svc.Name, StartDate: svc.StartDate, EndDate: svc.EndDate})
 		}
 		for _, sd := range ds.ServiceDays {
-			_ = tx.UpsertServiceDay(ctx, ServiceDayRow{ServiceID: sd.ServiceID, Weekday: sd.Weekday})
+			_ = tx.UpsertServiceDay(ctx, store.ServiceDayRow{ServiceID: sd.ServiceID, Weekday: sd.Weekday})
 		}
 		for _, ex := range ds.ServiceExceptions {
-			_ = tx.UpsertServiceException(ctx, ServiceExceptionRow{ServiceID: ex.ServiceID, Date: ex.Date, ExceptionType: ex.ExceptionType})
+			_ = tx.UpsertServiceException(ctx, store.ServiceExceptionRow{ServiceID: ex.ServiceID, Date: ex.Date, ExceptionType: ex.ExceptionType})
 		}
 		if len(ds.Services) > 0 {
 			logger.Info("services ready", "count", len(ds.Services), "days", len(ds.ServiceDays))
@@ -279,10 +254,10 @@ func ImportIntercity(ctx context.Context, s Store, path string, logger *slog.Log
 		stopIDMap := map[string]int64{}
 		for _, st := range ds.Stops {
 			stationID := stopToStation[st.ID]
-			sr := StopRow{StationID: stationID, ProviderID: "intercity", ExternalCode: st.ID, StopType: string(classifier.Ru.Classify(st.Name, nil)), Name: st.Name, RawName: st.Name}
+			sr := store.StopRow{StationID: stationID, ProviderID: "intercity", ExternalCode: st.ID, StopType: string(classifier.Ru.Classify(st.Name, nil)), Name: st.Name, RawName: st.Name}
 			id, _ := tx.UpsertStop(ctx, sr)
 			stopIDMap[st.ID] = id
-			_ = tx.UpsertStationCode(ctx, StationCodeRow{StationID: stationID, ProviderID: "intercity", CodeType: "op_reg", Code: st.OpReg, NameForm: st.Name})
+			_ = tx.UpsertStationCode(ctx, store.StationCodeRow{StationID: stationID, ProviderID: "intercity", CodeType: "op_reg", Code: st.OpReg, NameForm: st.Name})
 		}
 		logger.Info("stops ready", "count", len(stopIDMap), "elapsed_ms", time.Since(t0).Milliseconds())
 
@@ -291,7 +266,7 @@ func ImportIntercity(ctx context.Context, s Store, path string, logger *slog.Log
 		for _, r := range ds.Routes {
 			carrierKey := r.Carrier + "|" + r.CarrierINN
 			cid := carrierMap[carrierKey]
-			rr := RouteRow{ProviderID: "intercity", CarrierID: cid, ExternalCode: r.Reg, ShortName: r.Reg, LongName: r.Name, Mode: string(model.ModeBus)}
+			rr := store.RouteRow{ProviderID: "intercity", CarrierID: cid, ExternalCode: r.Reg, ShortName: r.Reg, LongName: r.Name, Mode: string(model.ModeBus)}
 			id, _ := tx.UpsertRoute(ctx, rr)
 			routeIDMap[r.Reg] = id
 		}
@@ -299,7 +274,7 @@ func ImportIntercity(ctx context.Context, s Store, path string, logger *slog.Log
 
 		tripStart := time.Now()
 		type pendingTrip struct {
-			row   TripRow
+			row   store.TripRow
 			times []struct {
 				stopID string
 				arrMin int
@@ -374,7 +349,7 @@ func ImportIntercity(ctx context.Context, s Store, path string, logger *slog.Log
 						return
 					}
 					mu.Lock()
-					pending = append(pending, pendingTrip{row: TripRow{RouteID: routeID, ProviderID: "intercity", Direction: sched.Direction, ServiceID: sched.ServiceID}, times: times})
+					pending = append(pending, pendingTrip{row: store.TripRow{RouteID: routeID, ProviderID: "intercity", Direction: sched.Direction, ServiceID: sched.ServiceID}, times: times})
 					mu.Unlock()
 				}(sc, routeID, period, run)
 			}
@@ -389,7 +364,7 @@ func ImportIntercity(ctx context.Context, s Store, path string, logger *slog.Log
 				if !ok {
 					continue
 				}
-				_ = tx.UpsertStopTime(ctx, StopTimeRow{TripID: tid, StopID: sid, Seq: seq, Arrival: tm.arrMin * 60, Departure: tm.depMin * 60})
+				_ = tx.UpsertStopTime(ctx, store.StopTimeRow{TripID: tid, StopID: sid, Seq: seq, Arrival: tm.arrMin * 60, Departure: tm.depMin * 60})
 			}
 		}
 		logger.Info("trips stored", "elapsed_ms", time.Since(tripStart).Milliseconds())
@@ -418,8 +393,8 @@ func ImportIntercity(ctx context.Context, s Store, path string, logger *slog.Log
 					if from != 0 && to != 0 {
 						distM := int(d * 1000)
 						minutes := geo.WalkTimeMinutes(d)
-						_ = tx.UpsertTransfer(ctx, TransferRow{FromStopID: from, ToStopID: to, Minutes: minutes, MinTransferTime: minutes, DistanceM: distM, WithinStation: 1})
-						_ = tx.UpsertTransfer(ctx, TransferRow{FromStopID: to, ToStopID: from, Minutes: minutes, MinTransferTime: minutes, DistanceM: distM, WithinStation: 1})
+						_ = tx.UpsertTransfer(ctx, store.TransferRow{FromStopID: from, ToStopID: to, Minutes: minutes, MinTransferTime: minutes, DistanceM: distM, WithinStation: 1})
+						_ = tx.UpsertTransfer(ctx, store.TransferRow{FromStopID: to, ToStopID: from, Minutes: minutes, MinTransferTime: minutes, DistanceM: distM, WithinStation: 1})
 					}
 				}
 			}
@@ -437,7 +412,7 @@ func ImportIntercity(ctx context.Context, s Store, path string, logger *slog.Log
 		issues = len(vals)
 		_ = s.ClearQualityIssues(ctx, "intercity")
 		for _, iss := range vals {
-			_ = s.SaveQualityIssue(ctx, QualityRow{ProviderID: iss.ProviderID, Entity: iss.Entity, EntityID: iss.Entity, Level: string(iss.Level), Code: iss.Code, Msg: iss.Message, At: time.Now().Unix()})
+			_ = s.SaveQualityIssue(ctx, store.QualityRow{ProviderID: iss.ProviderID, Entity: iss.Entity, EntityID: iss.Entity, Level: string(iss.Level), Code: iss.Code, Msg: iss.Message, At: time.Now().Unix()})
 		}
 		logger.Info("quality analyzed", "issues", issues)
 	}
