@@ -108,6 +108,11 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 	mux.Handle("POST /api/v1/import/gtfs", s.auth(http.HandlerFunc(s.handleImportGTFS), "admin"))
 	mux.Handle("POST /api/v1/import/mintrans", s.auth(http.HandlerFunc(s.handleSyncMintrans), "admin"))
 	mux.Handle("POST /api/v1/import/rail", s.auth(http.HandlerFunc(s.handleSyncRail), "admin"))
+	mux.Handle("GET /api/v1/admin/imports", s.auth(http.HandlerFunc(s.handleAdminImports), "admin"))
+	mux.Handle("GET /api/v1/admin/logs", s.auth(http.HandlerFunc(s.handleAdminImportLogs), "admin"))
+	mux.Handle("GET /api/v1/admin/audit", s.auth(http.HandlerFunc(s.handleAdminAudit), "admin"))
+	mux.Handle("PUT /api/v1/admin/terminals/{id}", s.auth(http.HandlerFunc(s.handleAdminUpdateTerminal), "admin"))
+	mux.Handle("POST /api/v1/admin/external-call", s.auth(http.HandlerFunc(s.handleAdminExternalCall), "admin"))
 	mux.Handle("POST /api/v1/route", s.auth(http.HandlerFunc(s.handleRoute), "mcp:read"))
 	adminFS, _ := fs.Sub(webFS, "web")
 	mux.Handle("GET /admin", http.HandlerFunc(s.handleAdminPage))
@@ -428,6 +433,138 @@ func (s *Server) handleSyncRail(w http.ResponseWriter, r *http.Request) {
 	}
 	id, _ := s.store.EnqueueJob(r.Context(), store.JobRow{Type: "sync_rail", Payload: string(b)})
 	writeJSONResponse(w, http.StatusCreated, map[string]any{"id": id, "type": "sync_rail"})
+}
+
+func (s *Server) handleAdminImports(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSONResponse(w, http.StatusOK, []any{})
+		return
+	}
+	rows, _ := s.store.ListImports(r.Context(), 20)
+	writeJSONResponse(w, http.StatusOK, rows)
+}
+
+func (s *Server) handleAdminImportLogs(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSONResponse(w, http.StatusOK, []any{})
+		return
+	}
+	rows, _ := s.store.ListImportLogs(r.Context(), 50)
+	writeJSONResponse(w, http.StatusOK, rows)
+}
+
+func (s *Server) handleAdminAudit(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSONResponse(w, http.StatusOK, []any{})
+		return
+	}
+	rows, _ := s.store.ListAuditLogs(r.Context(), 50)
+	writeJSONResponse(w, http.StatusOK, rows)
+}
+
+func (s *Server) handleAdminUpdateTerminal(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
+		return
+	}
+	user, _ := r.Context().Value(ctxUserKey).(*store.UserRow)
+	actorID := func() *int64 {
+		if user != nil && user.ID != 0 {
+			return &user.ID
+		}
+		return nil
+	}()
+	idStr := r.PathValue("id")
+	tid, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
+		return
+	}
+	var req struct {
+		Name  string   `json:"name"`
+		Lat   float64  `json:"lat"`
+		Lon   float64  `json:"lon"`
+		Names map[string]string `json:"names"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONDecodeError(w, err, s.logger, r.URL.Path)
+		return
+	}
+	if req.Name == "" && len(req.Names) == 0 {
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "name required"})
+		return
+	}
+	names := req.Names
+	if names == nil {
+		names = map[string]string{}
+	}
+	if req.Name != "" {
+		names["ru"] = req.Name
+	}
+	now := time.Now().Unix()
+	tr := store.TerminalRow{ID: tid, Lat: req.Lat, Lon: req.Lon, IsLocked: true, LastVerifiedAt: &now}
+	if _, err := s.store.UpsertTerminal(r.Context(), tr, names, nil); err != nil {
+		writeJSONResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	_ = s.store.SaveProvenance(r.Context(), model.Provenance{EntityType: "terminal", EntityID: tid, Source: "manual", Confidence: 1.0, ObservedAt: time.Now(), ActorID: actorID})
+	_ = s.store.SaveReviewQueue(r.Context(), model.ReviewQueueEntry{EntityType: "terminal", EntityID: tid, Reason: "conflicts_with_confirmed", Score: 1.0})
+	_ = s.store.WriteAuditLog(r.Context(), actorID, "update_terminal", "terminal", &tid, fmt.Sprintf(`{"name":%q,"lat":%f,"lon":%f}`, req.Name, req.Lat, req.Lon))
+	writeJSONResponse(w, http.StatusOK, map[string]any{"id": tid, "is_locked": true})
+}
+
+func (s *Server) handleAdminExternalCall(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
+		return
+	}
+	user, _ := r.Context().Value(ctxUserKey).(*store.UserRow)
+	actorID := func() *int64 {
+		if user != nil && user.ID != 0 {
+			return &user.ID
+		}
+		return nil
+	}()
+	var req struct {
+		Provider string `json:"provider"`
+		Query    string `json:"query"`
+		Lat      *float64 `json:"lat"`
+		Lon      *float64 `json:"lon"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONDecodeError(w, err, s.logger, r.URL.Path)
+		return
+	}
+	if req.Provider == "" {
+		req.Provider = "yandex"
+	}
+	ok, _, _ := s.store.TryConsumeQuota(r.Context(), req.Provider, 1000)
+	if !ok {
+		writeJSONResponse(w, http.StatusTooManyRequests, map[string]any{"error": "quota exhausted", "provider": req.Provider})
+		return
+	}
+	_ = s.store.RecordApiCall(r.Context(), req.Provider, "external_call", 1)
+	if req.Query == "" && (req.Lat == nil || req.Lon == nil) {
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "query or lat/lon required"})
+		return
+	}
+	if req.Query != "" && len(req.Query) < 2 {
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "query too short"})
+		return
+	}
+	result := map[string]any{"provider": req.Provider, "query": req.Query, "validated": true, "actor_id": actorID}
+	if req.Lat != nil && req.Lon != nil {
+		if *req.Lat < -90 || *req.Lat > 90 || *req.Lon < -180 || *req.Lon > 180 {
+			writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid coords"})
+			return
+		}
+		result["lat"] = *req.Lat
+		result["lon"] = *req.Lon
+	}
+	details, _ := json.Marshal(result)
+	_ = s.store.WriteAuditLog(r.Context(), actorID, "external_call", "terminal", nil, string(details))
+	_ = s.store.SaveProvenance(r.Context(), model.Provenance{EntityType: "terminal", EntityID: 0, Source: req.Provider, Confidence: 0.8, ObservedAt: time.Now(), ActorID: actorID, Raw: details})
+	writeJSONResponse(w, http.StatusOK, result)
 }
 
 func gtfsCompile(net *model.Network) ([]byte, error) {

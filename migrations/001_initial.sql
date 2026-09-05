@@ -554,6 +554,18 @@ CREATE TABLE IF NOT EXISTS outbox (
 );
 CREATE INDEX IF NOT EXISTS idx_outbox_aggregate ON outbox(aggregate, aggregate_id);
 
+-- 5.4 audit_log (§5.4): каждое действие админки пишет actor_id + provenance.actor_id, source ≠ identity
+CREATE TABLE IF NOT EXISTS audit_log (
+  id bigserial PRIMARY KEY,
+  user_id bigint REFERENCES users(id) ON DELETE SET NULL,
+  action text NOT NULL,
+  entity_type text,
+  entity_id bigint,
+  at timestamptz NOT NULL DEFAULT now(),
+  details jsonb
+);
+CREATE INDEX IF NOT EXISTS idx_audit_log_user_at ON audit_log(user_id, at DESC);
+
 -- view для review списком (§3.10)
 CREATE OR REPLACE VIEW v_review_stops AS
 SELECT rq.entity_type, rq.entity_id, rq.reason, rq.score, rq.created_at,

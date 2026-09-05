@@ -62,6 +62,7 @@ type MemoryStore struct {
 	quotas       map[string]store.QuotaRow
 	apiCalls     []store.ApiCallRow
 	jobs         map[int64]store.JobRow
+	auditLogs    []store.AuditLogRow
 	nextID       int64
 }
 
@@ -329,6 +330,53 @@ func (m *MemoryStore) ListQuotas(ctx context.Context) ([]store.QuotaRow, error) 
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Provider < out[j].Provider })
 	return out, nil
+}
+
+func (m *MemoryStore) WriteAuditLog(ctx context.Context, userID *int64, action, entityType string, entityID *int64, details string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var id int64 = m.allocID()
+	if m.auditLogs == nil {
+		m.auditLogs = make([]store.AuditLogRow, 0)
+	}
+	m.auditLogs = append(m.auditLogs, store.AuditLogRow{ID: id, UserID: userID, Action: action, EntityType: entityType, EntityID: entityID, At: time.Now().Unix(), Details: details})
+	return nil
+}
+
+func (m *MemoryStore) ListAuditLogs(ctx context.Context, limit int) ([]store.AuditLogRow, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if limit <= 0 {
+		limit = 50
+	}
+	out := make([]store.AuditLogRow, len(m.auditLogs))
+	copy(out, m.auditLogs)
+	sort.Slice(out, func(i, j int) bool { return out[i].At > out[j].At })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (m *MemoryStore) ListImports(ctx context.Context, limit int) ([]store.ImportRow, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if limit <= 0 {
+		limit = 20
+	}
+	out := make([]store.ImportRow, 0, len(m.imports))
+	for p, at := range m.imports {
+		out = append(out, store.ImportRow{ProviderID: p, At: at.Unix(), Status: "ok"})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].At > out[j].At })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (m *MemoryStore) ListImportLogs(ctx context.Context, limit int) ([]store.ImportLogRow, error) {
+	return []store.ImportLogRow{}, nil
 }
 
 func (m *MemoryStore) EnqueueJob(ctx context.Context, j store.JobRow) (int64, error) {

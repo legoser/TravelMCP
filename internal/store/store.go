@@ -74,6 +74,30 @@ type JobStore interface {
 	ListJobs(ctx context.Context, limit int) ([]JobRow, error)
 }
 
+type AuditStore interface {
+	WriteAuditLog(ctx context.Context, userID *int64, action, entityType string, entityID *int64, details string) error
+	ListAuditLogs(ctx context.Context, limit int) ([]AuditLogRow, error)
+}
+
+type ImportStore interface {
+	ListImports(ctx context.Context, limit int) ([]ImportRow, error)
+	ListImportLogs(ctx context.Context, limit int) ([]ImportLogRow, error)
+}
+
+type ImportLogRow struct {
+	ID         int64
+	JobID      *int64
+	EntityType string
+	EntityID   string
+	Stage      string
+	Action     string
+	Confidence *float64
+	DistanceM  *int
+	Lev        *float64
+	Source     string
+	At         int64
+}
+
 type Store interface {
 	StopStore
 	RouteStore
@@ -85,6 +109,8 @@ type Store interface {
 	FareStore
 	QuotaStore
 	JobStore
+	AuditStore
+	ImportStore
 	UpsertFare(ctx context.Context, f FareRow) error
 	ImportAdaptedRecords(ctx context.Context, records []model.AdaptedRecord) (int, int, error)
 

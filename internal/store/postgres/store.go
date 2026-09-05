@@ -673,6 +673,90 @@ func (p *PostgresStore) ListQuotas(ctx context.Context) ([]store.QuotaRow, error
 	return out, nil
 }
 
+func (p *PostgresStore) WriteAuditLog(ctx context.Context, userID *int64, action, entityType string, entityID *int64, details string) error {
+	if p.pool == nil {
+		return nil
+	}
+	if details == "" {
+		details = "{}"
+	}
+	_, err := p.pool.Exec(ctx, `INSERT INTO audit_log(user_id, action, entity_type, entity_id, details) VALUES($1,$2,$3,$4,$5::jsonb)`, userID, action, entityType, entityID, details)
+	return err
+}
+
+func (p *PostgresStore) ListAuditLogs(ctx context.Context, limit int) ([]store.AuditLogRow, error) {
+	if p.pool == nil {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := p.pool.Query(ctx, `SELECT id, user_id, action, entity_type, entity_id, extract(epoch from at)::bigint, details::text FROM audit_log ORDER BY at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.AuditLogRow
+	for rows.Next() {
+		var r store.AuditLogRow
+		var details *string
+		if err := rows.Scan(&r.ID, &r.UserID, &r.Action, &r.EntityType, &r.EntityID, &r.At, &details); err != nil {
+			return nil, err
+		}
+		if details != nil {
+			r.Details = *details
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+func (p *PostgresStore) ListImports(ctx context.Context, limit int) ([]store.ImportRow, error) {
+	if p.pool == nil {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := p.pool.Query(ctx, `SELECT provider_id, extract(epoch from at)::bigint, records, status, snapshot, checksum, issues FROM imports ORDER BY at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.ImportRow
+	for rows.Next() {
+		var r store.ImportRow
+		if err := rows.Scan(&r.ProviderID, &r.At, &r.Records, &r.Status, &r.Snapshot, &r.Checksum, &r.Issues); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+func (p *PostgresStore) ListImportLogs(ctx context.Context, limit int) ([]store.ImportLogRow, error) {
+	if p.pool == nil {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := p.pool.Query(ctx, `SELECT id, job_id, entity_type, entity_id, stage, action, confidence, distance_m, lev, source, extract(epoch from at)::bigint FROM import_logs ORDER BY at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.ImportLogRow
+	for rows.Next() {
+		var r store.ImportLogRow
+		if err := rows.Scan(&r.ID, &r.JobID, &r.EntityType, &r.EntityID, &r.Stage, &r.Action, &r.Confidence, &r.DistanceM, &r.Lev, &r.Source, &r.At); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
 func (p *PostgresStore) EnqueueJob(ctx context.Context, j store.JobRow) (int64, error) {
 	if p.pool == nil {
 		return 0, fmt.Errorf("pool nil")
@@ -1059,6 +1143,78 @@ func (t *pgTxStore) ListQuotas(ctx context.Context) ([]store.QuotaRow, error) {
 			return nil, err
 		}
 		r.ResetAt = resetAt
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+func (t *pgTxStore) WriteAuditLog(ctx context.Context, userID *int64, action, entityType string, entityID *int64, details string) error {
+	if details == "" {
+		details = "{}"
+	}
+	_, err := t.tx.Exec(ctx, `INSERT INTO audit_log(user_id, action, entity_type, entity_id, details) VALUES($1,$2,$3,$4,$5::jsonb)`, userID, action, entityType, entityID, details)
+	return err
+}
+
+func (t *pgTxStore) ListAuditLogs(ctx context.Context, limit int) ([]store.AuditLogRow, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := t.tx.Query(ctx, `SELECT id, user_id, action, entity_type, entity_id, extract(epoch from at)::bigint, details::text FROM audit_log ORDER BY at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.AuditLogRow
+	for rows.Next() {
+		var r store.AuditLogRow
+		var details *string
+		if err := rows.Scan(&r.ID, &r.UserID, &r.Action, &r.EntityType, &r.EntityID, &r.At, &details); err != nil {
+			return nil, err
+		}
+		if details != nil {
+			r.Details = *details
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+func (t *pgTxStore) ListImports(ctx context.Context, limit int) ([]store.ImportRow, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := t.tx.Query(ctx, `SELECT provider_id, extract(epoch from at)::bigint, records, status, snapshot, checksum, issues FROM imports ORDER BY at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.ImportRow
+	for rows.Next() {
+		var r store.ImportRow
+		if err := rows.Scan(&r.ProviderID, &r.At, &r.Records, &r.Status, &r.Snapshot, &r.Checksum, &r.Issues); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+func (t *pgTxStore) ListImportLogs(ctx context.Context, limit int) ([]store.ImportLogRow, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := t.tx.Query(ctx, `SELECT id, job_id, entity_type, entity_id, stage, action, confidence, distance_m, lev, source, extract(epoch from at)::bigint FROM import_logs ORDER BY at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.ImportLogRow
+	for rows.Next() {
+		var r store.ImportLogRow
+		if err := rows.Scan(&r.ID, &r.JobID, &r.EntityType, &r.EntityID, &r.Stage, &r.Action, &r.Confidence, &r.DistanceM, &r.Lev, &r.Source, &r.At); err != nil {
+			return nil, err
+		}
 		out = append(out, r)
 	}
 	return out, nil

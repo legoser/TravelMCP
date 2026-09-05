@@ -258,3 +258,13 @@ type JobRow struct {
 	LastError string
 	CreatedAt int64
 }
+
+type AuditLogRow struct {
+	ID         int64
+	UserID     *int64
+	Action     string
+	EntityType string
+	EntityID   *int64
+	At         int64
+	Details    string
+}
