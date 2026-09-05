@@ -230,3 +230,19 @@ type TerminalRow struct {
 	LastVerifiedAt *int64
 	IsLocked       bool
 }
+
+type QuotaRow struct {
+	Provider string
+	Day      string
+	Used     int
+	Limit    int
+	ResetAt  *string
+}
+
+type ApiCallRow struct {
+	ID       int64
+	Provider string
+	Endpoint string
+	At       int64
+	Cost     int
+}

@@ -59,6 +59,8 @@ type MemoryStore struct {
 	usersByEmail map[string]int64
 	apiKeys      map[int64]ApiKeyRow
 	apiKeysByKey map[string]int64
+	quotas       map[string]store.QuotaRow
+	apiCalls     []store.ApiCallRow
 	nextID       int64
 }
 
@@ -75,6 +77,7 @@ func NewMemoryStore() *MemoryStore {
 		usersByEmail: make(map[string]int64),
 		apiKeys:      make(map[int64]ApiKeyRow),
 		apiKeysByKey: make(map[string]int64),
+		quotas:       make(map[string]store.QuotaRow),
 		nextID:       1,
 	}
 }
@@ -260,6 +263,72 @@ func (m *MemoryStore) TouchApiKey(ctx context.Context, key string) error {
 	m.apiKeys[id] = k
 	return nil
 }
+
+func (m *MemoryStore) TryConsumeQuota(ctx context.Context, provider string, limit int) (bool, int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	day := time.Now().Format("2006-01-02")
+	key := provider + ":" + day
+	q, ok := m.quotas[key]
+	if !ok {
+		q = store.QuotaRow{Provider: provider, Day: day, Used: 0, Limit: limit}
+	}
+	if q.Limit != limit && q.Limit != 0 {
+		limit = q.Limit
+	}
+	if q.Used >= limit {
+		return false, q.Used, nil
+	}
+	q.Used++
+	q.Limit = limit
+	m.quotas[key] = q
+	m.apiCalls = append(m.apiCalls, store.ApiCallRow{Provider: provider, Endpoint: "quota_consume", At: time.Now().Unix(), Cost: 1})
+	return true, q.Used, nil
+}
+
+func (m *MemoryStore) GetQuota(ctx context.Context, provider string, day time.Time) (store.QuotaRow, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	d := day
+	if d.IsZero() {
+		d = time.Now()
+	}
+	key := provider + ":" + d.Format("2006-01-02")
+	q, ok := m.quotas[key]
+	return q, ok
+}
+
+func (m *MemoryStore) SetQuotaLimit(ctx context.Context, provider string, limit int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	day := time.Now().Format("2006-01-02")
+	key := provider + ":" + day
+	q := m.quotas[key]
+	q.Provider = provider
+	q.Day = day
+	q.Limit = limit
+	m.quotas[key] = q
+	return nil
+}
+
+func (m *MemoryStore) RecordApiCall(ctx context.Context, provider, endpoint string, cost int) error {
+	m.mu.Lock()
+	m.apiCalls = append(m.apiCalls, store.ApiCallRow{Provider: provider, Endpoint: endpoint, At: time.Now().Unix(), Cost: cost})
+	m.mu.Unlock()
+	return nil
+}
+
+func (m *MemoryStore) ListQuotas(ctx context.Context) ([]store.QuotaRow, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]store.QuotaRow, 0, len(m.quotas))
+	for _, q := range m.quotas {
+		out = append(out, q)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Provider < out[j].Provider })
+	return out, nil
+}
+
 func (m *MemoryStore) MarkImported(ctx context.Context, providerID string, at time.Time, records int) error {
 	m.mu.Lock()
 	m.imports[providerID] = at

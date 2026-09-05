@@ -57,6 +57,14 @@ type FareStore interface {
 	ListFareRules(ctx context.Context) ([]FareRuleRow, error)
 }
 
+type QuotaStore interface {
+	TryConsumeQuota(ctx context.Context, provider string, limit int) (bool, int, error)
+	GetQuota(ctx context.Context, provider string, day time.Time) (QuotaRow, bool)
+	SetQuotaLimit(ctx context.Context, provider string, limit int) error
+	RecordApiCall(ctx context.Context, provider, endpoint string, cost int) error
+	ListQuotas(ctx context.Context) ([]QuotaRow, error)
+}
+
 type Store interface {
 	StopStore
 	RouteStore
@@ -66,6 +74,7 @@ type Store interface {
 	ProvenanceStore
 	QualityStore
 	FareStore
+	QuotaStore
 	UpsertFare(ctx context.Context, f FareRow) error
 	ImportAdaptedRecords(ctx context.Context, records []model.AdaptedRecord) (int, int, error)
 

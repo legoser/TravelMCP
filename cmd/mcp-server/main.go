@@ -84,6 +84,12 @@ func main() {
 				os.Exit(1)
 			}
 			logger.Info("db migration completed", "elapsed_ms", time.Since(ms).Milliseconds())
+			for _, p := range []string{"yandex", "nominatim", "motis", "mintrans", "gtfs"} {
+				_ = st.SetQuotaLimit(context.Background(), p, 1000)
+			}
+			if qs, err := st.ListQuotas(context.Background()); err == nil {
+				logger.Info("quotas loaded", "count", len(qs))
+			}
 			for _, id := range cfg.Providers.Enabled {
 				if id == providers.IntercityID {
 					is := time.Now()

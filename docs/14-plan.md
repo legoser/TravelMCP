@@ -69,8 +69,8 @@ place_types(type PK) -- station/hub/platform
 providers(code PK, name) -- источник данных: mintrans/yandex/osm/gtfs/motis/nominatim (для provenance/terminal_identifiers.system)
 carriers(id PK, inn text, name_ru text, name_en text) -- реальный перевозчик (юрлицо), FK для routes/trips → agency.txt
 -- CREATE UNIQUE INDEX uniq_carriers_inn ON carriers(inn) WHERE inn IS NOT NULL; -- INN — надёжный ключ дедупликации юрлиц РФ, частичный индекс (NULL — много, не конфликтует)
--- carrier_identifiers(carrier_id FK→carriers, system text, code_type text, code text, PRIMARY KEY(carrier_id,system,code_type), UNIQUE(system,code))
---   system: mintrans/yandex/gtfs, code: inn/ogrn/original_agency_id — для случаев когда INN не извлекается, дедуп по (system,code) как у terminal_identifiers
+-- carrier_identifiers(carrier_id FK→carriers, system text CHECK(system IN ('mintrans','yandex','gtfs','nominatim')), code_type text CHECK(code_type IN ('inn','ogrn','code','yandex_code')), code text, PRIMARY KEY(carrier_id,system,code_type), UNIQUE(system,code))
+--   system: mintrans/yandex/gtfs/nominatim, code_type: inn/ogrn/code/yandex_code — для случаев когда INN не извлекается, дедуп по (system,code) как у terminal_identifiers; CHECK сужен до семантики перевозчика (не терминала), синхронизировано с 001_initial.sql после ревью
 -- seed: INSERT INTO carriers(id, inn, name_ru) VALUES (0, NULL, 'Неизвестный перевозчик') ON CONFLICT DO NOTHING; -- placeholder для GTFS-совместимости, см. §3.4
 ```
 
@@ -143,8 +143,9 @@ terminal_tags(terminal_id FK, tags jsonb) -- GIN(tags)
 provenance(entity_type text CHECK(entity_type IN ('place','terminal','stop','route','trip')), entity_id bigint, source text, confidence real, observed_at timestamptz, raw jsonb, actor_id bigint REFERENCES users(id))
 review_queue(entity_type text CHECK(entity_type IN ('place','terminal','stop','route','trip')), entity_id bigint, reason text, score real)
 -- Полиморфная связь: PG не обеспечивает FK на (entity_type, entity_id) нативно.
--- Компенсация: CHECK(entity_type), триггер trg_provenance_no_orphan BEFORE INSERT/UPDATE проверяет существование в соответствующей таблице,
+-- Компенсация: CHECK(entity_type), триггер trg_provenance_no_orphan BEFORE INSERT/UPDATE проверяет существование в соответствующей таблице для всех 5 типов (place/terminal/stop/route/trip, синхронизировано с 001_initial.sql после ревью),
 --            триггер trg_no_hard_delete вместо DELETE ставит deleted_at, ночной job чистит осиротевшие записи + тест TestProvenanceFK.
+-- v_review_stops.last_stage: подзапрос фильтрует import_logs по (entity_id AND entity_type) — исправлено после ревью, иначе коллизия id между разными типами.
 ```
 
 Быстрые запросы:

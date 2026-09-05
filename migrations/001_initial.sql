@@ -322,6 +322,25 @@ CREATE TABLE IF NOT EXISTS api_keys (
 );
 CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
 
+-- 3.7 квоты (§3.7) — пилот 42/54/70, строка на день PK(provider,day), атомарный ON CONFLICT
+CREATE TABLE IF NOT EXISTS api_quotas (
+  provider text NOT NULL REFERENCES providers(code),
+  day date NOT NULL,
+  used int NOT NULL DEFAULT 0 CHECK (used >= 0),
+  limit int NOT NULL CHECK (limit > 0),
+  reset_at timestamptz,
+  PRIMARY KEY(provider, day)
+);
+
+CREATE TABLE IF NOT EXISTS api_calls (
+  id bigserial PRIMARY KEY,
+  provider text NOT NULL REFERENCES providers(code),
+  endpoint text NOT NULL,
+  at timestamptz NOT NULL DEFAULT now(),
+  cost int NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_api_calls_provider_at ON api_calls(provider, at DESC);
+
 -- триггеры §3.2 closure
 CREATE OR REPLACE FUNCTION fn_rebuild_closure_subtree(p_root bigint) RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
