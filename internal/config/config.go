@@ -130,6 +130,10 @@ type Planner struct {
 	SemaphoreEnable bool   `yaml:"semaphore_enable"`
 }
 
+type Deduplication struct {
+	DistanceM int `yaml:"distance_m"`
+}
+
 type Verification struct {
 	ConfidenceThreshold float64                     `yaml:"confidence_threshold"`
 	DistanceM           int                         `yaml:"distance_m"`
@@ -161,23 +165,24 @@ type Pricing struct {
 }
 
 type Config struct {
-	HTTP         HTTP         `yaml:"http"`
-	Store        Store        `yaml:"store"`
-	Cache        Cache        `yaml:"cache"`
-	Queue        Queue        `yaml:"queue"`
-	Database     Database     `yaml:"database"`
-	Providers    Providers    `yaml:"providers"`
-	Cities       Cities       `yaml:"cities"`
-	Auth         Auth         `yaml:"auth"`
-	Geocoder     Geocoder     `yaml:"geocoder"`
-	Yandex       Yandex       `yaml:"yandex"`
-	Nominatim    Nominatim    `yaml:"nominatim"`
-	Motis        Motis        `yaml:"motis"`
-	Planner      Planner      `yaml:"planner"`
-	Log          Log          `yaml:"log"`
-	Telemetry    Telemetry    `yaml:"telemetry"`
-	Verification Verification `yaml:"verification"`
-	Pricing      Pricing      `yaml:"pricing"`
+	HTTP          HTTP          `yaml:"http"`
+	Store         Store         `yaml:"store"`
+	Cache         Cache         `yaml:"cache"`
+	Queue         Queue         `yaml:"queue"`
+	Database      Database      `yaml:"database"`
+	Providers     Providers     `yaml:"providers"`
+	Cities        Cities        `yaml:"cities"`
+	Auth          Auth          `yaml:"auth"`
+	Geocoder      Geocoder      `yaml:"geocoder"`
+	Yandex        Yandex        `yaml:"yandex"`
+	Nominatim     Nominatim     `yaml:"nominatim"`
+	Motis         Motis         `yaml:"motis"`
+	Planner       Planner       `yaml:"planner"`
+	Log           Log           `yaml:"log"`
+	Telemetry     Telemetry     `yaml:"telemetry"`
+	Verification  Verification  `yaml:"verification"`
+	Deduplication Deduplication `yaml:"deduplication"`
+	Pricing       Pricing       `yaml:"pricing"`
 }
 
 func Defaults() *Config {
@@ -207,12 +212,13 @@ func Defaults() *Config {
 		Log:       Log{Level: "info", Format: "json", Levels: map[string]string{}},
 		Verification: Verification{
 			ConfidenceThreshold: 0.6,
-			DistanceM:           500,
-			StrongDistanceM:     200,
+			DistanceM:           200,
+			StrongDistanceM:     100,
 			LevThreshold:        0.15,
 			DensityThresholds:   map[string]DensityThreshold{},
 		},
-		Pricing: Pricing{DefaultCurrency: "RUB"},
+		Deduplication: Deduplication{DistanceM: 200},
+		Pricing:       Pricing{DefaultCurrency: "RUB"},
 	}
 }
 
@@ -286,6 +292,15 @@ func syncLegacy(cfg *Config) {
 	}
 	if cfg.Verification.LevThreshold == 0 {
 		cfg.Verification.LevThreshold = 0.15
+	}
+	if cfg.Deduplication.DistanceM == 0 {
+		cfg.Deduplication.DistanceM = 200
+	}
+	if cfg.Verification.DistanceM == 0 {
+		cfg.Verification.DistanceM = cfg.Deduplication.DistanceM
+	}
+	if cfg.Verification.StrongDistanceM == 0 {
+		cfg.Verification.StrongDistanceM = cfg.Deduplication.DistanceM / 2
 	}
 	if cfg.Verification.DensityThresholds == nil {
 		cfg.Verification.DensityThresholds = map[string]DensityThreshold{}

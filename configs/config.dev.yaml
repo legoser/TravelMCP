@@ -8,9 +8,7 @@ http:
   #   "/mcp": { rps: 20, burst: 40 }
 
 store:
-  kind: "memory" # memory|sqlite|postgres
-  # sqlite файл:  dsn: "sqlite://./data/travelmcp.db"
-  # sqlite memory: dsn: "memory"
+  kind: "postgres" # postgres|memory
   # postgres: dsn: "postgres://user:***@localhost:5432/travelmcp?sslmode=disable"
   dsn: "${DATABASE_DSN:-}" # env DATABASE_DSN или TRAVELMCP__STORE__DSN
   max_open_conns: 10

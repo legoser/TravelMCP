@@ -22,7 +22,6 @@ import (
 	"travelmcp/internal/store"
 	_ "travelmcp/internal/store/memory"
 	_ "travelmcp/internal/store/postgres"
-	_ "travelmcp/internal/store/sqlite"
 	"travelmcp/internal/support/httpx"
 	"travelmcp/internal/telemetry"
 

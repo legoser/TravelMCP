@@ -10,11 +10,20 @@ import (
 	"sync"
 	"time"
 
+	"travelmcp/internal/config"
 	"travelmcp/internal/geo"
 	"travelmcp/internal/model"
 	"travelmcp/internal/support/classifier"
 	"travelmcp/internal/support/timeutil"
 )
+
+func dedupDistanceKm() float64 {
+	cfg, _ := config.Load("")
+	if cfg != nil && cfg.Deduplication.DistanceM > 0 {
+		return float64(cfg.Deduplication.DistanceM) / 1000.0
+	}
+	return 0.2
+}
 
 const IntercityID = "intercity"
 
@@ -266,7 +275,7 @@ func (p *Intercity) build(ds *reestrDataset, day time.Time) *model.Network {
 // addTransferLinks строит пешие стыковки между географически близкими
 // остановками (разные терминалы одного узла: вокзал/автостанция).
 func (p *Intercity) addTransferLinks(net *model.Network) {
-	const maxKm = 0.4
+	maxKm := dedupDistanceKm()
 	for _, pair := range geo.NearbyPairs(net.Stops, maxKm) {
 		a, b := pair[0], pair[1]
 		d := geo.Haversine(a.Coordinates(), b.Coordinates())

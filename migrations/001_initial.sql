@@ -1,5 +1,3 @@
--- 001_initial.sql — единая миграция для первой загрузки (Фазы 1-2)
--- Чистая модель без ALTER, соответствует docs/14-plan.md §3
 -- PostGIS + pg_trgm + unaccent
 
 CREATE EXTENSION IF NOT EXISTS postgis;
@@ -36,15 +34,13 @@ CREATE TABLE IF NOT EXISTS carriers (
   inn text,
   name_ru text NOT NULL,
   name_en text,
-  provider_id text,
-  code text,
   address text,
   iata text,
   icao text,
   sirena text
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_carriers_inn ON carriers(inn) WHERE inn IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS uniq_carriers_provider_code ON carriers(provider_id, code) WHERE provider_id IS NOT NULL AND code IS NOT NULL;
+-- uniq_carriers_provider_code removed: carrier_identifiers is source of truth
 INSERT INTO carriers(id, inn, name_ru) VALUES (0, NULL, 'Неизвестный перевозчик') ON CONFLICT DO NOTHING;
 SELECT setval('carriers_id_seq', (SELECT GREATEST(MAX(id),0)+1 FROM carriers), false);
 
@@ -103,7 +99,8 @@ CREATE TABLE IF NOT EXISTS terminals (
   valid_from date NOT NULL DEFAULT CURRENT_DATE,
   valid_to date,
   is_current bool GENERATED ALWAYS AS (valid_to IS NULL) STORED,
-  last_verified_at timestamptz
+  last_verified_at timestamptz,
+  is_locked bool NOT NULL DEFAULT false
 );
 CREATE INDEX IF NOT EXISTS idx_terminals_place ON terminals(place_id);
 CREATE INDEX IF NOT EXISTS idx_terminals_geom ON terminals USING gist(geom);
@@ -137,8 +134,8 @@ CREATE TABLE IF NOT EXISTS stop_names (
 
 CREATE TABLE IF NOT EXISTS terminal_identifiers (
   terminal_id bigint NOT NULL REFERENCES terminals(id) ON DELETE CASCADE,
-  system text NOT NULL,
-  code_type text NOT NULL,
+  system text NOT NULL CHECK (system IN ('mintrans','yandex','osm','gtfs','motis','nominatim')),
+  code_type text NOT NULL CHECK (code_type IN ('op_reg','station_code','osm_id','gtfs_stop_id','motis_id','motis_stop_id','area','yandex_code')),
   code text NOT NULL,
   is_primary bool NOT NULL DEFAULT false,
   PRIMARY KEY (terminal_id, system, code_type),
@@ -161,75 +158,36 @@ CREATE TABLE IF NOT EXISTS provenance (
   actor_id bigint REFERENCES users(id) ON DELETE SET NULL,
   PRIMARY KEY (entity_type, entity_id, source)
 );
+CREATE TABLE IF NOT EXISTS provenance_history (
+  id bigserial PRIMARY KEY,
+  entity_type text NOT NULL CHECK (entity_type IN ('place','terminal','stop','route','trip')),
+  entity_id bigint NOT NULL,
+  source text NOT NULL REFERENCES providers(code),
+  confidence real NOT NULL CHECK (confidence >=0 AND confidence <=1),
+  observed_at timestamptz NOT NULL DEFAULT now(),
+  raw jsonb,
+  actor_id bigint REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_prov_hist_entity ON provenance_history(entity_type, entity_id, observed_at DESC);
+CREATE OR REPLACE FUNCTION trg_provenance_history() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN INSERT INTO provenance_history(entity_type, entity_id, source, confidence, observed_at, raw, actor_id) VALUES (NEW.entity_type, NEW.entity_id, NEW.source, NEW.confidence, NEW.observed_at, NEW.raw, NEW.actor_id); RETURN NEW; END; $$;
+DROP TRIGGER IF EXISTS trg_prov_history ON provenance;
+CREATE TRIGGER trg_prov_history AFTER INSERT OR UPDATE ON provenance FOR EACH ROW EXECUTE FUNCTION trg_provenance_history();
 
 CREATE TABLE IF NOT EXISTS review_queue (
   entity_type text NOT NULL CHECK (entity_type IN ('place','terminal','stop','route','trip')),
   entity_id bigint NOT NULL,
-  reason text NOT NULL,
+  reason text NOT NULL CHECK (reason IN ('low_confidence','missing_coords','duplicate_ambiguous','speed_implausible','seasonal_conflict','carrier_inn_null','conflicts_with_confirmed','legacy_missing_coords')),
   score real,
   created_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (entity_type, entity_id)
+  PRIMARY KEY (entity_type, entity_id, reason)
 );
 
--- Legacy группировки для импорта Минтранса (совместимо с sqlite, но как чистые таблицы первой загрузки)
-CREATE TABLE IF NOT EXISTS cities (
-  id bigserial PRIMARY KEY,
-  name text NOT NULL,
-  region_code text NOT NULL DEFAULT '',
-  lat double precision NOT NULL,
-  lon double precision NOT NULL,
-  timezone text,
-  population int,
-  kind text,
-  source text,
-  UNIQUE(name, region_code)
-);
-CREATE INDEX IF NOT EXISTS idx_cities_name_region ON cities(name, region_code);
-
-CREATE TABLE IF NOT EXISTS stations (
-  id bigserial PRIMARY KEY,
-  name text NOT NULL,
-  lat double precision NOT NULL DEFAULT 0,
-  lon double precision NOT NULL DEFAULT 0,
-  geo_cell bigint,
-  region_code text NOT NULL DEFAULT '',
-  timezone text,
-  quality_flags int,
-  primary_provider text,
-  city_id bigint REFERENCES cities(id) ON DELETE SET NULL,
-  UNIQUE(name, region_code)
-);
-CREATE INDEX IF NOT EXISTS idx_stations_name_region ON stations(name, region_code);
-CREATE INDEX IF NOT EXISTS idx_station_geo ON stations(geo_cell);
-CREATE INDEX IF NOT EXISTS idx_stations_city ON stations(city_id);
-
-CREATE TABLE IF NOT EXISTS station_codes (
-  station_id bigint NOT NULL REFERENCES stations(id) ON DELETE CASCADE,
-  provider_id text,
-  code_type text,
-  code text,
-  name_form text,
-  address text,
-  PRIMARY KEY(station_id, provider_id, code_type)
-);
-
-CREATE TABLE IF NOT EXISTS stops (
-  id bigserial PRIMARY KEY,
-  station_id bigint NOT NULL REFERENCES stations(id) ON DELETE CASCADE,
-  provider_id text NOT NULL,
-  external_code text NOT NULL,
-  stop_type text,
-  transport_type text,
-  name text,
-  raw_name text,
-  UNIQUE(provider_id, external_code)
-);
-CREATE INDEX IF NOT EXISTS idx_stops_station ON stops(station_id);
+-- legacy таблицы cities/stations/stops/station_codes удалены: импорт теперь пишет сразу в канон terminals/stops_canonical (см. docs/14-plan.md §3.3)
 
 -- 3.4 расписания
 CREATE TABLE IF NOT EXISTS routes (
   id bigserial PRIMARY KEY,
-  provider_id text NOT NULL,
   carrier_id bigint REFERENCES carriers(id) ON DELETE SET NULL,
   external_code text NOT NULL,
   short_name text,
@@ -241,7 +199,7 @@ CREATE TABLE IF NOT EXISTS routes (
   valid_from date NOT NULL DEFAULT CURRENT_DATE,
   valid_to date,
   last_verified_at timestamptz,
-  UNIQUE(provider_id, external_code)
+  UNIQUE(source_provider, external_code)
 );
 CREATE INDEX IF NOT EXISTS idx_routes_external ON routes(external_code);
 CREATE INDEX IF NOT EXISTS idx_routes_carrier ON routes(carrier_id);
@@ -250,8 +208,8 @@ CREATE TABLE IF NOT EXISTS services (
   id int PRIMARY KEY,
   provider_id text NOT NULL REFERENCES providers(code),
   name text,
-  start_date text,
-  end_date text
+  start_date date,
+  end_date date
 );
 CREATE INDEX IF NOT EXISTS idx_services_provider ON services(provider_id);
 
@@ -263,7 +221,7 @@ CREATE TABLE IF NOT EXISTS service_days (
 
 CREATE TABLE IF NOT EXISTS service_exceptions (
   service_id int NOT NULL REFERENCES services(id) ON DELETE CASCADE,
-  date text,
+  date date,
   exception_type text CHECK(exception_type IN ('added','removed')),
   PRIMARY KEY(service_id, date)
 );
@@ -285,7 +243,7 @@ CREATE INDEX IF NOT EXISTS idx_trips_service ON trips(service_id);
 
 CREATE TABLE IF NOT EXISTS stop_times (
   trip_id bigint NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
-  stop_id bigint NOT NULL REFERENCES stops(id) ON DELETE CASCADE,
+  stop_id bigint NOT NULL REFERENCES stops_canonical(id) ON DELETE CASCADE,
   seq int,
   arrival int,
   departure int,
@@ -298,12 +256,12 @@ CREATE INDEX IF NOT EXISTS idx_stop_times_trip ON stop_times(trip_id, seq);
 CREATE INDEX IF NOT EXISTS idx_stop_times_stop_departure ON stop_times(stop_id, departure);
 
 CREATE TABLE IF NOT EXISTS transfers (
-  from_stop_id bigint NOT NULL REFERENCES stops(id) ON DELETE CASCADE,
-  to_stop_id bigint NOT NULL REFERENCES stops(id) ON DELETE CASCADE,
+  from_stop_id bigint NOT NULL REFERENCES stops_canonical(id) ON DELETE CASCADE,
+  to_stop_id bigint NOT NULL REFERENCES stops_canonical(id) ON DELETE CASCADE,
   minutes int,
   min_transfer_time int,
   distance_m int,
-  within_station int,
+  within_station int, -- TODO: boolean, kept int for compat with legacy UpsertTransfer (0/1)
   type text,
   PRIMARY KEY(from_stop_id, to_stop_id)
 );
@@ -328,19 +286,22 @@ CREATE TABLE IF NOT EXISTS quality_issues (
   level text,
   code text,
   msg text,
-  at bigint
+  at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_quality_provider_code ON quality_issues(provider_id, code);
 
 CREATE TABLE IF NOT EXISTS imports (
-  provider_id text PRIMARY KEY,
-  at bigint,
-  records int,
-  status text,
+  id bigserial PRIMARY KEY,
+  provider_id text NOT NULL REFERENCES providers(code),
+  at timestamptz NOT NULL DEFAULT now(),
+  records int NOT NULL DEFAULT 0,
+  status text NOT NULL DEFAULT 'ok',
   snapshot text,
-  checksum text,
-  issues int
+  checksum text NOT NULL,
+  issues int NOT NULL DEFAULT 0,
+  UNIQUE(provider_id, checksum)
 );
+CREATE INDEX IF NOT EXISTS idx_imports_provider_at ON imports(provider_id, at DESC);
 
 CREATE TABLE IF NOT EXISTS users (
   id bigserial PRIMARY KEY,
@@ -348,7 +309,7 @@ CREATE TABLE IF NOT EXISTS users (
   pass_hash text,
   status text,
   role text,
-  created_at bigint,
+  created_at timestamptz NOT NULL DEFAULT now(),
   config text
 );
 
@@ -357,8 +318,8 @@ CREATE TABLE IF NOT EXISTS api_keys (
   user_id bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   key text UNIQUE,
   scopes text,
-  created_at bigint,
-  last_used bigint
+  created_at timestamptz NOT NULL DEFAULT now(),
+  last_used timestamptz
 );
 CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
 
@@ -506,8 +467,84 @@ CREATE INDEX IF NOT EXISTS idx_fare_rules_origin ON fare_rules(origin_zone);
 CREATE INDEX IF NOT EXISTS idx_fare_rules_dest ON fare_rules(destination_zone);
 
 CREATE TABLE IF NOT EXISTS stop_zones (
-  stop_id bigint NOT NULL REFERENCES stops(id) ON DELETE CASCADE,
+  stop_id bigint NOT NULL REFERENCES stops_canonical(id) ON DELETE CASCADE,
   zone_id text NOT NULL REFERENCES zones(zone_id) ON DELETE CASCADE,
   PRIMARY KEY (stop_id, zone_id)
 );
 CREATE INDEX IF NOT EXISTS idx_stop_zones_zone ON stop_zones(zone_id);
+
+-- === B+ per-region GTFS, import_logs, jobs/outbox, hysteresis, route_regions (merged from 002) ===
+-- 002_bplus.sql — B+ per-region GTFS, import_logs, jobs/outbox, hysteresis, route_regions
+-- Соответствует docs/14-plan.md §3.6/3.8/3.10, §2 Фаза 4 per-region
+
+-- route_regions M2M для межрегиональных рейсов (§2, §3.6)
+CREATE TABLE IF NOT EXISTS route_regions (
+  route_id bigint NOT NULL REFERENCES routes(id) ON DELETE CASCADE,
+  region_code text NOT NULL REFERENCES regions(code) ON DELETE CASCADE,
+  PRIMARY KEY(route_id, region_code)
+);
+CREATE INDEX IF NOT EXISTS idx_route_regions_region ON route_regions(region_code);
+
+CREATE INDEX IF NOT EXISTS idx_terminals_locked ON terminals(is_locked) WHERE is_locked;
+
+-- jobs queue (переиспользуемая) (§3.10) — создаётся до import_logs из-за FK
+CREATE TABLE IF NOT EXISTS jobs (
+  id bigserial PRIMARY KEY,
+  type text NOT NULL CHECK (type IN ('import_gtfs','sync_mintrans','sync_rail','notify','cleanup')),
+  payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+  region text,
+  state text NOT NULL CHECK (state IN ('pending','running','retry','done','dead')) DEFAULT 'pending',
+  attempts int NOT NULL DEFAULT 0,
+  next_run timestamptz NOT NULL DEFAULT now(),
+  last_error text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_state_next ON jobs(state, next_run) WHERE state IN ('pending','retry');
+CREATE INDEX IF NOT EXISTS idx_jobs_type ON jobs(type);
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_jobs_type_payload ON jobs((payload->>'hash')) WHERE state IN ('pending','running') AND payload ? 'hash';
+
+-- import_logs per-stop trace (§3.10)
+CREATE TABLE IF NOT EXISTS import_logs (
+  id bigserial PRIMARY KEY,
+  job_id bigint REFERENCES jobs(id) ON DELETE SET NULL,
+  entity_type text NOT NULL CHECK (entity_type IN ('place','terminal','stop','route','trip')),
+  entity_id text NOT NULL,
+  stage text NOT NULL CHECK (stage IN ('normalize','enrich','dedup','verify','canonical')),
+  action text NOT NULL,
+  confidence real,
+  distance_m int,
+  lev real,
+  source text,
+  at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_import_logs_job ON import_logs(job_id);
+CREATE INDEX IF NOT EXISTS idx_import_logs_entity ON import_logs(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_import_logs_at ON import_logs(at);
+-- партиционирование по at — в Фазе 6 ATTACH PARTITION, DDL совместим (PK включает at в будущем)
+
+-- outbox transactional (§3.10) — многопотребительский, добавляется при втором подписчике
+CREATE TABLE IF NOT EXISTS outbox (
+  id bigserial PRIMARY KEY,
+  aggregate text NOT NULL,
+  aggregate_id text NOT NULL,
+  event text NOT NULL,
+  payload jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_outbox_aggregate ON outbox(aggregate, aggregate_id);
+
+-- view для review списком (§3.10)
+CREATE OR REPLACE VIEW v_review_stops AS
+SELECT rq.entity_type, rq.entity_id, rq.reason, rq.score, rq.created_at,
+       t.geom, t.is_locked, tn.name as terminal_name, ti.code as identifier_code,
+       (SELECT il.stage || ':' || il.action FROM import_logs il WHERE il.entity_id = rq.entity_id::text ORDER BY il.at DESC LIMIT 1) as last_stage
+FROM review_queue rq
+LEFT JOIN terminals t ON rq.entity_type='terminal' AND t.id = rq.entity_id
+LEFT JOIN terminal_names tn ON tn.terminal_id = t.id AND tn.lang='ru'
+LEFT JOIN terminal_identifiers ti ON ti.terminal_id = t.id AND ti.is_primary = true;
+
+-- карантин legacy-дефектов (§7 ревью): lat=0 или дубли 0м — сразу в review_queue (разовый скрипт, не триггер)
+-- INSERT INTO review_queue(entity_type, entity_id, reason, score)
+-- SELECT 'terminal', id, 'legacy_missing_coords', 0 FROM terminals WHERE ST_Y(geom::geometry)=0 AND ST_X(geom::geometry)=0 ON CONFLICT DO NOTHING;
+

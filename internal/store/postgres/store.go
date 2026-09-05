@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"database/sql"
 	"context"
 	"fmt"
 	"log/slog"
@@ -16,10 +17,7 @@ import (
 	store "travelmcp/internal/store"
 )
 
-type CityRow = store.CityRow
-type StationRow = store.StationRow
 type StopRow = store.StopRow
-type StationCodeRow = store.StationCodeRow
 type CarrierRow = store.CarrierRow
 type RouteRow = store.RouteRow
 type TripRow = store.TripRow
@@ -122,61 +120,56 @@ func (p *PostgresStore) WithTx(ctx context.Context, fn func(store.Store) error) 
 	return tx.Commit(ctx)
 }
 
-func (p *PostgresStore) UpsertCity(ctx context.Context, c CityRow) (int64, error) {
-	if p.pool == nil {
-		return 0, errNotImplemented
-	}
-	var id int64
-	err := p.pool.QueryRow(ctx, `INSERT INTO cities(name, region_code, lat, lon, timezone, population, kind, source) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(name, region_code) DO UPDATE SET lat=EXCLUDED.lat, lon=EXCLUDED.lon, timezone=EXCLUDED.timezone, kind=EXCLUDED.kind RETURNING id`, c.Name, c.RegionCode, c.Lat, c.Lon, c.Timezone, c.Population, c.Kind, c.Source).Scan(&id)
-	if err != nil {
-		return 0, err
-	}
-	return id, nil
-}
-func (p *PostgresStore) UpsertStation(ctx context.Context, s StationRow) (int64, error) {
-	if p.pool == nil {
-		return 0, errNotImplemented
-	}
-	if s.ID != 0 {
-		var id int64
-		err := p.pool.QueryRow(ctx, `INSERT INTO stations(id, name, lat, lon, geo_cell, region_code, timezone, quality_flags, primary_provider, city_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name, lat=EXCLUDED.lat, lon=EXCLUDED.lon, geo_cell=EXCLUDED.geo_cell, region_code=EXCLUDED.region_code, quality_flags=EXCLUDED.quality_flags, city_id=EXCLUDED.city_id RETURNING id`, s.ID, s.Name, s.Lat, s.Lon, s.GeoCell, s.RegionCode, s.Timezone, s.QualityFlags, s.PrimaryProvider, s.CityID).Scan(&id)
-		return s.ID, err
-	}
-	var id int64
-	err := p.pool.QueryRow(ctx, `INSERT INTO stations(name, lat, lon, geo_cell, region_code, timezone, quality_flags, primary_provider, city_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(name, region_code) DO UPDATE SET lat=EXCLUDED.lat, lon=EXCLUDED.lon, geo_cell=EXCLUDED.geo_cell, quality_flags=EXCLUDED.quality_flags, city_id=EXCLUDED.city_id RETURNING id`, s.Name, s.Lat, s.Lon, s.GeoCell, s.RegionCode, s.Timezone, s.QualityFlags, s.PrimaryProvider, s.CityID).Scan(&id)
-	return id, err
-}
+
+
 func (p *PostgresStore) UpsertStop(ctx context.Context, s StopRow) (int64, error) {
 	if p.pool == nil {
 		return 0, errNotImplemented
 	}
 	var id int64
+	if s.TerminalID == 0 {
+		return 0, fmt.Errorf("UpsertStop: terminal_id required")
+	}
 	if s.ID != 0 {
-		err := p.pool.QueryRow(ctx, `INSERT INTO stops(id, station_id, provider_id, external_code, stop_type, transport_type, name, raw_name) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(provider_id, external_code) DO UPDATE SET station_id=EXCLUDED.station_id, name=EXCLUDED.name RETURNING id`, s.ID, s.StationID, s.ProviderID, s.ExternalCode, s.StopType, s.TransportType, s.Name, s.RawName).Scan(&id)
+		err := p.pool.QueryRow(ctx, `INSERT INTO stops_canonical(id, terminal_id, geom, stop_type) VALUES($1,$2, ST_SetSRID(ST_MakePoint($3,$4),4326)::geography, $5) ON CONFLICT(id) DO UPDATE SET terminal_id=EXCLUDED.terminal_id, geom=EXCLUDED.geom RETURNING id`, s.ID, s.TerminalID, s.Lon, s.Lat, s.StopType).Scan(&id)
 		if err == nil {
+			if s.Name != "" {
+				_, _ = p.pool.Exec(ctx, `INSERT INTO stop_names(stop_id, lang, name) VALUES($1,'ru',$2) ON CONFLICT(stop_id, lang) DO UPDATE SET name=EXCLUDED.name`, s.ID, s.Name)
+			}
 			return s.ID, nil
 		}
 		return 0, err
 	}
-	err := p.pool.QueryRow(ctx, `INSERT INTO stops(station_id, provider_id, external_code, stop_type, transport_type, name, raw_name) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(provider_id, external_code) DO UPDATE SET station_id=EXCLUDED.station_id, name=EXCLUDED.name RETURNING id`, s.StationID, s.ProviderID, s.ExternalCode, s.StopType, s.TransportType, s.Name, s.RawName).Scan(&id)
+	err := p.pool.QueryRow(ctx, `INSERT INTO stops_canonical(terminal_id, geom, stop_type) VALUES($1, ST_SetSRID(ST_MakePoint($2,$3),4326)::geography, $4) RETURNING id`, s.TerminalID, s.Lon, s.Lat, s.StopType).Scan(&id)
+	if err == nil && s.Name != "" {
+		_, _ = p.pool.Exec(ctx, `INSERT INTO stop_names(stop_id, lang, name) VALUES($1,'ru',$2) ON CONFLICT(stop_id, lang) DO UPDATE SET name=EXCLUDED.name`, id, s.Name)
+	}
 	return id, err
 }
-func (p *PostgresStore) UpsertStationCode(ctx context.Context, c StationCodeRow) error {
-	if p.pool == nil {
-		return nil
-	}
-	_, err := p.pool.Exec(ctx, `INSERT INTO station_codes(station_id, provider_id, code_type, code, name_form, address) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(station_id, provider_id, code_type) DO UPDATE SET code=EXCLUDED.code`, c.StationID, c.ProviderID, c.CodeType, c.Code, c.NameForm, c.Address)
-	return err
-}
+
 func (p *PostgresStore) UpsertCarrier(ctx context.Context, c CarrierRow) (int64, error) {
 	if p.pool == nil {
 		return 0, errNotImplemented
 	}
 	var id int64
-	err := p.pool.QueryRow(ctx, `INSERT INTO carriers(provider_id, name, code, inn, address, iata, icao, sirena) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(provider_id, code) DO UPDATE SET name=EXCLUDED.name, inn=EXCLUDED.inn, address=EXCLUDED.address RETURNING id`, c.ProviderID, c.Name, c.Code, c.INN, c.Address, c.IATA, c.ICAO, c.Sirena).Scan(&id)
+	if c.INN != "" {
+		err := p.pool.QueryRow(ctx, `INSERT INTO carriers(inn, name_ru, address, iata, icao, sirena) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(inn) WHERE inn IS NOT NULL DO UPDATE SET name_ru=EXCLUDED.name_ru, address=EXCLUDED.address RETURNING id`, c.INN, c.Name, c.Address, c.IATA, c.ICAO, c.Sirena).Scan(&id)
+		if err == nil {
+			_, _ = p.pool.Exec(ctx, `INSERT INTO carrier_identifiers(carrier_id, system, code_type, code) VALUES($1,'mintrans','inn',$2) ON CONFLICT DO NOTHING`, id, c.INN)
+			if c.Code != "" && c.Code != c.INN {
+				_, _ = p.pool.Exec(ctx, `INSERT INTO carrier_identifiers(carrier_id, system, code_type, code) VALUES($1,'mintrans','code',$2) ON CONFLICT DO NOTHING`, id, c.Code)
+			}
+			return id, nil
+		}
+		_ = p.pool.QueryRow(ctx, `SELECT id FROM carriers WHERE inn=$1`, c.INN).Scan(&id)
+		return id, err
+	}
+	err := p.pool.QueryRow(ctx, `INSERT INTO carriers(name_ru, address, iata, icao, sirena) VALUES($1,$2,$3,$4,$5) RETURNING id`, c.Name, c.Address, c.IATA, c.ICAO, c.Sirena).Scan(&id)
 	if err != nil {
-		// try fallback select
-		_ = p.pool.QueryRow(ctx, `SELECT id FROM carriers WHERE provider_id=$1 AND code=$2`, c.ProviderID, c.Code).Scan(&id)
+		_ = p.pool.QueryRow(ctx, `SELECT id FROM carriers WHERE name_ru=$1 AND address=$2`, c.Name, c.Address).Scan(&id)
+	}
+	if c.Code != "" {
+		_, _ = p.pool.Exec(ctx, `INSERT INTO carrier_identifiers(carrier_id, system, code_type, code) VALUES($1,'mintrans','code',$2) ON CONFLICT DO NOTHING`, id, c.Code)
 	}
 	return id, err
 }
@@ -185,8 +178,19 @@ func (p *PostgresStore) UpsertRoute(ctx context.Context, r RouteRow) (int64, err
 		return 0, errNotImplemented
 	}
 	var id int64
-	err := p.pool.QueryRow(ctx, `INSERT INTO routes(provider_id, carrier_id, external_code, short_name, long_name, mode, external_uid, ord, source_provider) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$1) ON CONFLICT(provider_id, external_code) DO UPDATE SET long_name=EXCLUDED.long_name, short_name=EXCLUDED.short_name RETURNING id`, r.ProviderID, r.CarrierID, r.ExternalCode, r.ShortName, r.LongName, r.Mode, r.ExternalUID, r.Ord).Scan(&id)
+	src := r.ProviderID
+	if src == "" {
+		src = "mintrans"
+	}
+	err := p.pool.QueryRow(ctx, `INSERT INTO routes(carrier_id, external_code, short_name, long_name, mode, external_uid, ord, source_provider) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(source_provider, external_code) DO UPDATE SET long_name=EXCLUDED.long_name, short_name=EXCLUDED.short_name, carrier_id=EXCLUDED.carrier_id RETURNING id`, r.CarrierID, r.ExternalCode, r.ShortName, r.LongName, r.Mode, r.ExternalUID, r.Ord, src).Scan(&id)
 	return id, err
+}
+func (p *PostgresStore) UpsertRouteRegion(ctx context.Context, routeID int64, region string) error {
+	if p.pool == nil {
+		return nil
+	}
+	_, err := p.pool.Exec(ctx, `INSERT INTO route_regions(route_id, region_code) VALUES($1,$2) ON CONFLICT DO NOTHING`, routeID, region)
+	return err
 }
 func (p *PostgresStore) UpsertTrip(ctx context.Context, t TripRow) (int64, error) {
 	if p.pool == nil {
@@ -222,7 +226,7 @@ func (p *PostgresStore) SaveQualityIssue(ctx context.Context, q QualityRow) erro
 	if p.pool == nil {
 		return nil
 	}
-	_, err := p.pool.Exec(ctx, `INSERT INTO quality_issues(provider_id, entity, entity_id, level, code, msg, at) VALUES($1,$2,$3,$4,$5,$6,$7)`, q.ProviderID, q.Entity, q.EntityID, q.Level, q.Code, q.Msg, q.At)
+	_, err := p.pool.Exec(ctx, `INSERT INTO quality_issues(provider_id, entity, entity_id, level, code, msg, at) VALUES($1,$2,$3,$4,$5,$6,to_timestamp($7))`, q.ProviderID, q.Entity, q.EntityID, q.Level, q.Code, q.Msg, q.At)
 	return err
 }
 func (p *PostgresStore) ClearQualityIssues(ctx context.Context, providerID string) error {
@@ -238,12 +242,10 @@ func (p *PostgresStore) ClearProviderData(ctx context.Context, providerID string
 	}
 	_, _ = p.pool.Exec(ctx, `DELETE FROM stop_times WHERE trip_id IN (SELECT id FROM trips WHERE provider_id=$1)`, providerID)
 	_, _ = p.pool.Exec(ctx, `DELETE FROM transfers WHERE from_stop_id IN (SELECT id FROM stops WHERE provider_id=$1) OR to_stop_id IN (SELECT id FROM stops WHERE provider_id=$1)`, providerID, providerID)
-	_, _ = p.pool.Exec(ctx, `DELETE FROM stops WHERE provider_id=$1`, providerID)
+	_, _ = p.pool.Exec(ctx, `DELETE FROM stop_times WHERE trip_id IN (SELECT id FROM trips WHERE provider_id=$1)`, providerID)
 	_, _ = p.pool.Exec(ctx, `DELETE FROM trips WHERE provider_id=$1`, providerID)
-	_, _ = p.pool.Exec(ctx, `DELETE FROM routes WHERE provider_id=$1`, providerID)
-	_, _ = p.pool.Exec(ctx, `DELETE FROM carriers WHERE provider_id=$1`, providerID)
+	_, _ = p.pool.Exec(ctx, `DELETE FROM routes WHERE source_provider=$1`, providerID)
 	_, _ = p.pool.Exec(ctx, `DELETE FROM services WHERE provider_id=$1`, providerID)
-	_, _ = p.pool.Exec(ctx, `DELETE FROM stations WHERE primary_provider=$1`, providerID)
 	return nil
 }
 func (p *PostgresStore) UpsertService(ctx context.Context, s ServiceRow) error {
@@ -296,14 +298,22 @@ func (p *PostgresStore) UpsertTerminal(ctx context.Context, r TerminalRow, names
 	if p.pool == nil {
 		return 0, errNotImplemented
 	}
+	if r.ID != 0 {
+		var locked bool
+		_ = p.pool.QueryRow(ctx, `SELECT is_locked FROM terminals WHERE id=$1`, r.ID).Scan(&locked)
+		if locked {
+			_ = p.SaveReviewQueue(ctx, model.ReviewQueueEntry{EntityType: "terminal", EntityID: r.ID, Reason: "conflicts_with_confirmed", Score: 0})
+			return r.ID, nil
+		}
+	}
 	var id int64
 	if r.ID != 0 {
-		err := p.pool.QueryRow(ctx, `INSERT INTO terminals(id, place_id, geom, tz, validity, osm_compatible_name, valid_from, valid_to, last_verified_at) VALUES($1,$2,ST_SetSRID(ST_MakePoint($3,$4),4326)::geography,$5, daterange($6::date, $7::date, '[]'), $8, $9, $10, $11) ON CONFLICT(id) DO UPDATE SET place_id=EXCLUDED.place_id, geom=EXCLUDED.geom, tz=EXCLUDED.tz RETURNING id`, r.ID, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.OsmName, r.ValidFrom, r.ValidTo, r.LastVerifiedAt).Scan(&id)
+		err := p.pool.QueryRow(ctx, `INSERT INTO terminals(id, place_id, geom, tz, validity, osm_compatible_name, valid_from, valid_to, last_verified_at, is_locked) VALUES($1,$2,ST_SetSRID(ST_MakePoint($3,$4),4326)::geography,$5, daterange($6::date, $7::date, '[]'), $8, $9, $10, $11, $12) ON CONFLICT(id) DO UPDATE SET place_id=EXCLUDED.place_id, geom=EXCLUDED.geom, tz=EXCLUDED.tz, is_locked=terminals.is_locked RETURNING id`, r.ID, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.OsmName, r.ValidFrom, r.ValidTo, r.LastVerifiedAt, r.IsLocked).Scan(&id)
 		if err != nil {
 			return 0, err
 		}
 	} else {
-		err := p.pool.QueryRow(ctx, `INSERT INTO terminals(place_id, geom, tz, validity, osm_compatible_name, valid_from, valid_to, last_verified_at) VALUES($1,ST_SetSRID(ST_MakePoint($2,$3),4326)::geography,$4, daterange($5::date, $6::date, '[]'), $7, $8, $9, $10) RETURNING id`, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.OsmName, r.ValidFrom, r.ValidTo, r.LastVerifiedAt).Scan(&id)
+		err := p.pool.QueryRow(ctx, `INSERT INTO terminals(place_id, geom, tz, validity, osm_compatible_name, valid_from, valid_to, last_verified_at, is_locked) VALUES($1,ST_SetSRID(ST_MakePoint($2,$3),4326)::geography,$4, daterange($5::date, $6::date, '[]'), $7, $8, $9, $10, $11) RETURNING id`, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.OsmName, r.ValidFrom, r.ValidTo, r.LastVerifiedAt, r.IsLocked).Scan(&id)
 		if err != nil {
 			return 0, err
 		}
@@ -335,7 +345,7 @@ func (p *PostgresStore) SaveReviewQueue(ctx context.Context, e model.ReviewQueue
 	if p.pool == nil {
 		return nil
 	}
-	_, err := p.pool.Exec(ctx, `INSERT INTO review_queue(entity_type, entity_id, reason, score) VALUES($1,$2,$3,$4) ON CONFLICT(entity_type, entity_id) DO UPDATE SET reason=EXCLUDED.reason, score=EXCLUDED.score`, e.EntityType, e.EntityID, e.Reason, e.Score)
+	_, err := p.pool.Exec(ctx, `INSERT INTO review_queue(entity_type, entity_id, reason, score) VALUES($1,$2,$3,$4) ON CONFLICT(entity_type, entity_id, reason) DO UPDATE SET score=EXCLUDED.score`, e.EntityType, e.EntityID, e.Reason, e.Score)
 	return err
 }
 func (p *PostgresStore) GetPlaceCity(ctx context.Context, placeID int64) (int64, string, error) {
@@ -353,6 +363,14 @@ func (p *PostgresStore) GetPlaceCity(ctx context.Context, placeID int64) (int64,
 	}
 	return id, *tz, nil
 }
+func (p *PostgresStore) LogImportEntry(ctx context.Context, jobID int64, entityType, entityID, stage, action string, confidence float64, distanceM int, lev float64, source string) error {
+	if p.pool == nil {
+		return nil
+	}
+	_, err := p.pool.Exec(ctx, `INSERT INTO import_logs(job_id, entity_type, entity_id, stage, action, confidence, distance_m, lev, source) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		jobID, entityType, entityID, stage, action, confidence, distanceM, lev, source)
+	return err
+}
 func (p *PostgresStore) ImportAdaptedRecords(ctx context.Context, records []model.AdaptedRecord) (int, int, error) {
 	return 0, 0, errNotImplemented
 }
@@ -365,36 +383,27 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 		allow[pr] = true
 	}
 	net := model.NewNetwork()
-	stations := map[int64]StationRow{}
-	rows, err := p.pool.Query(ctx, `SELECT id, name, lat, lon, geo_cell, region_code, timezone, quality_flags, primary_provider FROM stations`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var r StationRow
-		_ = rows.Scan(&r.ID, &r.Name, &r.Lat, &r.Lon, &r.GeoCell, &r.RegionCode, &r.Timezone, &r.QualityFlags, &r.PrimaryProvider)
-		stations[r.ID] = r
-	}
 	stopIDMap := map[int64]string{}
-	srows, err := p.pool.Query(ctx, `SELECT id, station_id, provider_id, external_code, stop_type, transport_type, name, raw_name FROM stops`)
+	// canonical stops: stops_canonical + stop_names + terminals geom
+	srows, err := p.pool.Query(ctx, `SELECT sc.id, sc.terminal_id, ST_Y(sc.geom::geometry) as lat, ST_X(sc.geom::geometry) as lon, sc.stop_type, coalesce(sn.name, tname.name, 'stop') as name FROM stops_canonical sc LEFT JOIN stop_names sn ON sn.stop_id=sc.id AND sn.lang='ru' LEFT JOIN terminal_names tname ON tname.terminal_id=sc.terminal_id AND tname.lang='ru'`)
 	if err != nil {
 		return nil, err
 	}
 	defer srows.Close()
 	for srows.Next() {
-		var r StopRow
-		_ = srows.Scan(&r.ID, &r.StationID, &r.ProviderID, &r.ExternalCode, &r.StopType, &r.TransportType, &r.Name, &r.RawName)
-		if len(allow) > 0 && !allow[r.ProviderID] {
-			continue
+		var id, terminalID int64
+		var lat, lon sql.NullFloat64
+		var stopType, name sql.NullString
+		_ = srows.Scan(&id, &terminalID, &lat, &lon, &stopType, &name)
+		la, lo := 0.0, 0.0
+		if lat.Valid { la = lat.Float64 }
+		if lon.Valid { lo = lon.Float64 }
+		if !lat.Valid || !lon.Valid {
+			_ = p.pool.QueryRow(ctx, `SELECT ST_Y(geom::geometry), ST_X(geom::geometry) FROM terminals WHERE id=$1`, terminalID).Scan(&la, &lo)
 		}
-		st, ok := stations[r.StationID]
-		lat, lon := 0.0, 0.0
-		if ok {
-			lat, lon = st.Lat, st.Lon
-		}
-		net.Stops[r.ExternalCode] = &model.Stop{ID: r.ExternalCode, ProviderID: r.ProviderID, Name: r.Name, Lat: lat, Lon: lon, Type: model.StopType(r.StopType)}
-		stopIDMap[r.ID] = r.ExternalCode
+		code := fmt.Sprintf("%d", id)
+		net.Stops[code] = &model.Stop{ID: code, ProviderID: "mintrans", Name: name.String, Lat: la, Lon: lo, Type: model.StopType(stopType.String)}
+		stopIDMap[id] = code
 	}
 	routeRows, err := p.pool.Query(ctx, `SELECT id, provider_id, carrier_id, external_code, short_name, long_name, mode FROM routes`)
 	if err != nil {
@@ -537,14 +546,14 @@ func (p *PostgresStore) MarkImported(ctx context.Context, providerID string, at 
 	if p.pool == nil {
 		return nil
 	}
-	_, err := p.pool.Exec(ctx, `INSERT INTO imports(provider_id, at, records, status) VALUES($1,$2,$3,$4) ON CONFLICT(provider_id) DO UPDATE SET at=EXCLUDED.at, records=EXCLUDED.records`, providerID, at.Unix(), records, "ok")
+	_, err := p.pool.Exec(ctx, `INSERT INTO imports(provider_id, at, records, status, checksum) VALUES($1,$2,$3,$4, 'legacy') ON CONFLICT(provider_id, checksum) DO UPDATE SET at=EXCLUDED.at, records=EXCLUDED.records`, providerID, at, records, "ok")
 	return err
 }
 func (p *PostgresStore) MarkImportedVersion(ctx context.Context, providerID, snapshot, checksum string, at time.Time, records, issues int) error {
 	if p.pool == nil {
 		return nil
 	}
-	_, err := p.pool.Exec(ctx, `INSERT INTO imports(provider_id, at, records, status, snapshot, checksum, issues) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(provider_id) DO UPDATE SET at=EXCLUDED.at, records=EXCLUDED.records, snapshot=EXCLUDED.snapshot, checksum=EXCLUDED.checksum, issues=EXCLUDED.issues`, providerID, at.Unix(), records, "ok", snapshot, checksum, issues)
+	_, err := p.pool.Exec(ctx, `INSERT INTO imports(provider_id, at, records, status, snapshot, checksum, issues) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(provider_id, checksum) DO UPDATE SET at=EXCLUDED.at, records=EXCLUDED.records, snapshot=EXCLUDED.snapshot, issues=EXCLUDED.issues`, providerID, at, records, "ok", snapshot, checksum, issues)
 	return err
 }
 func (p *PostgresStore) GetImport(ctx context.Context, providerID string) (ImportRow, bool) {
@@ -552,31 +561,9 @@ func (p *PostgresStore) GetImport(ctx context.Context, providerID string) (Impor
 		return ImportRow{}, false
 	}
 	var r ImportRow
-	err := p.pool.QueryRow(ctx, `SELECT provider_id, at, records, status, snapshot, checksum, issues FROM imports WHERE provider_id=$1`, providerID).Scan(&r.ProviderID, &r.At, &r.Records, &r.Status, &r.Snapshot, &r.Checksum, &r.Issues)
+	err := p.pool.QueryRow(ctx, `SELECT provider_id, extract(epoch from at)::bigint, records, status, snapshot, checksum, issues FROM imports WHERE provider_id=$1 ORDER BY at DESC LIMIT 1`, providerID).Scan(&r.ProviderID, &r.At, &r.Records, &r.Status, &r.Snapshot, &r.Checksum, &r.Issues)
 	if err != nil {
 		return ImportRow{}, false
-	}
-	return r, true
-}
-func (p *PostgresStore) FindStation(ctx context.Context, name, region string) (StationRow, bool) {
-	if p.pool == nil {
-		return StationRow{}, false
-	}
-	var r StationRow
-	err := p.pool.QueryRow(ctx, `SELECT id, name, lat, lon, geo_cell, region_code, timezone, quality_flags, primary_provider FROM stations WHERE name=$1 AND region_code=$2 LIMIT 1`, name, region).Scan(&r.ID, &r.Name, &r.Lat, &r.Lon, &r.GeoCell, &r.RegionCode, &r.Timezone, &r.QualityFlags, &r.PrimaryProvider)
-	if err != nil || (r.Lat == 0 && r.Lon == 0) {
-		return StationRow{}, false
-	}
-	return r, true
-}
-func (p *PostgresStore) FindStationAny(ctx context.Context, name, region string) (StationRow, bool) {
-	if p.pool == nil {
-		return StationRow{}, false
-	}
-	var r StationRow
-	err := p.pool.QueryRow(ctx, `SELECT id, name, lat, lon, geo_cell, region_code, timezone, quality_flags, primary_provider FROM stations WHERE name=$1 AND region_code=$2 LIMIT 1`, name, region).Scan(&r.ID, &r.Name, &r.Lat, &r.Lon, &r.GeoCell, &r.RegionCode, &r.Timezone, &r.QualityFlags, &r.PrimaryProvider)
-	if err != nil {
-		return StationRow{}, false
 	}
 	return r, true
 }
@@ -624,49 +611,59 @@ type pgTxStore struct {
 func (t *pgTxStore) Migrate(ctx context.Context) error                            { return nil }
 func (t *pgTxStore) Close() error                                                 { return nil }
 func (t *pgTxStore) WithTx(ctx context.Context, fn func(store.Store) error) error { return fn(t) }
-func (t *pgTxStore) UpsertCity(ctx context.Context, c CityRow) (int64, error) {
-	var id int64
-	err := t.tx.QueryRow(ctx, `INSERT INTO cities(name, region_code, lat, lon, timezone, population, kind, source) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(name, region_code) DO UPDATE SET lat=EXCLUDED.lat, lon=EXCLUDED.lon RETURNING id`, c.Name, c.RegionCode, c.Lat, c.Lon, c.Timezone, c.Population, c.Kind, c.Source).Scan(&id)
-	return id, err
-}
-func (t *pgTxStore) UpsertStation(ctx context.Context, s StationRow) (int64, error) {
-	if s.ID != 0 {
-		var id int64
-		err := t.tx.QueryRow(ctx, `INSERT INTO stations(id, name, lat, lon, geo_cell, region_code, timezone, quality_flags, primary_provider, city_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name, lat=EXCLUDED.lat, lon=EXCLUDED.lon RETURNING id`, s.ID, s.Name, s.Lat, s.Lon, s.GeoCell, s.RegionCode, s.Timezone, s.QualityFlags, s.PrimaryProvider, s.CityID).Scan(&id)
-		return s.ID, err
+
+
+func (t *pgTxStore) UpsertStop(ctx context.Context, s StopRow) (int64, error) {
+	if s.TerminalID == 0 {
+		return 0, fmt.Errorf("UpsertStop: terminal_id required")
 	}
 	var id int64
-	err := t.tx.QueryRow(ctx, `INSERT INTO stations(name, lat, lon, geo_cell, region_code, timezone, quality_flags, primary_provider, city_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(name, region_code) DO UPDATE SET lat=EXCLUDED.lat, lon=EXCLUDED.lon RETURNING id`, s.Name, s.Lat, s.Lon, s.GeoCell, s.RegionCode, s.Timezone, s.QualityFlags, s.PrimaryProvider, s.CityID).Scan(&id)
-	return id, err
-}
-func (t *pgTxStore) UpsertStop(ctx context.Context, s StopRow) (int64, error) {
-	var id int64
 	if s.ID != 0 {
-		err := t.tx.QueryRow(ctx, `INSERT INTO stops(id, station_id, provider_id, external_code, stop_type, transport_type, name, raw_name) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(provider_id, external_code) DO UPDATE SET station_id=EXCLUDED.station_id RETURNING id`, s.ID, s.StationID, s.ProviderID, s.ExternalCode, s.StopType, s.TransportType, s.Name, s.RawName).Scan(&id)
+		err := t.tx.QueryRow(ctx, `INSERT INTO stops_canonical(id, terminal_id, geom, stop_type) VALUES($1,$2, ST_SetSRID(ST_MakePoint($3,$4),4326)::geography, $5) ON CONFLICT(id) DO UPDATE SET terminal_id=EXCLUDED.terminal_id, geom=EXCLUDED.geom RETURNING id`, s.ID, s.TerminalID, s.Lon, s.Lat, s.StopType).Scan(&id)
 		if err == nil {
+			if s.Name != "" {
+				_, _ = t.tx.Exec(ctx, `INSERT INTO stop_names(stop_id, lang, name) VALUES($1,'ru',$2) ON CONFLICT(stop_id, lang) DO UPDATE SET name=EXCLUDED.name`, s.ID, s.Name)
+			}
 			return s.ID, nil
 		}
 		return 0, err
 	}
-	err := t.tx.QueryRow(ctx, `INSERT INTO stops(station_id, provider_id, external_code, stop_type, transport_type, name, raw_name) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(provider_id, external_code) DO UPDATE SET station_id=EXCLUDED.station_id RETURNING id`, s.StationID, s.ProviderID, s.ExternalCode, s.StopType, s.TransportType, s.Name, s.RawName).Scan(&id)
+	err := t.tx.QueryRow(ctx, `INSERT INTO stops_canonical(terminal_id, geom, stop_type) VALUES($1, ST_SetSRID(ST_MakePoint($2,$3),4326)::geography, $4) RETURNING id`, s.TerminalID, s.Lon, s.Lat, s.StopType).Scan(&id)
+	if err == nil && s.Name != "" {
+		_, _ = t.tx.Exec(ctx, `INSERT INTO stop_names(stop_id, lang, name) VALUES($1,'ru',$2) ON CONFLICT(stop_id, lang) DO UPDATE SET name=EXCLUDED.name`, id, s.Name)
+	}
 	return id, err
 }
-func (t *pgTxStore) UpsertStationCode(ctx context.Context, c StationCodeRow) error {
-	_, err := t.tx.Exec(ctx, `INSERT INTO station_codes(station_id, provider_id, code_type, code, name_form, address) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(station_id, provider_id, code_type) DO UPDATE SET code=EXCLUDED.code`, c.StationID, c.ProviderID, c.CodeType, c.Code, c.NameForm, c.Address)
-	return err
-}
+
 func (t *pgTxStore) UpsertCarrier(ctx context.Context, c CarrierRow) (int64, error) {
 	var id int64
-	err := t.tx.QueryRow(ctx, `INSERT INTO carriers(provider_id, name, code, inn, address, iata, icao, sirena) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(provider_id, code) DO UPDATE SET name=EXCLUDED.name RETURNING id`, c.ProviderID, c.Name, c.Code, c.INN, c.Address, c.IATA, c.ICAO, c.Sirena).Scan(&id)
-	if err != nil {
-		_ = t.tx.QueryRow(ctx, `SELECT id FROM carriers WHERE provider_id=$1 AND code=$2`, c.ProviderID, c.Code).Scan(&id)
+	if c.INN != "" {
+		err := t.tx.QueryRow(ctx, `INSERT INTO carriers(inn, name_ru, address, iata, icao, sirena) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(inn) WHERE inn IS NOT NULL DO UPDATE SET name_ru=EXCLUDED.name_ru, address=EXCLUDED.address RETURNING id`, c.INN, c.Name, c.Address, c.IATA, c.ICAO, c.Sirena).Scan(&id)
+		if err == nil {
+			_, _ = t.tx.Exec(ctx, `INSERT INTO carrier_identifiers(carrier_id, system, code_type, code) VALUES($1,'mintrans','inn',$2) ON CONFLICT DO NOTHING`, id, c.INN)
+			return id, nil
+		}
+		_ = t.tx.QueryRow(ctx, `SELECT id FROM carriers WHERE inn=$1`, c.INN).Scan(&id)
+		return id, err
+	}
+	err := t.tx.QueryRow(ctx, `INSERT INTO carriers(name_ru, address, iata, icao, sirena) VALUES($1,$2,$3,$4,$5) RETURNING id`, c.Name, c.Address, c.IATA, c.ICAO, c.Sirena).Scan(&id)
+	if c.Code != "" {
+		_, _ = t.tx.Exec(ctx, `INSERT INTO carrier_identifiers(carrier_id, system, code_type, code) VALUES($1,'mintrans','code',$2) ON CONFLICT DO NOTHING`, id, c.Code)
 	}
 	return id, err
 }
 func (t *pgTxStore) UpsertRoute(ctx context.Context, r RouteRow) (int64, error) {
 	var id int64
-	err := t.tx.QueryRow(ctx, `INSERT INTO routes(provider_id, carrier_id, external_code, short_name, long_name, mode, external_uid, ord, source_provider) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$1) ON CONFLICT(provider_id, external_code) DO UPDATE SET long_name=EXCLUDED.long_name RETURNING id`, r.ProviderID, r.CarrierID, r.ExternalCode, r.ShortName, r.LongName, r.Mode, r.ExternalUID, r.Ord).Scan(&id)
+	src := r.ProviderID
+	if src == "" {
+		src = "mintrans"
+	}
+	err := t.tx.QueryRow(ctx, `INSERT INTO routes(carrier_id, external_code, short_name, long_name, mode, external_uid, ord, source_provider) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(source_provider, external_code) DO UPDATE SET long_name=EXCLUDED.long_name, short_name=EXCLUDED.short_name, carrier_id=EXCLUDED.carrier_id RETURNING id`, r.CarrierID, r.ExternalCode, r.ShortName, r.LongName, r.Mode, r.ExternalUID, r.Ord, src).Scan(&id)
 	return id, err
+}
+func (t *pgTxStore) UpsertRouteRegion(ctx context.Context, routeID int64, region string) error {
+	_, err := t.tx.Exec(ctx, `INSERT INTO route_regions(route_id, region_code) VALUES($1,$2) ON CONFLICT DO NOTHING`, routeID, region)
+	return err
 }
 func (t *pgTxStore) UpsertTrip(ctx context.Context, r TripRow) (int64, error) {
 	var id int64
@@ -687,7 +684,7 @@ func (t *pgTxStore) UpsertTransfer(ctx context.Context, tr TransferRow) error {
 }
 func (t *pgTxStore) UpsertFare(ctx context.Context, f FareRow) error { return nil }
 func (t *pgTxStore) SaveQualityIssue(ctx context.Context, q QualityRow) error {
-	_, err := t.tx.Exec(ctx, `INSERT INTO quality_issues(provider_id, entity, entity_id, level, code, msg, at) VALUES($1,$2,$3,$4,$5,$6,$7)`, q.ProviderID, q.Entity, q.EntityID, q.Level, q.Code, q.Msg, q.At)
+	_, err := t.tx.Exec(ctx, `INSERT INTO quality_issues(provider_id, entity, entity_id, level, code, msg, at) VALUES($1,$2,$3,$4,$5,$6,to_timestamp($7))`, q.ProviderID, q.Entity, q.EntityID, q.Level, q.Code, q.Msg, q.At)
 	return err
 }
 func (t *pgTxStore) ClearQualityIssues(ctx context.Context, providerID string) error {
@@ -696,9 +693,9 @@ func (t *pgTxStore) ClearQualityIssues(ctx context.Context, providerID string) e
 }
 func (t *pgTxStore) ClearProviderData(ctx context.Context, providerID string) error {
 	_, _ = t.tx.Exec(ctx, `DELETE FROM stop_times WHERE trip_id IN (SELECT id FROM trips WHERE provider_id=$1)`, providerID)
-	_, _ = t.tx.Exec(ctx, `DELETE FROM stops WHERE provider_id=$1`, providerID)
+	_, _ = t.tx.Exec(ctx, `DELETE FROM stop_times WHERE trip_id IN (SELECT id FROM trips WHERE provider_id=$1)`, providerID)
 	_, _ = t.tx.Exec(ctx, `DELETE FROM trips WHERE provider_id=$1`, providerID)
-	_, _ = t.tx.Exec(ctx, `DELETE FROM routes WHERE provider_id=$1`, providerID)
+	_, _ = t.tx.Exec(ctx, `DELETE FROM routes WHERE source_provider=$1`, providerID)
 	_, _ = t.tx.Exec(ctx, `DELETE FROM services WHERE provider_id=$1`, providerID)
 	return nil
 }
@@ -737,14 +734,22 @@ func (t *pgTxStore) UpsertPlace(ctx context.Context, r PlaceRow, names map[strin
 	return id, nil
 }
 func (t *pgTxStore) UpsertTerminal(ctx context.Context, r TerminalRow, names map[string]string, identifiers []model.AdaptedIdentifier) (int64, error) {
+	if r.ID != 0 {
+		var locked bool
+		_ = t.tx.QueryRow(ctx, `SELECT is_locked FROM terminals WHERE id=$1`, r.ID).Scan(&locked)
+		if locked {
+			_ = t.SaveReviewQueue(ctx, model.ReviewQueueEntry{EntityType: "terminal", EntityID: r.ID, Reason: "conflicts_with_confirmed"})
+			return r.ID, nil
+		}
+	}
 	var id int64
 	if r.ID != 0 {
-		err := t.tx.QueryRow(ctx, `INSERT INTO terminals(id, place_id, geom, tz, validity, osm_compatible_name, valid_from, valid_to, last_verified_at) VALUES($1,$2,ST_SetSRID(ST_MakePoint($3,$4),4326)::geography,$5, daterange($6::date, $7::date, '[]'), $8, $9, $10, $11) ON CONFLICT(id) DO UPDATE SET place_id=EXCLUDED.place_id, geom=EXCLUDED.geom, tz=EXCLUDED.tz RETURNING id`, r.ID, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.OsmName, r.ValidFrom, r.ValidTo, r.LastVerifiedAt).Scan(&id)
+		err := t.tx.QueryRow(ctx, `INSERT INTO terminals(id, place_id, geom, tz, validity, osm_compatible_name, valid_from, valid_to, last_verified_at, is_locked) VALUES($1,$2,ST_SetSRID(ST_MakePoint($3,$4),4326)::geography,$5, daterange($6::date, $7::date, '[]'), $8, $9, $10, $11, $12) ON CONFLICT(id) DO UPDATE SET place_id=EXCLUDED.place_id, geom=EXCLUDED.geom, tz=EXCLUDED.tz, is_locked=terminals.is_locked RETURNING id`, r.ID, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.OsmName, r.ValidFrom, r.ValidTo, r.LastVerifiedAt, r.IsLocked).Scan(&id)
 		if err != nil {
 			return 0, err
 		}
 	} else {
-		err := t.tx.QueryRow(ctx, `INSERT INTO terminals(place_id, geom, tz, validity, osm_compatible_name, valid_from, valid_to, last_verified_at) VALUES($1,ST_SetSRID(ST_MakePoint($2,$3),4326)::geography,$4, daterange($5::date, $6::date, '[]'), $7, $8, $9, $10) RETURNING id`, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.OsmName, r.ValidFrom, r.ValidTo, r.LastVerifiedAt).Scan(&id)
+		err := t.tx.QueryRow(ctx, `INSERT INTO terminals(place_id, geom, tz, validity, osm_compatible_name, valid_from, valid_to, last_verified_at, is_locked) VALUES($1,ST_SetSRID(ST_MakePoint($2,$3),4326)::geography,$4, daterange($5::date, $6::date, '[]'), $7, $8, $9, $10, $11) RETURNING id`, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.OsmName, r.ValidFrom, r.ValidTo, r.LastVerifiedAt, r.IsLocked).Scan(&id)
 		if err != nil {
 			return 0, err
 		}
@@ -770,7 +775,7 @@ func (t *pgTxStore) SaveProvenance(ctx context.Context, p model.Provenance) erro
 	return err
 }
 func (t *pgTxStore) SaveReviewQueue(ctx context.Context, e model.ReviewQueueEntry) error {
-	_, err := t.tx.Exec(ctx, `INSERT INTO review_queue(entity_type, entity_id, reason, score) VALUES($1,$2,$3,$4) ON CONFLICT(entity_type, entity_id) DO UPDATE SET reason=EXCLUDED.reason, score=EXCLUDED.score`, e.EntityType, e.EntityID, e.Reason, e.Score)
+	_, err := t.tx.Exec(ctx, `INSERT INTO review_queue(entity_type, entity_id, reason, score) VALUES($1,$2,$3,$4) ON CONFLICT(entity_type, entity_id, reason) DO UPDATE SET score=EXCLUDED.score`, e.EntityType, e.EntityID, e.Reason, e.Score)
 	return err
 }
 func (t *pgTxStore) GetPlaceCity(ctx context.Context, placeID int64) (int64, string, error) {
@@ -792,34 +797,18 @@ func (t *pgTxStore) LoadNetwork(ctx context.Context, providers []string, day tim
 	return t.parent.LoadNetwork(ctx, providers, day)
 }
 func (t *pgTxStore) MarkImported(ctx context.Context, providerID string, at time.Time, records int) error {
-	_, err := t.tx.Exec(ctx, `INSERT INTO imports(provider_id, at, records, status) VALUES($1,$2,$3,$4) ON CONFLICT(provider_id) DO UPDATE SET at=EXCLUDED.at, records=EXCLUDED.records`, providerID, at.Unix(), records, "ok")
+	_, err := t.tx.Exec(ctx, `INSERT INTO imports(provider_id, at, records, status, checksum) VALUES($1,$2,$3,$4, 'legacy') ON CONFLICT(provider_id, checksum) DO UPDATE SET at=EXCLUDED.at, records=EXCLUDED.records`, providerID, at, records, "ok")
 	return err
 }
 func (t *pgTxStore) MarkImportedVersion(ctx context.Context, providerID, snapshot, checksum string, at time.Time, records, issues int) error {
-	_, err := t.tx.Exec(ctx, `INSERT INTO imports(provider_id, at, records, status, snapshot, checksum, issues) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(provider_id) DO UPDATE SET at=EXCLUDED.at, records=EXCLUDED.records, snapshot=EXCLUDED.snapshot, checksum=EXCLUDED.checksum, issues=EXCLUDED.issues`, providerID, at.Unix(), records, "ok", snapshot, checksum, issues)
+	_, err := t.tx.Exec(ctx, `INSERT INTO imports(provider_id, at, records, status, snapshot, checksum, issues) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(provider_id, checksum) DO UPDATE SET at=EXCLUDED.at, records=EXCLUDED.records, snapshot=EXCLUDED.snapshot, issues=EXCLUDED.issues`, providerID, at, records, "ok", snapshot, checksum, issues)
 	return err
 }
 func (t *pgTxStore) GetImport(ctx context.Context, providerID string) (ImportRow, bool) {
 	var r ImportRow
-	err := t.tx.QueryRow(ctx, `SELECT provider_id, at, records, status, snapshot, checksum, issues FROM imports WHERE provider_id=$1`, providerID).Scan(&r.ProviderID, &r.At, &r.Records, &r.Status, &r.Snapshot, &r.Checksum, &r.Issues)
+	err := t.tx.QueryRow(ctx, `SELECT provider_id, extract(epoch from at)::bigint, records, status, snapshot, checksum, issues FROM imports WHERE provider_id=$1 ORDER BY at DESC LIMIT 1`, providerID).Scan(&r.ProviderID, &r.At, &r.Records, &r.Status, &r.Snapshot, &r.Checksum, &r.Issues)
 	if err != nil {
 		return ImportRow{}, false
-	}
-	return r, true
-}
-func (t *pgTxStore) FindStation(ctx context.Context, name, region string) (StationRow, bool) {
-	var r StationRow
-	err := t.tx.QueryRow(ctx, `SELECT id, name, lat, lon, geo_cell, region_code, timezone, quality_flags, primary_provider FROM stations WHERE name=$1 AND region_code=$2 LIMIT 1`, name, region).Scan(&r.ID, &r.Name, &r.Lat, &r.Lon, &r.GeoCell, &r.RegionCode, &r.Timezone, &r.QualityFlags, &r.PrimaryProvider)
-	if err != nil || (r.Lat == 0 && r.Lon == 0) {
-		return StationRow{}, false
-	}
-	return r, true
-}
-func (t *pgTxStore) FindStationAny(ctx context.Context, name, region string) (StationRow, bool) {
-	var r StationRow
-	err := t.tx.QueryRow(ctx, `SELECT id, name, lat, lon, geo_cell, region_code, timezone, quality_flags, primary_provider FROM stations WHERE name=$1 AND region_code=$2 LIMIT 1`, name, region).Scan(&r.ID, &r.Name, &r.Lat, &r.Lon, &r.GeoCell, &r.RegionCode, &r.Timezone, &r.QualityFlags, &r.PrimaryProvider)
-	if err != nil {
-		return StationRow{}, false
 	}
 	return r, true
 }

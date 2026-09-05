@@ -20,12 +20,21 @@ import (
 	"sync"
 	"time"
 
+	"travelmcp/internal/config"
 	"travelmcp/internal/store"
 	"travelmcp/internal/support/classifier"
 
 	"travelmcp/internal/geo"
 	"travelmcp/internal/model"
 )
+
+func dedupDistanceM() float64 {
+	cfg, _ := config.Load("")
+	if cfg != nil && cfg.Deduplication.DistanceM > 0 {
+		return float64(cfg.Deduplication.DistanceM) / 1000.0
+	}
+	return 0.2
+}
 
 type reestrDataset struct {
 	Source    string          `json:"source"`
@@ -101,6 +110,13 @@ func ImportIntercity(ctx context.Context, s store.Store, path string, logger *sl
 		logger = slog.Default()
 	}
 	t0 := time.Now()
+	jobID := int64(0)
+	if pg, ok := s.(interface {
+		LogImportEntry(ctx context.Context, jobID int64, entityType, entityID, stage, action string, confidence float64, distanceM int, lev float64, source string) error
+	}); ok {
+		_ = pg.LogImportEntry(ctx, 0, "job", "intercity", "normalize", "import_start", 0, 0, 0, "mintrans")
+		_ = jobID
+	}
 	logger.Info("import reading dataset", "path", path)
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -131,23 +147,10 @@ func ImportIntercity(ctx context.Context, s store.Store, path string, logger *sl
 	importErr = s.WithTx(ctx, func(tx store.Store) error {
 		_ = tx.ClearQualityIssues(ctx, "intercity")
 		_ = tx.ClearProviderData(ctx, "intercity")
-		logger.Info("station grouping started")
-		cityMap := map[string]int64{}
-		for cname, v := range getCityOverrides() {
-			region := ""
-			display := cname
-			if len(display) > 0 {
-				display = strings.ToUpper(display[:1]) + display[1:]
-			}
-			id, _ := tx.UpsertCity(ctx, store.CityRow{Name: display, RegionCode: region, Lat: v.lat, Lon: v.lon, Source: v.source, Kind: "city"})
-			cityMap[strings.ToLower(cname)] = id
-			cityMap[strings.ToLower(display)] = id
-		}
-		logger.Info("cities seeded", "count", len(cityMap)/2)
-		type stationKey struct{ id int64 }
-		stations := map[string]int64{}
-		stopToStation := map[string]int64{}
-		var stationRows []store.StationRow
+		logger.Info("terminal grouping started (canonical)")
+		stopToTerminal := map[string]int64{}
+		var terminalRows []store.TerminalRow
+		terminalByID := map[int64]store.TerminalRow{}
 
 		for _, st := range ds.Stops {
 			lat, lon := 0.0, 0.0
@@ -158,55 +161,33 @@ func ImportIntercity(ctx context.Context, s store.Store, path string, logger *sl
 				lon = *st.Lon
 			}
 			found := int64(0)
-			for _, sr := range stationRows {
-				if sr.Lat == 0 && sr.Lon == 0 || lat == 0 && lon == 0 {
+			for _, tr := range terminalRows {
+				if tr.Lat == 0 && tr.Lon == 0 || lat == 0 && lon == 0 {
 					continue
 				}
-				d := geo.Haversine(model.Coords{Lat: lat, Lon: lon}, model.Coords{Lat: sr.Lat, Lon: sr.Lon})
-				if d < 0.4 {
-					found = sr.ID
+				d := geo.Haversine(model.Coords{Lat: lat, Lon: lon}, model.Coords{Lat: tr.Lat, Lon: tr.Lon})
+				if d < dedupDistanceM() {
+					found = tr.ID
 					break
 				}
 			}
 			if found == 0 {
-				var cityID *int64
-				lowName := strings.ToLower(st.Name)
-				for cname, cid := range cityMap {
-					if strings.Contains(lowName, cname) {
-						v := cid
-						cityID = &v
-						break
+				if lat == 0 && lon == 0 && os.Getenv("ENABLE_GEOCODE") == "1" {
+					if nlat, nlon, ok := geocodeStation(st.Name, st.Region); ok {
+						lat, lon = nlat, nlon
 					}
 				}
-				sr := store.StationRow{Name: st.Name, Lat: lat, Lon: lon, RegionCode: st.Region, PrimaryProvider: "intercity", CityID: cityID}
-				if lat == 0 && lon == 0 {
-					if cached, ok := tx.FindStation(ctx, st.Name, st.Region); ok {
-						sr.Lat, sr.Lon = cached.Lat, cached.Lon
-						sr.QualityFlags = 0
-					} else {
-						sr.QualityFlags = 1
-						if os.Getenv("ENABLE_GEOCODE") == "1" {
-							if nlat, nlon, ok := geocodeStation(st.Name, st.Region); ok {
-								sr.Lat, sr.Lon = nlat, nlon
-								sr.QualityFlags = 0
-							}
-						}
-					}
-				}
-				id, _ := tx.UpsertStation(ctx, sr)
-				// memory store allocs ID inside; need to capture actual ID
-				// For memory store, Upsert returns allocated ID; we need to store it
-				// Use returned id as station id
-				sr.ID = id
-				stationRows = append(stationRows, sr)
-				stations[st.ID] = id
-				stopToStation[st.ID] = id
-				_ = stationKey{}
+				tr := store.TerminalRow{Lat: lat, Lon: lon, Tz: "", ValidFrom: "", ValidTo: nil}
+				id, _ := tx.UpsertTerminal(ctx, tr, map[string]string{"ru": st.Name}, []model.AdaptedIdentifier{{System: "mintrans", CodeType: "op_reg", Code: st.OpReg}})
+				tr.ID = id
+				terminalRows = append(terminalRows, tr)
+				terminalByID[id] = tr
+				stopToTerminal[st.ID] = id
 			} else {
-				stopToStation[st.ID] = found
+				stopToTerminal[st.ID] = found
 			}
 		}
-		logger.Info("stations grouped", "count", len(stationRows), "elapsed_ms", time.Since(t0).Milliseconds())
+		logger.Info("terminals grouped", "count", len(terminalRows), "elapsed_ms", time.Since(t0).Milliseconds())
 
 		// carriers: приоритет ds.Carriers (полные данные из листа Перевозчики), fallback - маршруты
 		carrierMap := map[string]int64{}
@@ -250,14 +231,24 @@ func ImportIntercity(ctx context.Context, s store.Store, path string, logger *sl
 			logger.Info("services ready", "count", len(ds.Services), "days", len(ds.ServiceDays))
 		}
 
-		// stops
+		// stops_canonical
 		stopIDMap := map[string]int64{}
 		for _, st := range ds.Stops {
-			stationID := stopToStation[st.ID]
-			sr := store.StopRow{StationID: stationID, ProviderID: "intercity", ExternalCode: st.ID, StopType: string(classifier.Ru.Classify(st.Name, nil)), Name: st.Name, RawName: st.Name}
+			terminalID := stopToTerminal[st.ID]
+			lat, lon := 0.0, 0.0
+			if st.Lat != nil {
+				lat = *st.Lat
+			}
+			if st.Lon != nil {
+				lon = *st.Lon
+			}
+			// if terminal has coords, use them for stop geom fallback
+			if tr, ok := terminalByID[terminalID]; ok && (lat == 0 && lon == 0) {
+				lat, lon = tr.Lat, tr.Lon
+			}
+			sr := store.StopRow{TerminalID: terminalID, Lat: lat, Lon: lon, StopType: string(classifier.Ru.Classify(st.Name, nil)), Name: st.Name}
 			id, _ := tx.UpsertStop(ctx, sr)
 			stopIDMap[st.ID] = id
-			_ = tx.UpsertStationCode(ctx, store.StationCodeRow{StationID: stationID, ProviderID: "intercity", CodeType: "op_reg", Code: st.OpReg, NameForm: st.Name})
 		}
 		logger.Info("stops ready", "count", len(stopIDMap), "elapsed_ms", time.Since(t0).Milliseconds())
 
@@ -269,6 +260,24 @@ func ImportIntercity(ctx context.Context, s store.Store, path string, logger *sl
 			rr := store.RouteRow{ProviderID: "intercity", CarrierID: cid, ExternalCode: r.Reg, ShortName: r.Reg, LongName: r.Name, Mode: string(model.ModeBus)}
 			id, _ := tx.UpsertRoute(ctx, rr)
 			routeIDMap[r.Reg] = id
+			primaryRegion := ""
+			if len(r.Reg) >= 2 {
+				primaryRegion = r.Reg[:2]
+			}
+			if primaryRegion != "" {
+				_ = tx.UpsertRouteRegion(ctx, id, primaryRegion)
+			}
+		}
+		for _, sc := range ds.Schedules {
+			if rid, ok := routeIDMap[sc.Route]; ok {
+				seen := map[string]bool{}
+				for _, sst := range sc.Stops {
+					if sst.Region != "" && !seen[sst.Region] {
+						seen[sst.Region] = true
+						_ = tx.UpsertRouteRegion(ctx, rid, sst.Region)
+					}
+				}
+			}
 		}
 		logger.Info("routes ready", "count", len(routeIDMap), "elapsed_ms", time.Since(t0).Milliseconds())
 
@@ -307,9 +316,9 @@ func ImportIntercity(ctx context.Context, s store.Store, path string, logger *sl
 					prevEff := -1
 					for i := range sched.Stops {
 						if len(times) > 0 {
-							prevStation := stopToStation[times[len(times)-1].stopID]
-							curStation := stopToStation[sched.Stops[i].Stop]
-							if prevStation != 0 && curStation != 0 && prevStation == curStation {
+							prevTerminal := stopToTerminal[times[len(times)-1].stopID]
+							curTerminal := stopToTerminal[sched.Stops[i].Stop]
+							if prevTerminal != 0 && curTerminal != 0 && prevTerminal == curTerminal {
 								continue
 							}
 						}
@@ -369,27 +378,26 @@ func ImportIntercity(ctx context.Context, s store.Store, path string, logger *sl
 		}
 		logger.Info("trips stored", "elapsed_ms", time.Since(tripStart).Milliseconds())
 
-		// transfers: пешие стыковки <0.4км между всеми станциями с координатами
-		// используем обратный индекс stationID -> один stopID (первый) для построения трансферов
-		stationToStop := map[int64]int64{}
-		for sid, stID := range stopToStation {
-			if _, ok := stationToStop[stID]; !ok {
+		// transfers: пешие стыковки <0.2км между терминалами с координатами (canonical)
+		terminalToStop := map[int64]int64{}
+		for sid, tID := range stopToTerminal {
+			if _, ok := terminalToStop[tID]; !ok {
 				if stopID, ok2 := stopIDMap[sid]; ok2 {
-					stationToStop[stID] = stopID
+					terminalToStop[tID] = stopID
 				}
 			}
 		}
-		for i := 0; i < len(stationRows); i++ {
-			for j := i + 1; j < len(stationRows); j++ {
-				a := stationRows[i]
-				b := stationRows[j]
+		for i := 0; i < len(terminalRows); i++ {
+			for j := i + 1; j < len(terminalRows); j++ {
+				a := terminalRows[i]
+				b := terminalRows[j]
 				if a.Lat == 0 || b.Lat == 0 {
 					continue
 				}
 				d := geo.Haversine(model.Coords{Lat: a.Lat, Lon: a.Lon}, model.Coords{Lat: b.Lat, Lon: b.Lon})
-				if d < 0.4 {
-					from := stationToStop[a.ID]
-					to := stationToStop[b.ID]
+				if d < dedupDistanceM() {
+					from := terminalToStop[a.ID]
+					to := terminalToStop[b.ID]
 					if from != 0 && to != 0 {
 						distM := int(d * 1000)
 						minutes := geo.WalkTimeMinutes(d)

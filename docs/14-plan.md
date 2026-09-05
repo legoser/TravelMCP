@@ -6,14 +6,15 @@
 
 ```
 MOTIS (OSM РФ) ─┐
-Минтранс XLSX ──┼─> Коннекторы (Go-плагины) ─> Верификация ─> PostgreSQL+PostGIS (канон) ─> GTFS-компилятор ─> gtfs.zip (один на РФ)
-Яндекс Rasp ────┤                              │                              │
-Внешние GTFS ───┘                              └─> MOTIS import ──────────────┘
+Минтранс XLSX ──┼─> Коннекторы (Go-плагины) ─> Верификация ─> PostgreSQL+PostGIS (канон) ─> GTFS-компилятор (per-region) ─> gtfs_{code}_all.zip
+Яндекс Rasp ────┤                              │   dedup 200м + hysteresis    │                      │
+Внешние GTFS ───┘                              │   import_logs + review_queue │                      └─> MOTIS import (один вызов на все регионы) ─┘
                                                   └─> travelmcp (MCP/HTTP) ─> /api/v6/plan
-                                                  └─> Админка (импорт/правка/API-вызов)
+                                                  └─> Админка (импорт/правка/API-вызов) ─> jobs + outbox (transactional)
+                                                  └─> jobs worker (429 backoff, resume, ротация B/C/D)
 ```
 
-Коннектор = сбор + адаптация + верификация + импорт. Импорт — внутри `travelmcp`, управляется из админки (запуск, мониторинг, ручная правка, вызов внешнего API с валидацией).
+Коннектор = сбор + адаптация + верификация + импорт. Импорт — внутри `travelmcp`, управляется из админки (запуск, мониторинг, ручная правка, вызов внешнего API с валидацией). Компилятор — per-region (`gtfs_42_all.zip`, только латиница `code=regions.code`), межрегиональный рейс попадает целиком во все затронутые регионы, но MOTIS импортирует все региональные zip **одним вызовом** `import` (иначе `stop_id` BIGSERIAL задвоится как `(feed_id, entity_id)` — см. §3.6). Snapshot компиляции — единый `REPEATABLE READ` / `feed_version` для пачки регионов (см. §3.9).
 
 **Контракт адаптеров (Фаза 0, до кодирования Фазы 1):** все 4 источника (XLSX, Яндекс, MOTIS, внешний GTFS) приводят сырьё к единому промежуточному формату `AdaptedRecord` (Go-структура в `internal/providers/adapted.go`) перед этапом верификации. Поля: `kind=(place|terminal|stop|route|trip)`, `identifiers`, `names_ru/en`, `geom`, `validity`, `source`, `raw`. Верификация принимает только `AdaptedRecord`, а не сырой формат источника — иначе каждый коннектор изобретёт свой путь.
 
@@ -40,16 +41,20 @@ MOTIS (OSM РФ) ─┐
 * `fare_attributes`, `fare_rules`, `zones` — из Минтранса (тарифы) и Яндекс. Тоглы видов — `transitModes=BUS,COACH,RAIL` (`openapi:Mode`).
 * Ограничение MVP: цена составного маршрута считается как сумма `fare_rules` по leg'ам (линейно). Комбинированные/пересадочные тарифы (`GTFS-Fares v2` `fare_leg_rules/fare_products`) не моделируются — зафиксировано как осознанный компромисс; миграция в бэклоге после Фазы 5, схема совместима (добавление таблиц, не ALTER существующих).
 
-### Фаза 4 — GTFS-продукт и импорт (5 дней)
-* Компилятор `Postgres → gtfs.zip` (один файл, **мульти-агентный**): `agency.txt` строится из `carriers` (реальные перевозчики, `agency_id = carriers.id`), а не из `providers` (источников данных) — разведено `provider ≠ carrier` (см. §3.6). `stop_id/route_id/trip_id` — канонические `BIGSERIAL` PK как `text` без префикса `provider:` (глобально уникальны после реконсиляции; внешние `agency_id/route_id` хранятся в `provenance`/`terminal_identifiers` для трассировки). Единственный `ru_intercity` как единственный agency — отклонён.
-* Файлы: `agency.txt`, `stops.txt`, `routes.txt`, `trips.txt`, `stop_times.txt`, `calendar.txt`, `calendar_dates.txt`, `transfers.txt`, `fare_attributes.txt`, `fare_rules.txt`. `shapes.txt` — осознанно отсутствует в MVP (маршруты без полилиний; влияет на отображение, не на роутинг; бэклог Фазы 6). Валидация `gtfs-validator`.
-* `MOTIS import -c /data/config.yml` с `gtfs.zip`, проверка `GET /api/v6/plan?fromPlace=55.0084,82.9357&toPlace=53.3481,83.7754` (`--data-urlencode` для кириллицы).
+### Фаза 4 — GTFS-продукт и импорт (7 дней, B+ per-region)
+* Компилятор `Postgres → gtfs_{code}_all.zip` **per-region, мульти-агентный** (один файл на регион, все виды транспорта в одном): `agency.txt` из `carriers` (`agency_id = carriers.id`), `provider ≠ carrier` (см. §3.6). `stop_id/route_id/trip_id` — канонические `BIGSERIAL` PK как `text` без префикса `provider:` (глобально уникальны; внешние коды в `provenance`/`terminal_identifiers` + `stop_code` для саппорта). `gtfs.zip` на всю РФ — отклонён (тяжёлый, инвалидация всего фида при правке одного региона; см. Transitland per-operator). Имя файла — только латиница `gtfs_42_all.zip` (`code=regions.code`), `feed_info.feed_id=f-ru-42-all` (namespaced, см. §3.6).
+* Межрегиональные рейсы: рейс попадает **целиком (все `stop_times`) во все регионы, которых касается** (триггер — `route_regions` M2M, `route.region` = регион первого стопа по `seq` из XLSX). Валидация стопов не зависит от `region` (иначе `54.22.078` в `22` дал бы ложный `review`). Компиляция пачки регионов — в одной `REPEATABLE READ` транзакции с единым `feed_version` (иначе пограничный рейс попадёт в два файла в разных версиях — см. §3.9).
+* Файлы: `agency.txt`, `stops.txt` (`stop_code` хранит исходный `op:54:54098`), `routes.txt`, `trips.txt`, `stop_times.txt`, `calendar.txt`, `calendar_dates.txt`, `transfers.txt`, `fare_attributes.txt`, `fare_rules.txt`, `feed_info.txt`. `shapes.txt` — нет в MVP. `_bus/_rail` отдельные — избыточны для MOTIS (`transitModes` в запросе), только `*_all.zip` (per-mode — по требованию внешнего реестра). Валидация `gtfs-validator`.
+* Импорт в MOTIS: все `gtfs_{code}_all.zip` пачки импортируются **одним вызовом** `MOTIS import -c /data/config.yml` (директория с N zip), иначе общий `stop_id` даст задвоение `(feed_id, entity_id)` на границе (проверяется интеграционным тестом `54↔22` на `testdata/reestr/mini.json` до кодирования компилятора). Проверка `GET /api/v6/plan?fromPlace=55.0084,82.9357&toPlace=53.3481,83.7754` (`--data-urlencode` кириллицы).
+* Наблюдаемость: каждый шаг `normalize→enrich→dedup→verify→canonical` пишет `import_logs(job_id, entity_type, entity_id, stage, action, confidence, distance_m, lev, source)` (см. §3.10). Проблемные — в `review_queue` + `GET /api/v1/review?region=42` и `export.csv` для ручного анализа.
 
 ### Фаза 5 — Админка и квоты (5 дней)
 * Блок `/admin`: список импортов, запуск, логи, ручная правка `terminals`, кнопка `Вызвать внешний API` → валидация → `Сохранить`.
 * Таблица `api_quotas(provider, day, used, limit, reset_at)`, `rate limiter` на коннектор (token bucket). Источник истины — строка на день `PK(provider, day)`; `reset_at` — производная колонка (время сброса 00:00 MSK), обновляется cron'ом, который вставляет строку следующего дня. Инкремент атомарный (см. §3.7).
 * Аутентификация админки: JWT/сессия, роль `operator`; каждое действие (`Вызвать внешний API`, `Сохранить правку`) пишет `provenance.actor_id FK→users` + `audit_log`; `provenance.source` ≠ identity оператора.
-* **Скоп пилота:** Фазы 1–5 = Кузбасс + Томская область (критерии §5). Масштаб на всю РФ — отдельная Фаза 6 (не входит в 29 дней плана).
+* **Скоп пилота:** Фазы 1–5 = 42 (Кузбасс) + 70 (Томская) + 54 (Новосибирская) — приоритет очереди, критерии §5. Масштаб на всю РФ — отдельная Фаза 6 (не входит в 29 дней плана), но `regions.json` уже `all` (5577 маршрутов) и компилятор сразу per-region.
+* **Модуль `import` (B+):** коннекторы `Mintrans/Yandex/Gtfs/Motis→AdaptedRecord` (см. §1), дедуп `ST_DWithin 200м` (конфиг `deduplication.distance_m`, дефолт 200, `strong=distance/2`, per `density_class`), hysteresis для `is_locked` (см. §3.8), `import_logs` + `review_queue` списком. Админ-кейсы: `Upload gtfs.zip→jobs type=import_gtfs` и `Обновить автобусы/жд→jobs type=sync_mintrans/sync_rail` с `429` backoff, `resume_from`, ротацией `B/C/D` (§3.7, §3.10).
+* **Очередь (переиспользуемая):** `jobs` (очередь с `state/attempts/next_run`) + `outbox` (transactional, многопотребительский: компилятор, кэш, WS админки, аудит). Если потребитель один на MVP — только `jobs`; `outbox` — при втором подписчике (см. §3.10).
 
 ## 3. Структура БД `PostgreSQL+PostGIS`
 
@@ -209,19 +214,24 @@ zones(zone_id PK, name_ru text, name_en text, geom geometry)
 -- Примечание: Fares v2 (fare_leg_rules/fare_products) — бэклог после Фазы 5, см. §2 Фаза 3.
 ```
 
-### 3.6 GTFS-экспорт (один файл РФ, мульти-агентный)
+### 3.6 GTFS-экспорт (per-region, мульти-агентный)
 
 ```sql
--- view для компилятора
-CREATE VIEW v_gtfs_stops AS SELECT s.id::text AS stop_id, tn.name AS stop_name, ST_Y(geom::geometry) AS lat, ST_X(geom::geometry) AS lon, p.tz AS zone_id FROM stops s JOIN terminal_names tn ON ...;
+-- view для компилятора (per-region, фильтр по :region_code)
+CREATE VIEW v_gtfs_stops AS SELECT s.id::text AS stop_id, s.id::text AS stop_code_human, -- stop_code = terminal_identifiers.code (op:54:54098) для саппорта
+  tn.name AS stop_name, ST_Y(geom::geometry) AS lat, ST_X(geom::geometry) AS lon, p.tz AS zone_id, r.region_code
+  FROM stops s JOIN terminal_names tn ON ... JOIN terminals t ON ... JOIN places p ON ...;
 -- stop_id/route_id/trip_id — канонические PK (BIGSERIAL) как text, без префикса provider: глобально уникальны после реконсиляции, коллизий нет
 CREATE VIEW v_gtfs_agency AS SELECT c.id::text AS agency_id, c.name_ru AS agency_name, 'https://travelmcp.local' AS agency_url, 'Europe/Moscow' AS agency_timezone FROM carriers c;
+-- route_regions(route_id FK→routes, region_code FK→regions, PRIMARY KEY(route_id, region_code)) -- M2M для межрегиональных рейсов, см. §3.4
 ```
 
-Файлы: `agency.txt` (N строк — по одной на `carriers.id`), `stops.txt` (из `v_gtfs_stops`), `routes.txt`, `trips.txt`, `stop_times.txt`, `calendar.txt`, `calendar_dates.txt`, `transfers.txt`, `fare_attributes.txt`, `fare_rules.txt`, `feed_info.txt` (`feed_version` timestamp+hash, `feed_start/end_date` — см. §3.9 стабильность ID). `shapes.txt` отсутствует в MVP (осознанно, см. §2).
+Файлы per-region: `gtfs_{code}_all.zip` (только `*_all.zip`, `_bus/_rail` — по требованию внешнего реестра) содержит `agency.txt` (N строк — по `carriers.id`), `stops.txt` (из `v_gtfs_stops`, `stop_code` — исходный `op:54:54098`), `routes.txt`, `trips.txt`, `stop_times.txt` (рейс целиком во все затронутые регионы, см. §2 Фаза 4), `calendar.txt`, `calendar_dates.txt`, `transfers.txt`, `fare_attributes.txt`, `fare_rules.txt`, `feed_info.txt` (`feed_id=f-ru-42-all`, `feed_version` timestamp+hash общий для пачки, `feed_start/end_date` — см. §3.9). `shapes.txt` отсутствует в MVP.
 
-Принцип: все данные, включая внешние GTFS Москвы/СПб, проходят через `AdaptedRecord → верификация → канонические tables` (`Одна истина` `13-mission.md:2`). Поэтому `stops/routes/trips` используют глобально уникальные канонические `id` без префикса `provider:` — префиксация не нужна и была бы смешением `provider` (источник) с `carrier` (перевозчик). Исходные внешние `agency_id/route_id` сохраняются в `terminal_identifiers`/`provenance.raw` для трассировки, но не в `gtfs.zip`. Если фид не проходит реконсиляцию (pass-through), это противоречит миссии — такой режим запрещён; явно зафиксировано: pass-through GTFS нет, только канонический импорт.
-`routes.source_provider` и `provenance.source` хранят источник данных для аудита; `agency.txt` — только `carriers` (реальные перевозчики: два автопарка из Минтранса получат два разных `agency_id`, а не один `mintrans:`).
+Принцип: все данные, включая внешние GTFS Москвы/СПб, проходят через `AdaptedRecord → верификация → канонические tables` (`Одна истина` `13-mission.md:2`). Поэтому `stops/routes/trips` используют глобально уникальные канонические `id` без префикса `provider:` — префиксация не нужна и была бы смешением `provider` (источник) с `carrier` (перевозчик). Исходные внешние `agency_id/route_id` сохраняются в `terminal_identifiers`/`provenance.raw` + `stop_code` для трассировки, но не в `gtfs.zip`. Pass-through GTFS запрещён — только канонический импорт.
+`routes.source_provider` и `provenance.source` хранят источник для аудита; `agency.txt` — только `carriers`. **Импорт в MOTIS:** все `gtfs_{code}_all.zip` пачки импортируются одним вызовом `import` (директория), иначе `(feed_id, entity_id)` задвоит пограничные стопы/рейсы — интеграционный тест `54↔22` обязателен до кодирования компилятора.
+
+**Консистентность пачки:** компиляция всех регионов пачки — в одной `REPEATABLE READ` транзакции с единым `feed_version`; правка пограничного рейса триггерит рекомпиляцию всех `route_regions`.
 
 ### 3.7 Квоты
 
@@ -254,17 +264,19 @@ RETURNING used;
 * `C = Яндекс Расписание`
 * `D = Nominatim / OpenAddresses` (адресный геокодер, опционально)
 
-Алгоритм верификации `terminals`/`places` (веса калибруются до Фазы 1 на данных Кузбасса/Томской — оценка доли терминалов с ≥1 vs ≥2 источниками и размера `review_queue`):
+Алгоритм верификации `terminals`/`places` (веса калибруются до Фазы 1 на данных 42/54/70 — оценка доли терминалов с ≥1 vs ≥2 источниками и размера `review_queue`):
 ```
-confidence = 0; strong = (distance < 200m and lev==0)
-if distance(A.geom, B.geom) < 500m and lev<0.15 → confidence += 0.4 + (strong?0.2:0)
-if distance(A.geom, C.geom) < 500m and lev<0.15 → confidence += 0.4 + (strong?0.2:0)
-if distance(A.geom, D.geom) < 500m → confidence += 0.2
+dedupe_distance = config.deduplication.distance_m // дефолт 200 (было 400), strong = dedupe_distance/2, per density_class
+confidence = 0; strong = (distance < strong and lev==0)
+if distance(A.geom, B.geom) < dedupe_distance and lev<0.15 → confidence += 0.4 + (strong?0.2:0)
+if distance(A.geom, C.geom) < dedupe_distance and lev<0.15 → confidence += 0.4 + (strong?0.2:0)
+if distance(A.geom, D.geom) < dedupe_distance → confidence += 0.2
 // Итого: слабый B или C → 0.4, сильный B/C → 0.6 (проходит порог одним источником), B+C → 0.8, B+C+D → 1.0
 if confidence >= 0.6 → provenance.confidence=confidence, статус verified
 else → INSERT INTO review_queue(entity_type, entity_id, reason='low confidence', score=confidence)
+// Hysteresis: если terminals.is_locked=true (human-confirmed, provenance.actor_id NOT NULL), конфликтующий новый результат с confidence < old_confidence не перезаписывает canon, а уходит в review_queue(reason='conflicts_with_confirmed')
 ```
-Пороги: `500м` (сильный `<200м`), `lev<0.15` (сильный `lev==0`). Параметры — в `config verification.threshold_*`, меняются без пересборки. До старта Фазы 1 — прогон на реальных `data/reestr/regions.json` + `yandex-collect` выборке Кузбасса для выбора между `threshold=0.6 сильный одиночный` vs `threshold=0.4` (если `review_queue` >30% — снизить порог или поднять вес `B/C` до `0.6`).
+Пороги: `dedupe_distance` (дефолт `200`, per `density_class` `rural/suburban/urban/metro`), `lev<0.15` (сильный `lev==0`). Параметры — в `config verification.* + deduplication.distance_m`, меняются без пересборки. До старта Фазы 1 — прогон на `data/reestr/regions.json` выборке 42/54/70. `region` не участвует в `distance/lev` решении (межрегиональные рейсы валидируются по geo, а не по `region_code`).
 
 > **На вырост (Фаза 6, Москва/СПб):** пороги калиброваны на разреженной сети Кузбасса/Томской; в плотной городской сети (остановки 50–100 м) `500м` даст ложные склейки разных остановок. Перед масштабом на всю РФ — обязательная ре-калибровка `distance/lev` на городской выборке, не перенос параметров пилота «как есть».
 
@@ -276,7 +288,19 @@ else → INSERT INTO review_queue(entity_type, entity_id, reason='low confidence
 
 **Ключи партиционирования (выбрать в Фазе 1, реализовать потом):** `stop_times` — кандидат `PARTITION BY RANGE (trip_id)` через `route→region`, либо `BY RANGE (service.start_date)`; `provenance/api_calls` — `PARTITION BY RANGE (observed_at/at)` (append-only лог, рост неограничен). DDL с самого начала пишется совместимо с `PARTITION BY` (FK без кросс-партиций, `PRIMARY KEY` включает ключ партиции), сам `ATTACH PARTITION` — в Фазе 6.
 
-**Density-class пороги верификации:** единый `500м/0.6` не переживёт масштаб (Кузбасс 500м vs Москва 50–100м). В `config verification.*` закладывается не глобальный порог, а `per density_class` (`regions.density_class enum rural/suburban/urban/metro`, производный от площади/населения, см. §3.1 `regions`). Пилот использует один класс, но схема конфига уже `map[density_class]Threshold` — явная ре-калибровка Фазы 6 не требует переделки кода.
+**Density-class пороги верификации:** единый `500м/0.6` не переживёт масштаб (Кузбасс 500м vs Москва 50–100м). В `config verification.* + deduplication.distance_m` закладывается не глобальный порог, а `per density_class` (`regions.density_class enum rural/suburban/urban/metro`, производный от площади/населения, см. §3.1 `regions`). Пилот 42/54/70 — `rural` 200м, `strong 100м`. Схема конфига уже `map[density_class]Threshold` — ре-калибровка Фазы 6 без переделки кода.
+
+**Snapshot консистентности пачки:** компиляция `gtfs_{code}_all.zip` для пачки регионов (особенно пограничные `54↔22`) — в одной `REPEATABLE READ` транзакции с единым `feed_version = {min_region}_{ts}_{hash}`; иначе два файла получат разные версии одного рейса.
+
+### 3.10 Import-конвейер, наблюдаемость, очередь
+
+**Конвейер (B+):** `Raw (XLSX/zip/API) → Connector.Adapt() → []AdaptedRecord (internal/model/adapted.go:24) → Normalize (lower+unaccent, ГОСТ 7.79) → Enrich (OSM 24k + Nominatim/Yandex ротация) → Deduplicate (ST_DWithin dedupe_distance) → Verify (§3.8) → Staging → hysteresis check (is_locked) → Canonical (places/terminals/routes) → provenance + import_logs`. Коннекторы: `Mintrans/Yandex/Gtfs/Motis→AdaptedRecord`, верификация только по `AdaptedRecord`.
+
+**Наблюдаемость:** `import_logs(job_id FK→jobs, entity_type, entity_id, stage text CHECK(stage IN ('normalize','enrich','dedup','verify','canonical')), action, confidence, distance_m, lev, source, at timestamptz)` — per-stop trace `op:54:54098: enrich:nominatim 55.04,83.02 → dedup:merge to station 12 d=180 lev0.0 → verify:B 0.6 strong → canonical:upsert terminal 45` + `slog.With(job_id, op_reg, stage)` JSON. Партиция по `at`, retention 90д детально, далее агрегат `(job_id, stage, count)` (самая большая таблица на масштабе РФ).
+
+**Проблемные стопы:** `review_queue` + `import_logs` → `v_review_stops`, `GET /api/v1/review?region=42&reason=low_confidence|conflicts_with_confirmed|missing_coords|duplicate_ambiguous|speed_implausible`, `GET /admin/review/export.csv` для ручного анализа. Разовый карантин legacy-дефектов (`lat=0`, дубли `op:54098/54099` в 0м) — сразу в `review_queue`, не ждать миграции 002.
+
+**Очередь (переиспользуемая):** `jobs(id, type text CHECK(type IN ('import_gtfs','sync_mintrans','sync_rail','notify','cleanup')), payload jsonb, region text, state CHECK(state IN ('pending','running','retry','done','dead')), attempts, next_run, last_error, created_at, UNIQUE(type,payload) WHERE state IN ('pending','running'))` — воркер `429` backoff `next_run=now()+attempt*2min`, `resume_from`, ротация `B/C/D` по `api_quotas` (§3.7). `outbox(id, aggregate, aggregate_id, event, payload, created_at)` — transactional, многопотребительский (компилятор, кэш, WS админки, аудит); если потребитель один на MVP — только `jobs`, `outbox` при втором подписчике. Админ-кейсы: `Upload gtfs.zip→import_gtfs`, `Обновить автобусы→sync_mintrans`, `Обновить ж/д→sync_rail`.
 
 **Свежесть/календарь/backup/staging (эксплуатация):** `terminals/routes.last_verified_at timestamptz` + `review_queue` сортировка по `age = now()-last_verified_at` (не только `confidence`) — иначе расписание тихо устареет. `services.end_date` → `cron publish cadence`: ре-публикация за `N` дней до `MIN(end_date)` (иначе MOTIS отдаст пустые маршруты). «Одна истина» `Postgres` → обязателен `WAL-архив/PITR` + протестированный `restore` (ручные правки/verified-статусы невосстановимы). Готовность к `GTFS-RT`: стабильный `trip_id` + отдельные колонки `scheduled_arrival/planned` (не `ALTER` позже). Регресс компиляции: `golden dataset` + `counts diff` (`5600→3200` — баг или реальность?) перед промоушеном. Откат: `staging MOTIS` → `GET /api/v6/plan` на `golden` → `atomic promote`, не прямой импорт в прод (см. также `BACKUP.md`/`RUNBOOK.md` к Фазе 5).
 
@@ -304,8 +328,8 @@ users 1──∞ provenance.actor_id / audit_log
 
 ## 5. Критерии готовности
 
-* `places` покрывает Кузбасс/Томскую с `ru/en` (проверка `geocode` `Kemovo sritis` → `Kemerovo Oblast`), `place_closure` консистентен (ночной чек зелёный), запрос города `level=4` возвращает корректно.
-* `gtfs.zip` (мульти-агентный по `carriers`, без префикса `provider:` — см. §3.6) проходит валидатор, `MOTIS` `plan` возвращает `Кемерово→Томск` с тоглом `BUS/COACH`.
-* Квоты `Яндекс` в БД, атомарный `used < limit`, перезапуск не теряет счётчик (строка на день), `reset_at` 00:00 MSK.
-* Админка с аутентификацией, `audit_log` + `provenance.actor_id`, ручная правка синхронизирует `osm_compatible_name` триггером.
-* Пилотный скоп: критерии выше — для Кузбасса/Томской; РФ целиком — Фаза 6 вне 29-дневного плана (см. §2).
+* `places` покрывает 42/54/70 с `ru/en` (проверка `geocode` `Kemovo sritis` → `Kemerovo Oblast`), `place_closure` консистентен (ночной чек зелёный), запрос города `level=4` возвращает корректно.
+* `gtfs_{code}_all.zip` per-region (мульти-агентный по `carriers`, без префикса `provider:`, `stop_code` с `op:54:54098` — см. §3.6) проходит валидатор, **MOTIS одним `import` всех регионов пачки** `plan` возвращает `Кемерово→Томск` и пограничный `54↔22` без задвоения `stop_id/trip_id`, тоглы `BUS/COACH/RAIL`.
+* Квоты `Яндекс` в БД, атомарный `used < limit`, перезапуск не теряет счётчик (строка на день), `reset_at` 00:00 MSK; воркер `429` backoff + `resume_from` + ротация.
+* Админка с аутентификацией, `audit_log` + `provenance.actor_id`, `is_locked` hysteresis, ручная правка синхронизирует `osm_compatible_name` триггером; `review_queue` + `import_logs` доступны списком/`export.csv`, `GET /api/v1/review?region=42`.
+* Пилотный скоп: критерии выше — для 42/54/70; РФ целиком — Фаза 6 вне 29-дневного плана (см. §2). `feed_info.feed_id=f-ru-42-all` namespaced.

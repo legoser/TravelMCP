@@ -415,6 +415,7 @@ func (m *MemoryStore) UpsertRoute(ctx context.Context, r RouteRow) (int64, error
 	m.routes[r.ID] = r
 	return r.ID, nil
 }
+func (m *MemoryStore) UpsertRouteRegion(ctx context.Context, routeID int64, region string) error { return nil }
 func (m *MemoryStore) UpsertTrip(ctx context.Context, t TripRow) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

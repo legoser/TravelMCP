@@ -23,17 +23,6 @@ type StationRow struct {
 	CityID          *int64
 }
 
-type StopRow struct {
-	ID            int64
-	StationID     int64
-	ProviderID    string
-	ExternalCode  string
-	StopType      string
-	TransportType string
-	Name          string
-	RawName       string
-}
-
 type StationCodeRow struct {
 	StationID  int64
 	ProviderID string
@@ -41,6 +30,20 @@ type StationCodeRow struct {
 	Code       string
 	NameForm   string
 	Address    string
+}
+
+type StopRow struct {
+	ID            int64
+	TerminalID    int64
+	StationID     int64
+	ProviderID    string
+	ExternalCode  string
+	StopType      string
+	TransportType string
+	Name          string
+	RawName       string
+	Lat           float64
+	Lon           float64
 }
 
 type CarrierRow struct {
@@ -225,4 +228,5 @@ type TerminalRow struct {
 	ValidFrom      string
 	ValidTo        *string
 	LastVerifiedAt *int64
+	IsLocked       bool
 }

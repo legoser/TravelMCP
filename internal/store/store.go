@@ -3,22 +3,10 @@ package store
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"travelmcp/internal/model"
 )
-
-type CityStore interface {
-	UpsertCity(ctx context.Context, c CityRow) (int64, error)
-}
-
-type StationStore interface {
-	UpsertStation(ctx context.Context, s StationRow) (int64, error)
-	UpsertStationCode(ctx context.Context, c StationCodeRow) error
-	FindStation(ctx context.Context, name, region string) (StationRow, bool)
-	FindStationAny(ctx context.Context, name, region string) (StationRow, bool)
-}
 
 type StopStore interface {
 	UpsertStop(ctx context.Context, s StopRow) (int64, error)
@@ -29,6 +17,7 @@ type StopStore interface {
 type RouteStore interface {
 	UpsertCarrier(ctx context.Context, c CarrierRow) (int64, error)
 	UpsertRoute(ctx context.Context, r RouteRow) (int64, error)
+	UpsertRouteRegion(ctx context.Context, routeID int64, region string) error
 	UpsertTrip(ctx context.Context, t TripRow) (int64, error)
 	UpsertFrequency(ctx context.Context, f FrequencyRow) error
 }
@@ -69,8 +58,6 @@ type FareStore interface {
 }
 
 type Store interface {
-	CityStore
-	StationStore
 	StopStore
 	RouteStore
 	ServiceStore
@@ -117,29 +104,17 @@ func New(ctx context.Context, dsn string) (Store, error) {
 		return nil, nil
 	}
 	kind := detectKind(dsn)
-	if kind == "sqlite" {
-		slog.Warn("sqlite store is deprecated: используйте postgres DSN, sqlite сохранён только для тестов/совместимости", "dsn", dsn)
-	}
 	if fn, ok := drivers[kind]; ok {
 		return fn(ctx, dsn)
 	}
-	return nil, fmt.Errorf("store driver %q not registered for dsn %q (hint: import _ \"travelmcp/internal/store/%s\")", kind, dsn, kind)
+	return nil, fmt.Errorf("store driver %q not registered for dsn %q", kind, dsn)
 }
 
 func detectKind(dsn string) string {
 	if len(dsn) >= 9 && dsn[:9] == "postgres:" {
 		return "postgres"
 	}
-	if dsn == "memory" || dsn == ":memory:" || dsn == "sqlite://:memory:" || dsn == "file::memory:?cache=shared" {
-		return "sqlite"
-	}
-	if len(dsn) > 7 && dsn[:7] == "sqlite:" {
-		return "sqlite"
-	}
-	if len(dsn) > 5 && dsn[len(dsn)-3:] == ".db" {
-		return "sqlite"
-	}
-	if dsn == "memory-store" {
+	if dsn == "memory-store" || dsn == "memory" {
 		return "memory"
 	}
 	return ""
