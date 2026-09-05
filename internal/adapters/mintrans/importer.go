@@ -152,6 +152,7 @@ func ImportIntercity(ctx context.Context, s store.Store, path string, logger *sl
 		var terminalRows []store.TerminalRow
 		terminalByID := map[int64]store.TerminalRow{}
 
+		dedupDist := dedupDistanceM()
 		for _, st := range ds.Stops {
 			lat, lon := 0.0, 0.0
 			if st.Lat != nil {
@@ -166,7 +167,7 @@ func ImportIntercity(ctx context.Context, s store.Store, path string, logger *sl
 					continue
 				}
 				d := geo.Haversine(model.Coords{Lat: lat, Lon: lon}, model.Coords{Lat: tr.Lat, Lon: tr.Lon})
-				if d < dedupDistanceM() {
+				if d < dedupDist {
 					found = tr.ID
 					break
 				}
@@ -387,6 +388,7 @@ func ImportIntercity(ctx context.Context, s store.Store, path string, logger *sl
 				}
 			}
 		}
+		// dedupDist уже вычислен выше, переиспользуем
 		for i := 0; i < len(terminalRows); i++ {
 			for j := i + 1; j < len(terminalRows); j++ {
 				a := terminalRows[i]
@@ -395,7 +397,7 @@ func ImportIntercity(ctx context.Context, s store.Store, path string, logger *sl
 					continue
 				}
 				d := geo.Haversine(model.Coords{Lat: a.Lat, Lon: a.Lon}, model.Coords{Lat: b.Lat, Lon: b.Lon})
-				if d < dedupDistanceM() {
+				if d < dedupDist {
 					from := terminalToStop[a.ID]
 					to := terminalToStop[b.ID]
 					if from != 0 && to != 0 {

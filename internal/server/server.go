@@ -1214,17 +1214,21 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.RUnlock()
 	cfg := s.cfg
 	writeJSONResponse(w, http.StatusOK, map[string]any{
-		"http":      map[string]any{"addr": cfg.HTTP.Addr, "rate_limit": cfg.HTTP.RateLimit},
-		"store":     map[string]any{"dsn": maskDSNShort(cfg.Store.DSN), "kind": cfg.Store.Kind},
-		"cache":     cfg.Cache,
-		"queue":     cfg.Queue,
-		"providers": cfg.Providers,
-		"planner":   cfg.Planner,
-		"log":       cfg.Log,
-		"telemetry": cfg.Telemetry,
-		"geocoder":  map[string]any{"kind": cfg.Geocoder.Kind, "url": cfg.Geocoder.URL, "attempts": cfg.Geocoder.Attempts},
-		"yandex":    map[string]any{"rasp_url": cfg.Yandex.RaspURL, "geocode_url": cfg.Yandex.GeocodeURL},
-		"nominatim": cfg.Nominatim,
+		"http":          map[string]any{"addr": cfg.HTTP.Addr, "rate_limit": cfg.HTTP.RateLimit},
+		"store":         map[string]any{"dsn": maskDSNShort(cfg.Store.DSN), "kind": cfg.Store.Kind},
+		"cache":         cfg.Cache,
+		"queue":         cfg.Queue,
+		"providers":     cfg.Providers,
+		"planner":       cfg.Planner,
+		"log":           cfg.Log,
+		"telemetry":     cfg.Telemetry,
+		"geocoder":      map[string]any{"kind": cfg.Geocoder.Kind, "url": cfg.Geocoder.URL, "attempts": cfg.Geocoder.Attempts},
+		"yandex":        map[string]any{"rasp_url": cfg.Yandex.RaspURL, "geocode_url": cfg.Yandex.GeocodeURL, "geocode_key": ""},
+		"nominatim":     map[string]any{"url": cfg.Nominatim.URL},
+		"motis":         map[string]any{"url": cfg.Motis.URL},
+		"verification":  cfg.Verification,
+		"deduplication": cfg.Deduplication,
+		"pricing":       cfg.Pricing,
 	})
 }
 
@@ -1296,8 +1300,37 @@ func (s *Server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if v, ok := req["store"]; ok {
+		if m, ok := v.(map[string]any); ok {
+			if dsn, ok := m["dsn"].(string); ok && dsn != "" {
+				s.cfg.Store.DSN = dsn
+				s.cfg.Database.DSN = dsn
+			}
+		}
+	}
+	if v, ok := req["motis"]; ok {
+		if m, ok := v.(map[string]any); ok {
+			if u, ok := m["url"].(string); ok {
+				s.cfg.Motis.URL = u
+			}
+		}
+	}
+	if v, ok := req["geocoder"]; ok {
+		if m, ok := v.(map[string]any); ok {
+			if k, ok := m["kind"].(string); ok {
+				s.cfg.Geocoder.Kind = k
+			}
+		}
+	}
+	if v, ok := req["nominatim"]; ok {
+		if m, ok := v.(map[string]any); ok {
+			if u, ok := m["url"].(string); ok {
+				s.cfg.Nominatim.URL = u
+			}
+		}
+	}
 	s.logger.Info("config updated via API", "providers", s.cfg.Providers.Enabled, "planner", s.cfg.Planner.Engine, "log_level", s.cfg.Log.Level)
-	writeJSONResponse(w, http.StatusOK, map[string]any{"status": "ok", "providers": s.cfg.Providers.Enabled, "planner": s.cfg.Planner.Engine, "log": s.cfg.Log})
+	writeJSONResponse(w, http.StatusOK, map[string]any{"status": "ok", "providers": s.cfg.Providers.Enabled, "planner": s.cfg.Planner.Engine, "log": s.cfg.Log, "store": s.cfg.Store, "motis": s.cfg.Motis, "geocoder": s.cfg.Geocoder, "nominatim": s.cfg.Nominatim})
 }
 
 func userPublic(u *store.UserRow) map[string]any {

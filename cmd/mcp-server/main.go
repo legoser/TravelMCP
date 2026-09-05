@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"log/slog"
 	"net/http"
@@ -93,13 +94,15 @@ func main() {
 			}
 			for _, id := range cfg.Providers.Enabled {
 				if id == providers.IntercityID {
-					is := time.Now()
-					logger.Info("import started", "provider", id, "path", cfg.Providers.Intercity.ReestrPath)
-					if err := mintrans.ImportIntercity(context.Background(), st, cfg.Providers.Intercity.ReestrPath, logger); err != nil {
-						logger.Warn("import failed", "provider", id, "error", err, "elapsed_ms", time.Since(is).Milliseconds())
-					} else {
-						logger.Info("import completed", "provider", id, "path", cfg.Providers.Intercity.ReestrPath, "elapsed_ms", time.Since(is).Milliseconds())
-					}
+					go func() {
+						is := time.Now()
+						logger.Info("import started (async)", "provider", id, "path", cfg.Providers.Intercity.ReestrPath)
+						if err := mintrans.ImportIntercity(context.Background(), st, cfg.Providers.Intercity.ReestrPath, logger); err != nil {
+							logger.Warn("import failed", "provider", id, "error", err, "elapsed_ms", time.Since(is).Milliseconds())
+						} else {
+							logger.Info("import completed", "provider", id, "path", cfg.Providers.Intercity.ReestrPath, "elapsed_ms", time.Since(is).Milliseconds())
+						}
+					}()
 				}
 			}
 		}
@@ -186,7 +189,15 @@ func newLogger(level, format string, addSource bool) *slog.Logger {
 func newJobsWorker(st store.Store, l *slog.Logger) *jobs.Worker {
 	w := jobs.NewWorker(st, l)
 	w.Register("import_gtfs", func(ctx context.Context, job store.JobRow) error {
-		l.Info("handling import_gtfs", "id", job.ID)
+		l.Info("handling import_gtfs", "id", job.ID, "payload", job.Payload)
+		if job.Payload != "" && job.Payload != "{}" {
+			var p map[string]any
+			if err := json.Unmarshal([]byte(job.Payload), &p); err == nil {
+				if path, ok := p["path"].(string); ok && path != "" {
+					l.Info("gtfs file ready", "path", path)
+				}
+			}
+		}
 		return nil
 	})
 	w.Register("sync_mintrans", func(ctx context.Context, job store.JobRow) error {

@@ -63,6 +63,8 @@ type MemoryStore struct {
 	apiCalls     []store.ApiCallRow
 	jobs         map[int64]store.JobRow
 	auditLogs    []store.AuditLogRow
+	terminals    map[int64]TerminalRow
+	terminalNames map[int64]map[string]string
 	nextID       int64
 }
 
@@ -81,6 +83,8 @@ func NewMemoryStore() *MemoryStore {
 		apiKeysByKey: make(map[string]int64),
 		quotas:       make(map[string]store.QuotaRow),
 		jobs:         make(map[int64]store.JobRow),
+		terminals:    make(map[int64]TerminalRow),
+		terminalNames: make(map[int64]map[string]string),
 		nextID:       1,
 	}
 }
@@ -380,7 +384,36 @@ func (m *MemoryStore) ListImportLogs(ctx context.Context, limit int) ([]store.Im
 }
 
 func (m *MemoryStore) ListTerminals(ctx context.Context, limit, offset int, sort string) ([]map[string]any, int, error) {
-	return []map[string]any{}, 0, nil
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	total := len(m.terminals)
+	out := make([]map[string]any, 0, total)
+	for id, tr := range m.terminals {
+		name := ""
+		if m.terminalNames[id] != nil {
+			name = m.terminalNames[id]["ru"]
+		}
+		out = append(out, map[string]any{"id": id, "name": name, "lat": tr.Lat, "lon": tr.Lon, "is_locked": tr.IsLocked, "place_id": tr.PlaceID})
+	}
+	if sort == "name" {
+		sortSlice(out, func(a, b map[string]any) bool { return fmt.Sprint(a["name"]) < fmt.Sprint(b["name"]) })
+	} else if sort == "is_locked" {
+		sortSlice(out, func(a, b map[string]any) bool { return fmt.Sprint(a["is_locked"]) > fmt.Sprint(b["is_locked"]) })
+	} else {
+		sortSlice(out, func(a, b map[string]any) bool { return a["id"].(int64) < b["id"].(int64) })
+	}
+	if offset >= len(out) {
+		return []map[string]any{}, total, nil
+	}
+	end := offset + limit
+	if end > len(out) {
+		end = len(out)
+	}
+	return out[offset:end], total, nil
+}
+
+func sortSlice[T any](s []T, less func(a, b T) bool) {
+	sort.Slice(s, func(i, j int) bool { return less(s[i], s[j]) })
 }
 
 func (m *MemoryStore) EnqueueJob(ctx context.Context, j store.JobRow) (int64, error) {
@@ -678,6 +711,13 @@ func (m *MemoryStore) UpsertTerminal(ctx context.Context, r TerminalRow, names m
 	defer m.mu.Unlock()
 	if r.ID == 0 {
 		r.ID = m.allocID()
+	}
+	m.terminals[r.ID] = r
+	if m.terminalNames[r.ID] == nil {
+		m.terminalNames[r.ID] = map[string]string{}
+	}
+	for k, v := range names {
+		m.terminalNames[r.ID][k] = v
 	}
 	return r.ID, nil
 }
