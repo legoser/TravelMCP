@@ -145,6 +145,35 @@ type FareRow struct {
 	Basis      string
 }
 
+type FareAttributeRow struct {
+	FareID           string
+	Price            float64
+	Currency         string
+	PaymentMethod    int
+	Transfers        *int
+	TransferDuration *int
+	Basis            string
+}
+
+type FareRuleRow struct {
+	FareID          string
+	RouteID         int64
+	OriginZone      *string
+	DestinationZone *string
+	ContainsZone    *string
+}
+
+type ZoneRow struct {
+	ZoneID string
+	NameRu string
+	NameEn string
+}
+
+type StopZoneRow struct {
+	StopID int64
+	ZoneID string
+}
+
 type ImportRow struct {
 	ProviderID string
 	At         int64

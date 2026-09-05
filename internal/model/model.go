@@ -15,6 +15,7 @@ type Mode string
 const (
 	ModeWalk   Mode = "walk"
 	ModeBus    Mode = "bus"
+	ModeCoach  Mode = "coach"
 	ModeTram   Mode = "tram"
 	ModeRail   Mode = "rail"
 	ModeMetro  Mode = "metro"
@@ -37,11 +38,52 @@ func MaxSpeed(mode Mode) float64 {
 		return FlightMaxSpeed
 	case ModeRail:
 		return RailMaxSpeed
-	case ModeBus, ModeTram, ModeMetro:
+	case ModeBus, ModeCoach, ModeTram, ModeMetro:
 		return BusMaxSpeed
 	default:
 		return BusMaxSpeed
 	}
+}
+
+func ParseTransitMode(s string) (Mode, bool) {
+	switch s {
+	case "bus", "BUS":
+		return ModeBus, true
+	case "coach", "COACH":
+		return ModeBus, true
+	case "tram", "TRAM":
+		return ModeTram, true
+	case "rail", "RAIL":
+		return ModeRail, true
+	case "metro", "METRO":
+		return ModeMetro, true
+	case "flight", "FLIGHT":
+		return ModeFlight, true
+	case "walk", "WALK":
+		return ModeWalk, true
+	default:
+		return "", false
+	}
+}
+
+func ParseTransitModes(csv string) []Mode {
+	if csv == "" {
+		return nil
+	}
+	parts := strings.Split(csv, ",")
+	seen := map[Mode]bool{}
+	var out []Mode
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if m, ok := ParseTransitMode(p); ok && !seen[m] {
+			seen[m] = true
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 type StopType string
@@ -237,6 +279,28 @@ type Connection struct {
 	DistanceM  int `json:"distance_m"`
 }
 
+type Zone struct {
+	ID     string  `json:"id"`
+	NameRu string  `json:"name_ru"`
+	NameEn string  `json:"name_en"`
+	Lat    float64 `json:"lat,omitempty"`
+	Lon    float64 `json:"lon,omitempty"`
+}
+
+type FareAttribute struct {
+	FareID   string  `json:"fare_id"`
+	Price    float64 `json:"price"`
+	Currency string  `json:"currency"`
+	Basis    string  `json:"basis"`
+}
+
+type FareRule struct {
+	FareID          string  `json:"fare_id"`
+	RouteID         string  `json:"route_id"`
+	OriginZone      *string `json:"origin_zone,omitempty"`
+	DestinationZone *string `json:"destination_zone,omitempty"`
+}
+
 // Network — in-memory граф: канон. станции + провайдерские стопы + расписание.
 // Connections — derived из StopTime (sorted), для CSA; в БД — stop_times с индексами.
 // Индексы B1 строятся build-time, а не per-request.
@@ -252,6 +316,10 @@ type Network struct {
 	ServiceExceptions map[int][]ServiceException
 	Connections       []Connection
 	Transfers         []Transfer
+	Zones             map[string]*Zone
+	FareAttributes    map[string]*FareAttribute
+	FareRules         []FareRule
+	StopZones         map[string]string
 
 	TransfersByStop map[string][]Transfer `json:"-"`
 	RouteStops      map[string][]string   `json:"-"`
@@ -271,6 +339,9 @@ func NewNetwork() *Network {
 		Services:          map[int]*Service{},
 		ServiceDays:       map[int][]ServiceDay{},
 		ServiceExceptions: map[int][]ServiceException{},
+		Zones:             map[string]*Zone{},
+		FareAttributes:    map[string]*FareAttribute{},
+		StopZones:         map[string]string{},
 		TransfersByStop:   map[string][]Transfer{},
 		RouteStops:        map[string][]string{},
 		TripStops:         map[string][]string{},

@@ -11,6 +11,7 @@ import (
 
 	"travelmcp/internal/geo"
 	"travelmcp/internal/model"
+	"travelmcp/internal/pricing"
 	"travelmcp/internal/telemetry"
 )
 
@@ -251,6 +252,7 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 		journey.Departure = journey.Legs[0].Departure
 		journey.Arrival = journey.Legs[len(journey.Legs)-1].Arrival
 		journey.Alternatives = p.paretoAlternatives(net, from, to, params, fromStop, toStop, journey)
+		pricing.EnrichJourney(net, journey)
 		pref := params.Preference
 		if pref == "" {
 			pref = model.PreferenceTransfers
@@ -335,6 +337,7 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 
 	journey.Arrival = journey.Legs[len(journey.Legs)-1].Arrival
 	journey.Alternatives = p.paretoAlternatives(net, from, to, params, fromStop, toStop, journey)
+	pricing.EnrichJourney(net, journey)
 	pref := params.Preference
 	if pref == "" {
 		pref = model.PreferenceTransfers

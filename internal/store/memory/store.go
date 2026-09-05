@@ -1,4 +1,4 @@
-package store
+package memory
 
 import (
 	"context"
@@ -10,10 +10,37 @@ import (
 	"time"
 
 	"travelmcp/internal/model"
+	store "travelmcp/internal/store"
 	"travelmcp/internal/support/classifier"
 )
 
 // Deprecated: MemoryStore для unit-тестов, не для продакшена. Используйте PostgresStore.
+
+type CityRow = store.CityRow
+type StationRow = store.StationRow
+type StopRow = store.StopRow
+type StationCodeRow = store.StationCodeRow
+type CarrierRow = store.CarrierRow
+type RouteRow = store.RouteRow
+type TripRow = store.TripRow
+type FrequencyRow = store.FrequencyRow
+type StopTimeRow = store.StopTimeRow
+type TransferRow = store.TransferRow
+type QualityRow = store.QualityRow
+type ServiceRow = store.ServiceRow
+type ServiceDayRow = store.ServiceDayRow
+type ServiceExceptionRow = store.ServiceExceptionRow
+type FareRow = store.FareRow
+type FareAttributeRow = store.FareAttributeRow
+type FareRuleRow = store.FareRuleRow
+type ZoneRow = store.ZoneRow
+type StopZoneRow = store.StopZoneRow
+type ImportRow = store.ImportRow
+type UserRow = store.UserRow
+type ApiKeyRow = store.ApiKeyRow
+type PlaceRow = store.PlaceRow
+type TerminalRow = store.TerminalRow
+
 type MemoryStore struct {
 	mu           sync.RWMutex
 	cities       map[int64]CityRow
@@ -54,9 +81,9 @@ func NewMemoryStore() *MemoryStore {
 
 func (m *MemoryStore) allocID() int64 { id := m.nextID; m.nextID++; return id }
 
-func (m *MemoryStore) Migrate(ctx context.Context) error                      { return nil }
-func (m *MemoryStore) Close() error                                           { return nil }
-func (m *MemoryStore) WithTx(ctx context.Context, fn func(Store) error) error { return fn(m) }
+func (m *MemoryStore) Migrate(ctx context.Context) error                            { return nil }
+func (m *MemoryStore) Close() error                                                 { return nil }
+func (m *MemoryStore) WithTx(ctx context.Context, fn func(store.Store) error) error { return fn(m) }
 func (m *MemoryStore) FindStation(ctx context.Context, name, region string) (StationRow, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -518,6 +545,45 @@ func (m *MemoryStore) LoadNetwork(ctx context.Context, providers []string, day t
 		}
 		net.Transfers = append(net.Transfers, model.Transfer{FromStopID: from, ToStopID: to, Minutes: tr.Minutes})
 	}
+	globalFareMem.mu.RLock()
+	for k, v := range globalFareMem.fares {
+		cp := v
+		net.FareAttributes[k] = &model.FareAttribute{FareID: cp.FareID, Price: cp.Price, Currency: cp.Currency, Basis: cp.Basis}
+		if cp.FareID != "" && net.FareAttributes[k].Currency == "" {
+			net.FareAttributes[k].Currency = "RUB"
+		}
+		if net.FareAttributes[k].Basis == "" {
+			net.FareAttributes[k].Basis = "fare"
+		}
+	}
+	for k, v := range globalFareMem.zones {
+		cp := v
+		net.Zones[k] = &model.Zone{ID: cp.ZoneID, NameRu: cp.NameRu, NameEn: cp.NameEn}
+	}
+	routeCodeByID := map[int64]string{}
+	for _, rr := range m.routes {
+		routeCodeByID[rr.ID] = rr.ExternalCode
+	}
+	for _, r := range globalFareMem.rules {
+		var oz, dz *string
+		if r.OriginZone != nil {
+			oz = r.OriginZone
+		}
+		if r.DestinationZone != nil {
+			dz = r.DestinationZone
+		}
+		rcode := routeCodeByID[r.RouteID]
+		if rcode == "" {
+			rcode = string(rune(r.RouteID))
+		}
+		net.FareRules = append(net.FareRules, model.FareRule{FareID: r.FareID, RouteID: rcode, OriginZone: oz, DestinationZone: dz})
+	}
+	for sid, zid := range globalFareMem.stopZones {
+		if code, ok := stopIDMap[sid]; ok {
+			net.StopZones[code] = zid
+		}
+	}
+	globalFareMem.mu.RUnlock()
 	dayBase := time.Now().UTC().Truncate(24 * time.Hour)
 	if !day.IsZero() {
 		dayBase = time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC)
@@ -542,4 +608,10 @@ func (m *MemoryStore) LoadNetwork(ctx context.Context, providers []string, day t
 	sort.Slice(net.Connections, func(i, j int) bool { return net.Connections[i].Departure.Before(net.Connections[j].Departure) })
 	net.BuildIndexes()
 	return net, nil
+}
+
+func init() {
+	store.Register("memory", func(ctx context.Context, dsn string) (store.Store, error) {
+		return NewMemoryStore(), nil
+	})
 }

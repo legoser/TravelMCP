@@ -70,6 +70,7 @@ func (a *App) Server() *server.MCPServer {
 		mcp.WithString("preference", mcp.Description("Предпочтение: arrival (быстрее) или transfers (меньше пересадок), по умолчанию arrival")),
 		mcp.WithNumber("max_walk_minutes", mcp.Description("Максимальная пешая доступность до остановки, мин. По умолчанию 30")),
 		mcp.WithNumber("max_transfers", mcp.Description("Лимит пересадок; -1 — без ограничения. По умолчанию -1")),
+		mcp.WithString("transit_modes", mcp.Description("Режимы транспорта через запятую: BUS,COACH,RAIL,TRAM,FLIGHT. Пусто — все режимы")),
 	)
 	srv.AddTool(findRoute, a.handleFindRoute)
 
@@ -187,6 +188,20 @@ func (a *App) handleFindRoute(ctx context.Context, req mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(fmt.Sprintf("max_transfers: ожидается -1..20, получено %.0f", v)), nil
 		}
 		params.MaxTransfers = int(v)
+	}
+	if v, ok := req.GetArguments()["transit_modes"]; ok {
+		s, ok := v.(string)
+		if !ok {
+			return mcp.NewToolResultError(fmt.Sprintf("transit_modes: ожидается строка, получен %T %v", v, v)), nil
+		}
+		s = strings.TrimSpace(s)
+		if s != "" {
+			modes := model.ParseTransitModes(s)
+			if len(modes) == 0 {
+				return mcp.NewToolResultError(fmt.Sprintf("transit_modes: неизвестные режимы %q (допустимо BUS,COACH,RAIL,TRAM,FLIGHT)", s)), nil
+			}
+			params.AllowedModes = modes
+		}
 	}
 	for _, k := range []string{"from_lat", "from_lon", "to_lat", "to_lon"} {
 		if _, exists := req.GetArguments()[k]; exists {
@@ -462,6 +477,28 @@ func (a *App) networkForDay(day time.Time) (*model.Network, error) {
 			if _, exists := net.ProviderStops[id]; !exists {
 				cp := *ps
 				net.ProviderStops[id] = &cp
+			}
+		}
+		for id, z := range n.Zones {
+			if _, exists := net.Zones[id]; !exists {
+				cp := *z
+				net.Zones[id] = &cp
+			}
+		}
+		for id, fa := range n.FareAttributes {
+			if _, exists := net.FareAttributes[id]; !exists {
+				cp := *fa
+				net.FareAttributes[id] = &cp
+			}
+		}
+		net.FareRules = append(net.FareRules, n.FareRules...)
+		for k, v := range n.StopZones {
+			if _, exists := net.StopZones[k]; !exists {
+				net.StopZones[k] = v
+			} else if rn, ok := stopRename[k]; ok {
+				net.StopZones[rn] = v
+			} else {
+				net.StopZones[k] = v
 			}
 		}
 	}

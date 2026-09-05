@@ -94,6 +94,9 @@ verification:
     urban: { distance_m: 200, strong_distance_m: 100, lev_threshold: 0.10 }
     metro: { distance_m: 100, strong_distance_m: 50, lev_threshold: 0.10 }
 
+pricing:
+  default_currency: "RUB" # ISO 4217, поддерживаются RUB,USD,EUR,KZT,BYN,CNY; переопределение PRICING_DEFAULT_CURRENCY / TRAVELMCP__PRICING__DEFAULT_CURRENCY
+
 # Секреты — только через env (или .env, gitignored); в YAML не заполняются.
 yandex:
   rasp_key: "${YANDEX_RASP_KEY}"

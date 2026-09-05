@@ -472,3 +472,42 @@ BEGIN
 END; $$;
 DROP TRIGGER IF EXISTS trg_provenance_no_orphan ON provenance;
 CREATE TRIGGER trg_provenance_no_orphan BEFORE INSERT OR UPDATE ON provenance FOR EACH ROW EXECUTE FUNCTION trg_provenance_no_orphan();
+
+-- 3.5 цены и зоны (Фаза 3)
+CREATE TABLE IF NOT EXISTS zones (
+  zone_id text PRIMARY KEY,
+  name_ru text NOT NULL,
+  name_en text,
+  geom geometry(MultiPolygon, 4326)
+);
+CREATE INDEX IF NOT EXISTS idx_zones_geom ON zones USING gist(geom);
+
+CREATE TABLE IF NOT EXISTS fare_attributes (
+  fare_id text PRIMARY KEY,
+  price numeric NOT NULL CHECK (price >= 0),
+  currency text NOT NULL DEFAULT 'RUB',
+  payment_method smallint NOT NULL DEFAULT 0 CHECK (payment_method IN (0,1)),
+  transfers smallint,
+  transfer_duration int,
+  basis text NOT NULL DEFAULT 'fare'
+);
+CREATE INDEX IF NOT EXISTS idx_fare_attributes_currency ON fare_attributes(currency);
+
+CREATE TABLE IF NOT EXISTS fare_rules (
+  fare_id text NOT NULL REFERENCES fare_attributes(fare_id) ON DELETE CASCADE,
+  route_id bigint REFERENCES routes(id) ON DELETE CASCADE,
+  origin_zone text REFERENCES zones(zone_id) ON DELETE SET NULL,
+  destination_zone text REFERENCES zones(zone_id) ON DELETE SET NULL,
+  contains_zone text REFERENCES zones(zone_id) ON DELETE SET NULL,
+  PRIMARY KEY (fare_id, route_id, origin_zone, destination_zone)
+);
+CREATE INDEX IF NOT EXISTS idx_fare_rules_route ON fare_rules(route_id);
+CREATE INDEX IF NOT EXISTS idx_fare_rules_origin ON fare_rules(origin_zone);
+CREATE INDEX IF NOT EXISTS idx_fare_rules_dest ON fare_rules(destination_zone);
+
+CREATE TABLE IF NOT EXISTS stop_zones (
+  stop_id bigint NOT NULL REFERENCES stops(id) ON DELETE CASCADE,
+  zone_id text NOT NULL REFERENCES zones(zone_id) ON DELETE CASCADE,
+  PRIMARY KEY (stop_id, zone_id)
+);
+CREATE INDEX IF NOT EXISTS idx_stop_zones_zone ON stop_zones(zone_id);

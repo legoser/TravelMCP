@@ -100,6 +100,29 @@ func (s *Synth) build(dayBase time.Time) *model.Network {
 	s.addLine(net, model.Route{ID: "fly", ShortName: "7V", LongName: "Пермь — Екатеринбург", Mode: model.ModeFlight},
 		[]string{"a-apt", "b-apt"}, []int{65}, 480, 120, 1260, dayBase)
 
+	net.Zones["perm"] = &model.Zone{ID: "perm", NameRu: "Пермь", NameEn: "Perm"}
+	net.Zones["ekb"] = &model.Zone{ID: "ekb", NameRu: "Екатеринбург", NameEn: "Ekaterinburg"}
+	net.Zones["pgu"] = &model.Zone{ID: "pgu", NameRu: "ПГУ", NameEn: "PSU"}
+	for _, sid := range []string{"a-cen", "a-bus", "a-air", "a-apt"} {
+		net.StopZones[sid] = "perm"
+	}
+	for _, sid := range []string{"b-bus", "b-mkt", "b-apt"} {
+		net.StopZones[sid] = "ekb"
+	}
+	for _, sid := range []string{"c1", "c2", "c2x", "c3"} {
+		net.StopZones[sid] = "pgu"
+	}
+	net.FareAttributes["fare-a"] = &model.FareAttribute{FareID: "fare-a", Price: 50, Currency: "RUB", Basis: "fare"}
+	net.FareAttributes["fare-900"] = &model.FareAttribute{FareID: "fare-900", Price: 1200, Currency: "RUB", Basis: "fare"}
+	net.FareAttributes["fare-b"] = &model.FareAttribute{FareID: "fare-b", Price: 30, Currency: "RUB", Basis: "fare"}
+	net.FareAttributes["fare-fly"] = &model.FareAttribute{FareID: "fare-fly", Price: 3500, Currency: "RUB", Basis: "fare"}
+	net.FareAttributes["fare-r"] = &model.FareAttribute{FareID: "fare-r", Price: 70, Currency: "RUB", Basis: "fare"}
+	net.FareRules = append(net.FareRules, model.FareRule{FareID: "fare-a", RouteID: "a"})
+	net.FareRules = append(net.FareRules, model.FareRule{FareID: "fare-900", RouteID: "900"})
+	net.FareRules = append(net.FareRules, model.FareRule{FareID: "fare-b", RouteID: "b"})
+	net.FareRules = append(net.FareRules, model.FareRule{FareID: "fare-fly", RouteID: "fly"})
+	net.FareRules = append(net.FareRules, model.FareRule{FareID: "fare-r", RouteID: "r"})
+
 	sort.Slice(net.Connections, func(i, j int) bool {
 		return net.Connections[i].Departure.Before(net.Connections[j].Departure)
 	})

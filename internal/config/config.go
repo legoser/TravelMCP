@@ -156,6 +156,10 @@ type Telemetry struct {
 	PrometheusAddr string `yaml:"prometheus_addr"`
 }
 
+type Pricing struct {
+	DefaultCurrency string `yaml:"default_currency"`
+}
+
 type Config struct {
 	HTTP         HTTP         `yaml:"http"`
 	Store        Store        `yaml:"store"`
@@ -173,6 +177,7 @@ type Config struct {
 	Log          Log          `yaml:"log"`
 	Telemetry    Telemetry    `yaml:"telemetry"`
 	Verification Verification `yaml:"verification"`
+	Pricing      Pricing      `yaml:"pricing"`
 }
 
 func Defaults() *Config {
@@ -207,6 +212,7 @@ func Defaults() *Config {
 			LevThreshold:        0.15,
 			DensityThresholds:   map[string]DensityThreshold{},
 		},
+		Pricing: Pricing{DefaultCurrency: "RUB"},
 	}
 }
 
@@ -283,6 +289,9 @@ func syncLegacy(cfg *Config) {
 	}
 	if cfg.Verification.DensityThresholds == nil {
 		cfg.Verification.DensityThresholds = map[string]DensityThreshold{}
+	}
+	if cfg.Pricing.DefaultCurrency == "" {
+		cfg.Pricing.DefaultCurrency = "RUB"
 	}
 }
 
@@ -408,6 +417,12 @@ func applyEnv(cfg *Config) {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			cfg.Verification.LevThreshold = f
 		}
+	}
+	if v := os.Getenv("PRICING_DEFAULT_CURRENCY"); v != "" {
+		cfg.Pricing.DefaultCurrency = v
+	}
+	if v := os.Getenv("DEFAULT_CURRENCY"); v != "" {
+		cfg.Pricing.DefaultCurrency = v
 	}
 }
 
@@ -555,6 +570,10 @@ func setByPath(cfg *Config, parts []string, v string) {
 			if f, err := strconv.ParseFloat(v, 64); err == nil {
 				cfg.Verification.LevThreshold = f
 			}
+		}
+	case "pricing":
+		if len(parts) == 2 && parts[1] == "default_currency" {
+			cfg.Pricing.DefaultCurrency = v
 		}
 	}
 }

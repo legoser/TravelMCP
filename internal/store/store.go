@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -57,6 +58,16 @@ type QualityStore interface {
 	ClearQualityIssues(ctx context.Context, providerID string) error
 }
 
+type FareStore interface {
+	UpsertZone(ctx context.Context, z ZoneRow) error
+	UpsertFareAttribute(ctx context.Context, f FareAttributeRow) error
+	UpsertFareRule(ctx context.Context, r FareRuleRow) error
+	UpsertStopZone(ctx context.Context, s StopZoneRow) error
+	ListZones(ctx context.Context) ([]ZoneRow, error)
+	ListFareAttributes(ctx context.Context) ([]FareAttributeRow, error)
+	ListFareRules(ctx context.Context) ([]FareRuleRow, error)
+}
+
 type Store interface {
 	CityStore
 	StationStore
@@ -67,6 +78,7 @@ type Store interface {
 	TerminalStore
 	ProvenanceStore
 	QualityStore
+	FareStore
 	UpsertFare(ctx context.Context, f FareRow) error
 	ImportAdaptedRecords(ctx context.Context, records []model.AdaptedRecord) (int, int, error)
 
@@ -94,28 +106,43 @@ type Store interface {
 	TouchApiKey(ctx context.Context, key string) error
 }
 
+var drivers = map[string]func(context.Context, string) (Store, error){}
+
+func Register(kind string, fn func(context.Context, string) (Store, error)) {
+	drivers[kind] = fn
+}
+
 func New(ctx context.Context, dsn string) (Store, error) {
 	if dsn == "" {
 		return nil, nil
 	}
-	if len(dsn) >= 9 && dsn[:9] == "postgres:" {
-		return NewPostgresStore(ctx, dsn)
+	kind := detectKind(dsn)
+	if kind == "sqlite" {
+		slog.Warn("sqlite store is deprecated: используйте postgres DSN, sqlite сохранён только для тестов/совместимости", "dsn", dsn)
 	}
-	if dsn == "memory" || dsn == ":memory:" || dsn == "sqlite://:memory:" || dsn == "file::memory:?cache=shared" {
-		return newDeprecatedSQLiteStore(dsn)
+	if fn, ok := drivers[kind]; ok {
+		return fn(ctx, dsn)
 	}
-	if len(dsn) > 7 && dsn[:7] == "sqlite:" {
-		return newDeprecatedSQLiteStore(dsn)
-	}
-	if len(dsn) > 5 && dsn[len(dsn)-3:] == ".db" {
-		return newDeprecatedSQLiteStore(dsn)
-	}
-	return newDeprecatedSQLiteStore(dsn)
+	return nil, fmt.Errorf("store driver %q not registered for dsn %q (hint: import _ \"travelmcp/internal/store/%s\")", kind, dsn, kind)
 }
 
-func newDeprecatedSQLiteStore(dsn string) (Store, error) {
-	slog.Warn("sqlite store is deprecated: используйте postgres DSN, sqlite сохранён только для тестов/совместимости", "dsn", dsn)
-	return NewSQLiteStore(dsn)
+func detectKind(dsn string) string {
+	if len(dsn) >= 9 && dsn[:9] == "postgres:" {
+		return "postgres"
+	}
+	if dsn == "memory" || dsn == ":memory:" || dsn == "sqlite://:memory:" || dsn == "file::memory:?cache=shared" {
+		return "sqlite"
+	}
+	if len(dsn) > 7 && dsn[:7] == "sqlite:" {
+		return "sqlite"
+	}
+	if len(dsn) > 5 && dsn[len(dsn)-3:] == ".db" {
+		return "sqlite"
+	}
+	if dsn == "memory-store" {
+		return "memory"
+	}
+	return ""
 }
 
 var errNotImplemented = errStr("postgres store: метод ещё не реализован (фаза 2), см. postgres.go")

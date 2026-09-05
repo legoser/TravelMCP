@@ -18,7 +18,11 @@ import (
 	"travelmcp/internal/logger"
 	"travelmcp/internal/providers"
 	"travelmcp/internal/server"
+	"travelmcp/internal/pricing"
 	"travelmcp/internal/store"
+	_ "travelmcp/internal/store/memory"
+	_ "travelmcp/internal/store/postgres"
+	_ "travelmcp/internal/store/sqlite"
 	"travelmcp/internal/support/httpx"
 	"travelmcp/internal/telemetry"
 
@@ -40,7 +44,8 @@ func main() {
 	factory := logger.NewFactory(cfg.Log)
 	logger := factory.For("main")
 	slog.SetDefault(logger)
-	logger.Info("config loaded", "path", configPath, "addr", cfg.HTTP.Addr, "providers", strings.Join(cfg.Providers.Enabled, ","), "dsn", maskDSN(cfg.Database.DSN), "reestr", cfg.Providers.Intercity.ReestrPath, "log_level", cfg.Log.Level, "log_format", cfg.Log.Format, "log_levels", cfg.Log.Levels)
+	pricing.Configure(cfg.Pricing.DefaultCurrency)
+	logger.Info("config loaded", "path", configPath, "addr", cfg.HTTP.Addr, "providers", strings.Join(cfg.Providers.Enabled, ","), "dsn", maskDSN(cfg.Database.DSN), "reestr", cfg.Providers.Intercity.ReestrPath, "log_level", cfg.Log.Level, "log_format", cfg.Log.Format, "log_levels", cfg.Log.Levels, "pricing_currency", cfg.Pricing.DefaultCurrency)
 
 	httpLogger := factory.For("http")
 	httpxLogger := factory.For("httpx")

@@ -1,17 +1,45 @@
-package store
+package postgres
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"travelmcp/internal/model"
+	store "travelmcp/internal/store"
 )
+
+type CityRow = store.CityRow
+type StationRow = store.StationRow
+type StopRow = store.StopRow
+type StationCodeRow = store.StationCodeRow
+type CarrierRow = store.CarrierRow
+type RouteRow = store.RouteRow
+type TripRow = store.TripRow
+type FrequencyRow = store.FrequencyRow
+type StopTimeRow = store.StopTimeRow
+type TransferRow = store.TransferRow
+type QualityRow = store.QualityRow
+type ServiceRow = store.ServiceRow
+type ServiceDayRow = store.ServiceDayRow
+type ServiceExceptionRow = store.ServiceExceptionRow
+type FareRow = store.FareRow
+type FareAttributeRow = store.FareAttributeRow
+type FareRuleRow = store.FareRuleRow
+type ZoneRow = store.ZoneRow
+type StopZoneRow = store.StopZoneRow
+type ImportRow = store.ImportRow
+type UserRow = store.UserRow
+type ApiKeyRow = store.ApiKeyRow
+type PlaceRow = store.PlaceRow
+type TerminalRow = store.TerminalRow
 
 type PostgresStore struct {
 	pool *pgxpool.Pool
@@ -42,16 +70,30 @@ func (p *PostgresStore) Migrate(ctx context.Context) error {
 		slog.Warn("postgres Migrate: pool nil", "dsn", p.dsn)
 		return nil
 	}
-	data, err := os.ReadFile("migrations/001_initial.sql")
+	matches, err := filepath.Glob("migrations/*.sql")
 	if err != nil {
-		return fmt.Errorf("read migration: %w", err)
+		return fmt.Errorf("glob migrations: %w", err)
 	}
-	if len(data) == 0 {
-		return fmt.Errorf("migration empty")
+	if len(matches) == 0 {
+		slog.Warn("postgres Migrate: no migration files found", "dir", "migrations")
+		return nil
 	}
-	if _, err := p.pool.Exec(ctx, string(data)); err != nil {
-		slog.Error("postgres migrate failed", "err", err)
-		return err
+	sort.Strings(matches)
+	for _, path := range matches {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read migration %s: %w", path, err)
+		}
+		if len(data) == 0 {
+			slog.Warn("postgres Migrate: empty file", "path", path)
+			continue
+		}
+		slog.Info("postgres Migrate: applying", "path", path, "size", len(data))
+		if _, err := p.pool.Exec(ctx, string(data)); err != nil {
+			slog.Error("postgres migrate failed", "path", path, "err", err)
+			return fmt.Errorf("migrate %s: %w", path, err)
+		}
+		slog.Info("postgres Migrate: applied", "path", path)
 	}
 	return nil
 }
@@ -64,7 +106,7 @@ func (p *PostgresStore) Close() error {
 	return nil
 }
 
-func (p *PostgresStore) WithTx(ctx context.Context, fn func(Store) error) error {
+func (p *PostgresStore) WithTx(ctx context.Context, fn func(store.Store) error) error {
 	if p.pool == nil {
 		return fn(p)
 	}
@@ -430,6 +472,48 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 			net.Transfers = append(net.Transfers, model.Transfer{FromStopID: from, ToStopID: to, Minutes: minutes})
 		}
 	}
+	if faRows, err := p.pool.Query(ctx, `SELECT fare_id, price, currency, basis FROM fare_attributes`); err == nil {
+		defer faRows.Close()
+		for faRows.Next() {
+			var fid string
+			var price float64
+			var cur, basis string
+			_ = faRows.Scan(&fid, &price, &cur, &basis)
+			net.FareAttributes[fid] = &model.FareAttribute{FareID: fid, Price: price, Currency: cur, Basis: basis}
+		}
+	}
+	if zRows, err := p.pool.Query(ctx, `SELECT zone_id, name_ru, name_en FROM zones`); err == nil {
+		defer zRows.Close()
+		for zRows.Next() {
+			var zid, nru, nen string
+			_ = zRows.Scan(&zid, &nru, &nen)
+			net.Zones[zid] = &model.Zone{ID: zid, NameRu: nru, NameEn: nen}
+		}
+	}
+	routeIDToFare := map[int64]string{}
+	if frRows, err := p.pool.Query(ctx, `SELECT fare_id, route_id, origin_zone, destination_zone FROM fare_rules`); err == nil {
+		defer frRows.Close()
+		for frRows.Next() {
+			var fid string
+			var rid int64
+			var o, d *string
+			_ = frRows.Scan(&fid, &rid, &o, &d)
+			code := routeIDToCode[rid]
+			net.FareRules = append(net.FareRules, model.FareRule{FareID: fid, RouteID: code, OriginZone: o, DestinationZone: d})
+			routeIDToFare[rid] = fid
+		}
+	}
+	if szRows, err := p.pool.Query(ctx, `SELECT stop_id, zone_id FROM stop_zones`); err == nil {
+		defer szRows.Close()
+		for szRows.Next() {
+			var sid int64
+			var zid string
+			_ = szRows.Scan(&sid, &zid)
+			if code, ok := stopIDMap[sid]; ok {
+				net.StopZones[code] = zid
+			}
+		}
+	}
 	dayBase := time.Now().UTC().Truncate(24 * time.Hour)
 	if !day.IsZero() {
 		dayBase = time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC)
@@ -537,9 +621,9 @@ type pgTxStore struct {
 	parent *PostgresStore
 }
 
-func (t *pgTxStore) Migrate(ctx context.Context) error                      { return nil }
-func (t *pgTxStore) Close() error                                           { return nil }
-func (t *pgTxStore) WithTx(ctx context.Context, fn func(Store) error) error { return fn(t) }
+func (t *pgTxStore) Migrate(ctx context.Context) error                            { return nil }
+func (t *pgTxStore) Close() error                                                 { return nil }
+func (t *pgTxStore) WithTx(ctx context.Context, fn func(store.Store) error) error { return fn(t) }
 func (t *pgTxStore) UpsertCity(ctx context.Context, c CityRow) (int64, error) {
 	var id int64
 	err := t.tx.QueryRow(ctx, `INSERT INTO cities(name, region_code, lat, lon, timezone, population, kind, source) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(name, region_code) DO UPDATE SET lat=EXCLUDED.lat, lon=EXCLUDED.lon RETURNING id`, c.Name, c.RegionCode, c.Lat, c.Lon, c.Timezone, c.Population, c.Kind, c.Source).Scan(&id)
@@ -772,3 +856,15 @@ func (t *pgTxStore) DeleteApiKey(ctx context.Context, id int64, userID int64) er
 	return errNotImplemented
 }
 func (t *pgTxStore) TouchApiKey(ctx context.Context, key string) error { return nil }
+
+func init() {
+	store.Register("postgres", func(ctx context.Context, dsn string) (store.Store, error) {
+		return NewPostgresStore(ctx, dsn)
+	})
+}
+
+var errNotImplemented = errStr("postgres store: метод ещё не реализован")
+
+type errStr string
+
+func (e errStr) Error() string { return string(e) }

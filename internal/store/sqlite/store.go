@@ -1,4 +1,4 @@
-package store
+package sqlite
 
 import (
 	"context"
@@ -14,12 +14,39 @@ import (
 	_ "modernc.org/sqlite"
 
 	"travelmcp/internal/model"
+	store "travelmcp/internal/store"
 	"travelmcp/internal/support/classifier"
 )
 
 // Deprecated: SQLiteStore сохранён только для тестов и неразрушающей совместимости.
 // Для продакшена используйте PostgresStore (PostgreSQL+PostGIS, migrations/001...sql).
 // Новые фичи фазы 2+ не будут портироваться на SQLite.
+
+type CityRow = store.CityRow
+type StationRow = store.StationRow
+type StopRow = store.StopRow
+type StationCodeRow = store.StationCodeRow
+type CarrierRow = store.CarrierRow
+type RouteRow = store.RouteRow
+type TripRow = store.TripRow
+type FrequencyRow = store.FrequencyRow
+type StopTimeRow = store.StopTimeRow
+type TransferRow = store.TransferRow
+type QualityRow = store.QualityRow
+type ServiceRow = store.ServiceRow
+type ServiceDayRow = store.ServiceDayRow
+type ServiceExceptionRow = store.ServiceExceptionRow
+type FareRow = store.FareRow
+type FareAttributeRow = store.FareAttributeRow
+type FareRuleRow = store.FareRuleRow
+type ZoneRow = store.ZoneRow
+type StopZoneRow = store.StopZoneRow
+type ImportRow = store.ImportRow
+type UserRow = store.UserRow
+type ApiKeyRow = store.ApiKeyRow
+type PlaceRow = store.PlaceRow
+type TerminalRow = store.TerminalRow
+
 type SQLiteStore struct {
 	db *sql.DB
 }
@@ -65,7 +92,7 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 func (s *SQLiteStore) DB() *sql.DB  { return s.db }
 func (s *SQLiteStore) Close() error { return s.db.Close() }
 
-func (s *SQLiteStore) WithTx(ctx context.Context, fn func(Store) error) error {
+func (s *SQLiteStore) WithTx(ctx context.Context, fn func(store.Store) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -264,7 +291,7 @@ func (t *txStore) UpsertTransfer(ctx context.Context, r TransferRow) error {
 	_, err := t.tx.ExecContext(ctx, `INSERT INTO transfers(from_stop_id, to_stop_id, minutes, min_transfer_time, distance_m, within_station) VALUES(?,?,?,?,?,?) ON CONFLICT(from_stop_id, to_stop_id) DO UPDATE SET minutes=excluded.minutes`, r.FromStopID, r.ToStopID, r.Minutes, r.MinTransferTime, r.DistanceM, r.WithinStation)
 	return err
 }
-func (t *txStore) WithTx(ctx context.Context, fn func(Store) error) error {
+func (t *txStore) WithTx(ctx context.Context, fn func(store.Store) error) error {
 	return fn(t)
 }
 func (t *txStore) FindStation(ctx context.Context, name, region string) (StationRow, bool) {
@@ -678,6 +705,33 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_routes_external ON routes(external_code)`,
 		`CREATE INDEX IF NOT EXISTS idx_trips_route ON trips(route_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_stop_times_trip ON stop_times(trip_id, seq)`,
+		`CREATE TABLE IF NOT EXISTS zones (
+			zone_id TEXT PRIMARY KEY,
+			name_ru TEXT NOT NULL,
+			name_en TEXT
+		)`,
+		`CREATE TABLE IF NOT EXISTS fare_attributes (
+			fare_id TEXT PRIMARY KEY,
+			price REAL NOT NULL CHECK(price >= 0),
+			currency TEXT NOT NULL DEFAULT 'RUB',
+			basis TEXT NOT NULL DEFAULT 'fare',
+			payment_method INTEGER DEFAULT 0,
+			transfers INTEGER,
+			transfer_duration INTEGER
+		)`,
+		`CREATE TABLE IF NOT EXISTS fare_rules (
+			fare_id TEXT NOT NULL REFERENCES fare_attributes(fare_id) ON DELETE CASCADE,
+			route_id INTEGER REFERENCES routes(id) ON DELETE CASCADE,
+			origin_zone TEXT REFERENCES zones(zone_id) ON DELETE SET NULL,
+			destination_zone TEXT REFERENCES zones(zone_id) ON DELETE SET NULL,
+			contains_zone TEXT,
+			PRIMARY KEY(fare_id, route_id, origin_zone, destination_zone)
+		)`,
+		`CREATE TABLE IF NOT EXISTS stop_zones (
+			stop_id INTEGER NOT NULL REFERENCES stops(id) ON DELETE CASCADE,
+			zone_id TEXT NOT NULL REFERENCES zones(zone_id) ON DELETE CASCADE,
+			PRIMARY KEY(stop_id, zone_id)
+		)`,
 	}
 	for _, q := range stmts {
 		if _, err := s.db.ExecContext(ctx, q); err != nil {
@@ -1233,6 +1287,45 @@ func (s *SQLiteStore) LoadNetwork(ctx context.Context, providers []string, day t
 		}
 		trRows.Close()
 	}
+	if faRows, err := s.db.QueryContext(ctx, `SELECT fare_id, price, currency, basis FROM fare_attributes`); err == nil {
+		for faRows.Next() {
+			var fid, cur, basis string
+			var price float64
+			faRows.Scan(&fid, &price, &cur, &basis)
+			net.FareAttributes[fid] = &model.FareAttribute{FareID: fid, Price: price, Currency: cur, Basis: basis}
+		}
+		faRows.Close()
+	}
+	if zRows, err := s.db.QueryContext(ctx, `SELECT zone_id, name_ru, name_en FROM zones`); err == nil {
+		for zRows.Next() {
+			var zid, nru, nen string
+			zRows.Scan(&zid, &nru, &nen)
+			net.Zones[zid] = &model.Zone{ID: zid, NameRu: nru, NameEn: nen}
+		}
+		zRows.Close()
+	}
+	if frRows, err := s.db.QueryContext(ctx, `SELECT fare_id, route_id, origin_zone, destination_zone FROM fare_rules`); err == nil {
+		for frRows.Next() {
+			var fid string
+			var rid int64
+			var o, d *string
+			frRows.Scan(&fid, &rid, &o, &d)
+			code := routeIDToCode[rid]
+			net.FareRules = append(net.FareRules, model.FareRule{FareID: fid, RouteID: code, OriginZone: o, DestinationZone: d})
+		}
+		frRows.Close()
+	}
+	if szRows, err := s.db.QueryContext(ctx, `SELECT stop_id, zone_id FROM stop_zones`); err == nil {
+		for szRows.Next() {
+			var sid int64
+			var zid string
+			szRows.Scan(&sid, &zid)
+			if code, ok := stopIDMap[sid]; ok {
+				net.StopZones[code] = zid
+			}
+		}
+		szRows.Close()
+	}
 	dayBase := time.Now().UTC().Truncate(24 * time.Hour)
 	if !day.IsZero() {
 		dayBase = time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC)
@@ -1456,4 +1549,10 @@ func (s *SQLiteStore) ImportAdaptedRecords(ctx context.Context, records []model.
 		}
 	}
 	return verified, queued, nil
+}
+
+func init() {
+	store.Register("sqlite", func(ctx context.Context, dsn string) (store.Store, error) {
+		return NewSQLiteStore(dsn)
+	})
 }

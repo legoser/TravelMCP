@@ -23,9 +23,11 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"travelmcp/internal/config"
+	gtfspkg "travelmcp/internal/export/gtfs"
 	logfactory "travelmcp/internal/logger"
 	"travelmcp/internal/mcp"
 	"travelmcp/internal/middleware"
+	"travelmcp/internal/model"
 	"travelmcp/internal/planner"
 	"travelmcp/internal/providers"
 	"travelmcp/internal/store"
@@ -94,6 +96,10 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 	mux.Handle("DELETE /api/v1/keys/{id}", s.auth(http.HandlerFunc(s.handleDeleteKey), "mcp:read"))
 	mux.Handle("GET /api/v1/config", s.auth(http.HandlerFunc(s.handleGetConfig), "admin"))
 	mux.Handle("PUT /api/v1/config", s.auth(http.HandlerFunc(s.handlePutConfig), "admin"))
+	mux.Handle("GET /api/v1/fares", s.auth(http.HandlerFunc(s.handleFares), "mcp:read"))
+	mux.Handle("GET /api/v1/zones", s.auth(http.HandlerFunc(s.handleZones), "mcp:read"))
+	mux.Handle("GET /api/v1/gtfs", s.auth(http.HandlerFunc(s.handleGTFS), "mcp:read"))
+	mux.Handle("POST /api/v1/route", s.auth(http.HandlerFunc(s.handleRoute), "mcp:read"))
 	adminFS, _ := fs.Sub(webFS, "web")
 	mux.Handle("GET /admin", http.HandlerFunc(s.handleAdminPage))
 	mux.Handle("GET /admin/", http.StripPrefix("/admin/", http.FileServer(http.FS(adminFS))))
@@ -227,6 +233,113 @@ func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("providers list", "user", userEmail(user), "remote", r.RemoteAddr)
 	s.logger.Debug("providers debug", "statuses", fmt.Sprint(s.registry.HealthStatuses()))
 	writeJSONResponse(w, http.StatusOK, s.registry.HealthStatuses())
+}
+
+func (s *Server) handleFares(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSONResponse(w, http.StatusOK, map[string]any{"fare_attributes": []any{}, "fare_rules": []any{}})
+		return
+	}
+	fa, _ := s.store.ListFareAttributes(r.Context())
+	fr, _ := s.store.ListFareRules(r.Context())
+	writeJSONResponse(w, http.StatusOK, map[string]any{"fare_attributes": fa, "fare_rules": fr})
+}
+
+func (s *Server) handleZones(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSONResponse(w, http.StatusOK, []any{})
+		return
+	}
+	zs, _ := s.store.ListZones(r.Context())
+	writeJSONResponse(w, http.StatusOK, zs)
+}
+
+func (s *Server) handleGTFS(w http.ResponseWriter, r *http.Request) {
+	var net *model.Network
+	var err error
+	if s.store != nil {
+		ids := make([]string, 0, len(s.registry.List()))
+		for _, p := range s.registry.List() {
+			ids = append(ids, p.ID())
+		}
+		net, err = s.store.LoadNetwork(r.Context(), ids, time.Now())
+		if err != nil || net == nil || len(net.Stops) == 0 {
+			net = nil
+		}
+	}
+	if net == nil {
+		app := mcp.NewWithStore(planner.NewWithConfig(s.metrics, s.cfg.Planner.Engine, s.logger, s.cfg.Planner.SemaphoreSize, s.cfg.Planner.SemaphoreEnable), s.registry, s.store, s.logger)
+		_ = app
+		muxNet := model.NewNetwork()
+		for _, p := range s.registry.List() {
+			n, e := p.Network()
+			if e != nil {
+				continue
+			}
+			for k, v := range n.Stops {
+				muxNet.Stops[k] = v
+			}
+			for k, v := range n.Routes {
+				muxNet.Routes[k] = v
+			}
+			for k, v := range n.Trips {
+				muxNet.Trips[k] = v
+			}
+			muxNet.Connections = append(muxNet.Connections, n.Connections...)
+			muxNet.Transfers = append(muxNet.Transfers, n.Transfers...)
+			for k, v := range n.Zones {
+				muxNet.Zones[k] = v
+			}
+			for k, v := range n.FareAttributes {
+				muxNet.FareAttributes[k] = v
+			}
+			muxNet.FareRules = append(muxNet.FareRules, n.FareRules...)
+			for k, v := range n.StopZones {
+				muxNet.StopZones[k] = v
+			}
+		}
+		net = muxNet
+	}
+	data, err := gtfsCompile(net)
+	if err != nil {
+		writeJSONResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="gtfs.zip"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+func gtfsCompile(net *model.Network) ([]byte, error) {
+	return gtfspkg.Compile(net)
+}
+
+func (s *Server) handleRoute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONResponse(w, http.StatusMethodNotAllowed, map[string]any{"error": "POST required"})
+		return
+	}
+	var req struct {
+		FromLat        *float64 `json:"from_lat"`
+		FromLon        *float64 `json:"from_lon"`
+		ToLat          *float64 `json:"to_lat"`
+		ToLon          *float64 `json:"to_lon"`
+		FromPlace      string   `json:"from_place"`
+		ToPlace        string   `json:"to_place"`
+		Departure      string   `json:"departure"`
+		TransitModes   string   `json:"transit_modes"`
+		MaxWalkMinutes *int     `json:"max_walk_minutes"`
+		MaxTransfers   *int     `json:"max_transfers"`
+		AllowGap       bool     `json:"allow_gap"`
+		Preference     string   `json:"preference"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "details": err.Error()})
+		return
+	}
+	_ = req
+	writeJSONResponse(w, http.StatusNotImplemented, map[string]any{"error": "use /mcp find_route"})
 }
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {

@@ -1,8 +1,10 @@
-package store
+package sqlite
 
 import (
 	"context"
 	"testing"
+
+	"travelmcp/internal/store"
 )
 
 func TestPlaceClosure(t *testing.T) {
@@ -77,7 +79,7 @@ func TestPlaceClosure(t *testing.T) {
 	}
 }
 
-func seedPilotPlaces(ctx context.Context, s Store) error {
+func seedPilotPlaces(ctx context.Context, s store.Store) error {
 	pilots := []struct {
 		name       string
 		adminLevel int
