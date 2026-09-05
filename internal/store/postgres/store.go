@@ -209,7 +209,7 @@ func (p *PostgresStore) UpsertStopTime(ctx context.Context, st StopTimeRow) erro
 	if p.pool == nil {
 		return nil
 	}
-	_, err := p.pool.Exec(ctx, `INSERT INTO stop_times(trip_id, stop_id, seq, arrival, departure, pickup_type, drop_off_type, dwell) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(trip_id, stop_id, seq) DO UPDATE SET arrival=EXCLUDED.arrival, departure=EXCLUDED.departure`, st.TripID, st.StopID, st.Seq, st.Arrival, st.Departure, st.PickupType, st.DropOffType, st.Dwell)
+	_, err := p.pool.Exec(ctx, `INSERT INTO stop_times(trip_id, stop_id, seq, arrival, departure, pickup_type, drop_off_type, dwell) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(trip_id, seq) DO UPDATE SET stop_id=EXCLUDED.stop_id, arrival=EXCLUDED.arrival, departure=EXCLUDED.departure`, st.TripID, st.StopID, st.Seq, st.Arrival, st.Departure, st.PickupType, st.DropOffType, st.Dwell)
 	return err
 }
 func (p *PostgresStore) UpsertTransfer(ctx context.Context, tr TransferRow) error {
@@ -675,7 +675,7 @@ func (t *pgTxStore) UpsertFrequency(ctx context.Context, f FrequencyRow) error {
 	return err
 }
 func (t *pgTxStore) UpsertStopTime(ctx context.Context, st StopTimeRow) error {
-	_, err := t.tx.Exec(ctx, `INSERT INTO stop_times(trip_id, stop_id, seq, arrival, departure, pickup_type, drop_off_type, dwell) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(trip_id, stop_id, seq) DO UPDATE SET arrival=EXCLUDED.arrival`, st.TripID, st.StopID, st.Seq, st.Arrival, st.Departure, st.PickupType, st.DropOffType, st.Dwell)
+	_, err := t.tx.Exec(ctx, `INSERT INTO stop_times(trip_id, stop_id, seq, arrival, departure, pickup_type, drop_off_type, dwell) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(trip_id, seq) DO UPDATE SET stop_id=EXCLUDED.stop_id, arrival=EXCLUDED.arrival`, st.TripID, st.StopID, st.Seq, st.Arrival, st.Departure, st.PickupType, st.DropOffType, st.Dwell)
 	return err
 }
 func (t *pgTxStore) UpsertTransfer(ctx context.Context, tr TransferRow) error {
