@@ -229,7 +229,7 @@ CREATE TABLE IF NOT EXISTS service_exceptions (
 CREATE TABLE IF NOT EXISTS trips (
   id bigserial PRIMARY KEY,
   route_id bigint NOT NULL REFERENCES routes(id) ON DELETE CASCADE,
-  provider_id text NOT NULL,
+  provider_id text NOT NULL REFERENCES providers(code),
   direction text,
   service_days text,
   frequency_flag int,
@@ -429,6 +429,8 @@ BEGIN
   IF NEW.entity_type='place' AND NOT EXISTS (SELECT 1 FROM places WHERE id=NEW.entity_id) THEN RAISE EXCEPTION 'provenance orphan place %', NEW.entity_id; END IF;
   IF NEW.entity_type='terminal' AND NOT EXISTS (SELECT 1 FROM terminals WHERE id=NEW.entity_id) THEN RAISE EXCEPTION 'provenance orphan terminal %', NEW.entity_id; END IF;
   IF NEW.entity_type='stop' AND NOT EXISTS (SELECT 1 FROM stops_canonical WHERE id=NEW.entity_id) THEN RAISE EXCEPTION 'provenance orphan stop %', NEW.entity_id; END IF;
+  IF NEW.entity_type='route' AND NOT EXISTS (SELECT 1 FROM routes WHERE id=NEW.entity_id) THEN RAISE EXCEPTION 'provenance orphan route %', NEW.entity_id; END IF;
+  IF NEW.entity_type='trip' AND NOT EXISTS (SELECT 1 FROM trips WHERE id=NEW.entity_id) THEN RAISE EXCEPTION 'provenance orphan trip %', NEW.entity_id; END IF;
   RETURN NEW;
 END; $$;
 DROP TRIGGER IF EXISTS trg_provenance_no_orphan ON provenance;
@@ -538,7 +540,7 @@ CREATE INDEX IF NOT EXISTS idx_outbox_aggregate ON outbox(aggregate, aggregate_i
 CREATE OR REPLACE VIEW v_review_stops AS
 SELECT rq.entity_type, rq.entity_id, rq.reason, rq.score, rq.created_at,
        t.geom, t.is_locked, tn.name as terminal_name, ti.code as identifier_code,
-       (SELECT il.stage || ':' || il.action FROM import_logs il WHERE il.entity_id = rq.entity_id::text ORDER BY il.at DESC LIMIT 1) as last_stage
+       (SELECT il.stage || ':' || il.action FROM import_logs il WHERE il.entity_id = rq.entity_id::text AND il.entity_type = rq.entity_type ORDER BY il.at DESC LIMIT 1) as last_stage
 FROM review_queue rq
 LEFT JOIN terminals t ON rq.entity_type='terminal' AND t.id = rq.entity_id
 LEFT JOIN terminal_names tn ON tn.terminal_id = t.id AND tn.lang='ru'
