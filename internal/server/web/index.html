@@ -27,14 +27,24 @@
 </div>
 
 <div id="tab-config" class="card hidden">
-<h2>Конфиг (hot-reload)</h2>
+<h2>Конфиг (hot-reload — шлётся только дельта)</h2>
 <div class="grid">
-<div><label class="muted">Providers enabled (через запятую)</label><input id="cfgProviders" style="width:100%" placeholder="synth,intercity"></div>
+<div><label class="muted">Providers enabled</label><input id="cfgProviders" style="width:100%" placeholder="synth,intercity"></div>
 <div><label class="muted">Planner engine</label><select id="cfgEngine" style="width:100%"><option value="csa">csa</option><option value="raptor">raptor</option></select></div>
 <div><label class="muted">Log level</label><select id="cfgLog" style="width:100%"><option>debug</option><option>info</option><option>warn</option><option>error</option></select></div>
 <div><label class="muted">Log levels per-module (json)</label><input id="cfgLevels" style="width:100%" placeholder='{"http":"debug"}'></div>
+<div><label class="muted">Store DSN</label><input id="cfgStore" style="width:100%" placeholder="postgres://..."></div>
+<div><label class="muted">Cache kind/TTL</label><input id="cfgCache" style="width:100%" placeholder="memory / 1440m"></div>
+<div><label class="muted">Motis URL</label><input id="cfgMotis" style="width:100%" placeholder="http://192.168.57.14:8077"></div>
+<div><label class="muted">Geocoder kind</label><select id="cfgGeocoderKind" style="width:100%"><option value="">(auto)</option><option value="nominatim">nominatim</option><option value="yandex">yandex</option></select></div>
+<div><label class="muted">Nominatim URL</label><input id="cfgNominatim" style="width:100%"></div>
+<div><label class="muted">Yandex geocode URL / key</label><input id="cfgYandex" style="width:100%" placeholder="https://... / key"></div>
+<div><label class="muted">Planner semaphore / enable</label><input id="cfgSem" style="width:100%" placeholder="0, true"></div>
+<div><label class="muted">Verification conf / dist / strong / lev</label><input id="cfgVerif" style="width:100%" placeholder="0.6 / 200 / 100 / 0.15"></div>
+<div><label class="muted">Dedup distance_m</label><input id="cfgDedup" style="width:100%" placeholder="200"></div>
+<div><label class="muted">Pricing currency</label><input id="cfgPricing" style="width:100%" placeholder="RUB"></div>
 </div>
-<div class="row" style="margin-top:12px"><button onclick="loadConfig()">Загрузить</button><button class="ok" onclick="saveConfig()">Сохранить (PUT)</button></div>
+<div class="row" style="margin-top:12px"><button onclick="loadConfig()">Загрузить</button><button class="ok" onclick="saveConfig()">Сохранить дельту (PUT)</button></div>
 <pre id="cfgOut" class="mono" style="margin-top:12px">—</pre>
 </div>
 
@@ -48,24 +58,26 @@
 
 <div id="tab-imports" class="card hidden">
 <div class="row" style="justify-content:space-between"><h2>Импорты и Jobs</h2><button class="secondary" onclick="loadImports()">↻ Обновить</button></div>
-<div class="row" style="margin-top:8px;gap:8px"><button onclick="enqueueMintrans()">Обновить автобусы (mintrans)</button><button onclick="enqueueRail()">Обновить ж/д (rail)</button><button class="secondary" onclick="enqueueGTFS()">Upload gtfs.zip (import_gtfs)</button><button class="secondary" onclick="loadJobs()">Jobs</button><button class="secondary" onclick="loadLogs()">Logs</button></div>
+<div class="row" style="margin-top:8px;gap:8px"><button onclick="enqueueMintrans()">Обновить автобусы (mintrans)</button><button onclick="enqueueRail()">Обновить ж/д (rail)</button><label class="secondary" style="cursor:pointer;padding:6px 10px;border:1px solid #ccc;border-radius:4px">Выбрать gtfs.zip <input type="file" id="gtfsFile" accept=".zip" style="display:none" onchange="enqueueGTFS(this)"></label><button class="secondary" onclick="document.getElementById('gtfsFile').click()">Upload gtfs.zip</button><button class="secondary" onclick="loadJobs()">Jobs</button><button class="secondary" onclick="loadLogs()">Logs</button></div>
+<div class="muted" style="font-size:11px;margin-top:4px">Выбранный zip загружается на сервер через <code>POST /api/v1/import/gtfs</code> multipart, сохраняется в <code>data/gtfs/</code> и ставится <code>jobs import_gtfs payload={\"path\":\"data/gtfs/&lt;имя&gt;\",\"hash\":...}</code> — воркер ищет по <code>payload.path</code>, а не в рандоме.</div>
 <div style="overflow:auto;margin-top:10px"><h3 style="font-size:13px">Последние импорты</h3><table><thead><tr><th>provider</th><th>at</th><th>records</th><th>status</th><th>checksum</th></tr></thead><tbody id="importsBody"><tr><td colspan="5" class="muted">—</td></tr></tbody></table></div>
 <div style="overflow:auto;margin-top:10px"><h3 style="font-size:13px">Jobs (pending/running/retry)</h3><table><thead><tr><th>ID</th><th>type</th><th>region</th><th>state</th><th>attempts</th><th>next_run</th><th>error</th></tr></thead><tbody id="jobsBody"><tr><td colspan="7" class="muted">—</td></tr></tbody></table></div>
 <div style="overflow:auto;margin-top:10px"><h3 style="font-size:13px">Import logs (последние 50)</h3><pre id="logsOut" class="mono" style="max-height:240px;overflow:auto">—</pre></div>
 </div>
 
 <div id="tab-terminals" class="card hidden">
-<h2>Ручная правка терминалов</h2>
+<h2>Ручная правка терминалов (пагинация 20, сортировка)</h2>
 <div class="muted" style="margin-bottom:8px">Правка ставит <code>is_locked=true</code> + <code>provenance.actor_id</code> + <code>audit_log</code>. Авто-импорт далее не перезапишет (hysteresis → <code>review_queue</code>).</div>
-<div class="row" style="gap:8px"><input id="termId" placeholder="terminal ID (e.g. 123)" style="width:140px"><input id="termName" placeholder="Название ru" style="flex:1"><input id="termLat" placeholder="lat" style="width:110px"><input id="termLon" placeholder="lon" style="width:110px"><button class="ok" onclick="updateTerminal()">Сохранить</button></div>
+<div class="row" style="gap:8px"><button class="secondary" onclick="loadTerminals()">Загрузить 20</button><select id="termSort" style="width:140px"><option value="id">сортировка: id</option><option value="name">name</option><option value="is_locked">is_locked</option></select><span class="muted">стр. <span id="termPage">1</span></span><button class="secondary" onclick="prevTermPage()">‹</button><button class="secondary" onclick="nextTermPage()">›</button></div>
+<div style="overflow:auto;margin-top:8px"><table><thead><tr><th>ID</th><th>name ru</th><th>lat/lon</th><th>locked</th><th>place</th><th></th></tr></thead><tbody id="terminalsBody"><tr><td colspan="6" class="muted">— нажми Загрузить</td></tr></tbody></table></div>
+<div class="row" style="gap:8px;margin-top:12px"><input id="termId" placeholder="terminal ID" style="width:120px"><input id="termName" placeholder="Название ru" style="flex:1"><input id="termLat" placeholder="lat" style="width:100px"><input id="termLon" placeholder="lon" style="width:100px"><button class="ok" onclick="updateTerminal()">Сохранить</button></div>
 <div id="termMsg" class="muted" style="margin-top:8px"></div>
-<div class="muted" style="margin-top:12px"><code>PUT /api/v1/admin/terminals/{id}</code> — тело <code>{"name":"Кемерово АВ","lat":55.355,"lon":86.088}</code></div>
 </div>
 
 <div id="tab-review" class="card hidden">
-<div class="row" style="justify-content:space-between"><h2>Review queue</h2><div class="row"><button class="secondary" onclick="loadReview()">Обновить</button><button class="secondary" onclick="exportReview()">Экспорт CSV</button></div></div>
+<div class="row" style="justify-content:space-between"><h2>Review queue — зачем?</h2><div class="row"><button class="secondary" onclick="loadReview()">Обновить</button><button class="secondary" onclick="exportReview()">Экспорт CSV</button></div></div>
+<div class="muted" style="font-size:12px;margin-top:6px">Сюда попадают объекты с <code>confidence<0.6</code>, <code>missing_coords</code>, <code>duplicate_ambiguous</code>, <code>conflicts_with_confirmed</code>. Без ручной проверки они не попадут в канон/GTFS/маршрут — иначе «мусор» испортит <code>find_route</code>. Оператор правит в <b>Терминалы</b> → <code>is_locked</code> → объект выходит из очереди.</div>
 <div style="overflow:auto;margin-top:10px"><table><thead><tr><th>entity</th><th>id</th><th>reason</th><th>score</th><th>created</th></tr></thead><tbody id="reviewBody"><tr><td colspan="5" class="muted">—</td></tr></tbody></table></div>
-<div class="muted" style="margin-top:8px">Источник: <code>GET /api/v1/review?region=42</code> + <code>/api/v1/review/export.csv</code> — ручная верификация до попадания в канон.</div>
 </div>
 
 <div id="tab-external" class="card hidden">

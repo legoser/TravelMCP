@@ -345,6 +345,36 @@ func (p *PostgresStore) SaveReviewQueue(ctx context.Context, e model.ReviewQueue
 	_, err := p.pool.Exec(ctx, `INSERT INTO review_queue(entity_type, entity_id, reason, score) VALUES($1,$2,$3,$4) ON CONFLICT(entity_type, entity_id, reason) DO UPDATE SET score=EXCLUDED.score`, e.EntityType, e.EntityID, e.Reason, e.Score)
 	return err
 }
+
+func (p *PostgresStore) ListTerminals(ctx context.Context, limit, offset int, sort string) ([]map[string]any, int, error) {
+	if p.pool == nil {
+		return []map[string]any{}, 0, nil
+	}
+	var total int
+	_ = p.pool.QueryRow(ctx, `SELECT count(*) FROM terminals`).Scan(&total)
+	order := "t.id"
+	if sort == "name" {
+		order = "tn.name"
+	} else if sort == "is_locked" {
+		order = "t.is_locked DESC, t.id"
+	}
+	rows, err := p.pool.Query(ctx, fmt.Sprintf(`SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' ORDER BY %s LIMIT $1 OFFSET $2`, order), limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var out []map[string]any
+	for rows.Next() {
+		var id int64
+		var name string
+		var lat, lon float64
+		var locked bool
+		var placeID *int64
+		_ = rows.Scan(&id, &name, &lat, &lon, &locked, &placeID)
+		out = append(out, map[string]any{"id": id, "name": name, "lat": lat, "lon": lon, "is_locked": locked, "place_id": placeID})
+	}
+	return out, total, nil
+}
 func (p *PostgresStore) GetPlaceCity(ctx context.Context, placeID int64) (int64, string, error) {
 	if p.pool == nil {
 		return 0, "", errNotImplemented
@@ -1025,6 +1055,33 @@ func (t *pgTxStore) SaveProvenance(ctx context.Context, p model.Provenance) erro
 func (t *pgTxStore) SaveReviewQueue(ctx context.Context, e model.ReviewQueueEntry) error {
 	_, err := t.tx.Exec(ctx, `INSERT INTO review_queue(entity_type, entity_id, reason, score) VALUES($1,$2,$3,$4) ON CONFLICT(entity_type, entity_id, reason) DO UPDATE SET score=EXCLUDED.score`, e.EntityType, e.EntityID, e.Reason, e.Score)
 	return err
+}
+
+func (t *pgTxStore) ListTerminals(ctx context.Context, limit, offset int, sort string) ([]map[string]any, int, error) {
+	var total int
+	_ = t.tx.QueryRow(ctx, `SELECT count(*) FROM terminals`).Scan(&total)
+	order := "t.id"
+	if sort == "name" {
+		order = "tn.name"
+	} else if sort == "is_locked" {
+		order = "t.is_locked DESC, t.id"
+	}
+	rows, err := t.tx.Query(ctx, fmt.Sprintf(`SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' ORDER BY %s LIMIT $1 OFFSET $2`, order), limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var out []map[string]any
+	for rows.Next() {
+		var id int64
+		var name string
+		var lat, lon float64
+		var locked bool
+		var placeID *int64
+		_ = rows.Scan(&id, &name, &lat, &lon, &locked, &placeID)
+		out = append(out, map[string]any{"id": id, "name": name, "lat": lat, "lon": lon, "is_locked": locked, "place_id": placeID})
+	}
+	return out, total, nil
 }
 func (t *pgTxStore) GetPlaceCity(ctx context.Context, placeID int64) (int64, string, error) {
 	var id int64

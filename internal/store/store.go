@@ -35,6 +35,7 @@ type PlaceStore interface {
 
 type TerminalStore interface {
 	UpsertTerminal(ctx context.Context, r TerminalRow, names map[string]string, identifiers []model.AdaptedIdentifier) (int64, error)
+	ListTerminals(ctx context.Context, limit, offset int, sort string) ([]map[string]any, int, error)
 }
 
 type ProvenanceStore interface {

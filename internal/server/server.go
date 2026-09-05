@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/mail"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -111,6 +112,7 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 	mux.Handle("GET /api/v1/admin/imports", s.auth(http.HandlerFunc(s.handleAdminImports), "admin"))
 	mux.Handle("GET /api/v1/admin/logs", s.auth(http.HandlerFunc(s.handleAdminImportLogs), "admin"))
 	mux.Handle("GET /api/v1/admin/audit", s.auth(http.HandlerFunc(s.handleAdminAudit), "admin"))
+	mux.Handle("GET /api/v1/admin/terminals", s.auth(http.HandlerFunc(s.handleAdminListTerminals), "admin"))
 	mux.Handle("PUT /api/v1/admin/terminals/{id}", s.auth(http.HandlerFunc(s.handleAdminUpdateTerminal), "admin"))
 	mux.Handle("POST /api/v1/admin/external-call", s.auth(http.HandlerFunc(s.handleAdminExternalCall), "admin"))
 	mux.Handle("POST /api/v1/route", s.auth(http.HandlerFunc(s.handleRoute), "mcp:read"))
@@ -401,6 +403,32 @@ func (s *Server) handleImportGTFS(w http.ResponseWriter, r *http.Request) {
 		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
 		return
 	}
+	if strings.Contains(r.Header.Get("Content-Type"), "multipart/form-data") {
+		if err := r.ParseMultipartForm(32 << 20); err == nil {
+			f, hdr, err := r.FormFile("file")
+			if err == nil {
+				defer f.Close()
+				_ = hdr
+				data, _ := io.ReadAll(f)
+				if len(data) == 0 {
+					writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "empty file"})
+					return
+				}
+				filename := hdr.Filename
+				if filename == "" {
+					filename = fmt.Sprintf("gtfs_%d.zip", time.Now().Unix())
+				}
+				savePath := fmt.Sprintf("data/gtfs/%s", filename)
+				_ = os.MkdirAll("data/gtfs", 0755)
+				_ = os.WriteFile(savePath, data, 0644)
+				payload := fmt.Sprintf(`{"path":%q,"size":%d,"filename":%q}`, savePath, len(data), filename)
+				id, _ := s.store.EnqueueJob(r.Context(), store.JobRow{Type: "import_gtfs", Payload: payload})
+				h := fmt.Sprintf("%x", len(data))
+				writeJSONResponse(w, http.StatusCreated, map[string]any{"id": id, "type": "import_gtfs", "path": savePath, "hash": h})
+				return
+			}
+		}
+	}
 	id, _ := s.store.EnqueueJob(r.Context(), store.JobRow{Type: "import_gtfs", Payload: "{}"})
 	writeJSONResponse(w, http.StatusCreated, map[string]any{"id": id, "type": "import_gtfs"})
 }
@@ -460,6 +488,37 @@ func (s *Server) handleAdminAudit(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, _ := s.store.ListAuditLogs(r.Context(), 50)
 	writeJSONResponse(w, http.StatusOK, rows)
+}
+
+func (s *Server) handleAdminListTerminals(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSONResponse(w, http.StatusOK, map[string]any{"items": []any{}, "total": 0})
+		return
+	}
+	limit := 20
+	offset := 0
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 100 {
+			limit = n
+		}
+	}
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+	sort := r.URL.Query().Get("sort")
+	if sort != "name" && sort != "is_locked" {
+		sort = "id"
+	}
+	if lister, ok := s.store.(interface {
+		ListTerminals(ctx context.Context, limit, offset int, sort string) ([]map[string]any, int, error)
+	}); ok {
+		items, total, _ := lister.ListTerminals(r.Context(), limit, offset, sort)
+		writeJSONResponse(w, http.StatusOK, map[string]any{"items": items, "total": total, "limit": limit, "offset": offset})
+		return
+	}
+	writeJSONResponse(w, http.StatusOK, map[string]any{"items": []any{}, "total": 0})
 }
 
 func (s *Server) handleAdminUpdateTerminal(w http.ResponseWriter, r *http.Request) {

@@ -379,6 +379,10 @@ func (m *MemoryStore) ListImportLogs(ctx context.Context, limit int) ([]store.Im
 	return []store.ImportLogRow{}, nil
 }
 
+func (m *MemoryStore) ListTerminals(ctx context.Context, limit, offset int, sort string) ([]map[string]any, int, error) {
+	return []map[string]any{}, 0, nil
+}
+
 func (m *MemoryStore) EnqueueJob(ctx context.Context, j store.JobRow) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
