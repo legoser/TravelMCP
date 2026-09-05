@@ -24,6 +24,7 @@ import (
 
 	"travelmcp/internal/config"
 	gtfspkg "travelmcp/internal/export/gtfs"
+	gtfsperregion "travelmcp/internal/gtfs"
 	logfactory "travelmcp/internal/logger"
 	"travelmcp/internal/mcp"
 	"travelmcp/internal/middleware"
@@ -99,6 +100,8 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 	mux.Handle("GET /api/v1/fares", s.auth(http.HandlerFunc(s.handleFares), "mcp:read"))
 	mux.Handle("GET /api/v1/zones", s.auth(http.HandlerFunc(s.handleZones), "mcp:read"))
 	mux.Handle("GET /api/v1/gtfs", s.auth(http.HandlerFunc(s.handleGTFS), "mcp:read"))
+	mux.Handle("GET /api/v1/review", s.auth(http.HandlerFunc(s.handleReview), "mcp:read"))
+	mux.Handle("GET /api/v1/review/export.csv", s.auth(http.HandlerFunc(s.handleReviewExport), "mcp:read"))
 	mux.Handle("POST /api/v1/route", s.auth(http.HandlerFunc(s.handleRoute), "mcp:read"))
 	adminFS, _ := fs.Sub(webFS, "web")
 	mux.Handle("GET /admin", http.HandlerFunc(s.handleAdminPage))
@@ -255,6 +258,7 @@ func (s *Server) handleZones(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGTFS(w http.ResponseWriter, r *http.Request) {
+	region := r.URL.Query().Get("region")
 	var net *model.Network
 	var err error
 	if s.store != nil {
@@ -300,15 +304,38 @@ func (s *Server) handleGTFS(w http.ResponseWriter, r *http.Request) {
 		}
 		net = muxNet
 	}
-	data, err := gtfsCompile(net)
+	var data []byte
+	var filename string
+	if region != "" {
+		comp := gtfsperregion.NewCompiler("f-ru")
+		data, err = comp.BuildPerRegionFromStore(r.Context(), s.store, region, time.Now())
+		if err != nil {
+			data, err = gtfsCompile(net)
+		}
+		filename = gtfsperregion.ArchiveName(region)
+	} else {
+		data, err = gtfsCompile(net)
+		filename = "gtfs.zip"
+	}
 	if err != nil {
 		writeJSONResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
 	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", `attachment; filename="gtfs.zip"`)
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
+}
+
+func (s *Server) handleReview(w http.ResponseWriter, r *http.Request) {
+	writeJSONResponse(w, http.StatusOK, []any{})
+}
+
+func (s *Server) handleReviewExport(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="review.csv"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("entity_type,entity_id,reason,score,created_at\n"))
 }
 
 func gtfsCompile(net *model.Network) ([]byte, error) {

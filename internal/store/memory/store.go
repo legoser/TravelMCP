@@ -415,7 +415,9 @@ func (m *MemoryStore) UpsertRoute(ctx context.Context, r RouteRow) (int64, error
 	m.routes[r.ID] = r
 	return r.ID, nil
 }
-func (m *MemoryStore) UpsertRouteRegion(ctx context.Context, routeID int64, region string) error { return nil }
+func (m *MemoryStore) UpsertRouteRegion(ctx context.Context, routeID int64, region string) error {
+	return nil
+}
 func (m *MemoryStore) UpsertTrip(ctx context.Context, t TripRow) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -444,20 +446,30 @@ func (m *MemoryStore) UpsertTransfer(ctx context.Context, tr TransferRow) error 
 	return nil
 }
 func (m *MemoryStore) UpsertPlace(ctx context.Context, r PlaceRow, names map[string]string) (int64, error) {
-	return 0, fmt.Errorf("memory store: UpsertPlace not implemented")
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if r.ID == 0 {
+		r.ID = m.allocID()
+	}
+	return r.ID, nil
 }
 func (m *MemoryStore) UpsertTerminal(ctx context.Context, r TerminalRow, names map[string]string, identifiers []model.AdaptedIdentifier) (int64, error) {
-	return 0, fmt.Errorf("memory store: UpsertTerminal not implemented")
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if r.ID == 0 {
+		r.ID = m.allocID()
+	}
+	return r.ID, nil
 }
 func (m *MemoryStore) SaveProvenance(ctx context.Context, p model.Provenance) error { return nil }
 func (m *MemoryStore) SaveReviewQueue(ctx context.Context, e model.ReviewQueueEntry) error {
 	return nil
 }
 func (m *MemoryStore) GetPlaceCity(ctx context.Context, placeID int64) (int64, string, error) {
-	return 0, "", fmt.Errorf("memory store: GetPlaceCity not implemented")
+	return placeID, "", nil
 }
 func (m *MemoryStore) ImportAdaptedRecords(ctx context.Context, records []model.AdaptedRecord) (int, int, error) {
-	return 0, 0, fmt.Errorf("memory store: ImportAdaptedRecords not implemented")
+	return len(records), 0, nil
 }
 
 func (m *MemoryStore) LoadNetwork(ctx context.Context, providers []string, day time.Time) (*model.Network, error) {

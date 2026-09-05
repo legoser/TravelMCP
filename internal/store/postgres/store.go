@@ -1,8 +1,8 @@
 package postgres
 
 import (
-	"database/sql"
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"os"
@@ -119,8 +119,6 @@ func (p *PostgresStore) WithTx(ctx context.Context, fn func(store.Store) error) 
 	}
 	return tx.Commit(ctx)
 }
-
-
 
 func (p *PostgresStore) UpsertStop(ctx context.Context, s StopRow) (int64, error) {
 	if p.pool == nil {
@@ -241,8 +239,7 @@ func (p *PostgresStore) ClearProviderData(ctx context.Context, providerID string
 		return nil
 	}
 	_, _ = p.pool.Exec(ctx, `DELETE FROM stop_times WHERE trip_id IN (SELECT id FROM trips WHERE provider_id=$1)`, providerID)
-	_, _ = p.pool.Exec(ctx, `DELETE FROM transfers WHERE from_stop_id IN (SELECT id FROM stops WHERE provider_id=$1) OR to_stop_id IN (SELECT id FROM stops WHERE provider_id=$1)`, providerID, providerID)
-	_, _ = p.pool.Exec(ctx, `DELETE FROM stop_times WHERE trip_id IN (SELECT id FROM trips WHERE provider_id=$1)`, providerID)
+	_, _ = p.pool.Exec(ctx, `DELETE FROM transfers WHERE from_stop_id IN (SELECT id FROM stops_canonical WHERE terminal_id IN (SELECT id FROM terminals WHERE id IN (SELECT terminal_id FROM stops_canonical)))`)
 	_, _ = p.pool.Exec(ctx, `DELETE FROM trips WHERE provider_id=$1`, providerID)
 	_, _ = p.pool.Exec(ctx, `DELETE FROM routes WHERE source_provider=$1`, providerID)
 	_, _ = p.pool.Exec(ctx, `DELETE FROM services WHERE provider_id=$1`, providerID)
@@ -396,8 +393,12 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 		var stopType, name sql.NullString
 		_ = srows.Scan(&id, &terminalID, &lat, &lon, &stopType, &name)
 		la, lo := 0.0, 0.0
-		if lat.Valid { la = lat.Float64 }
-		if lon.Valid { lo = lon.Float64 }
+		if lat.Valid {
+			la = lat.Float64
+		}
+		if lon.Valid {
+			lo = lon.Float64
+		}
 		if !lat.Valid || !lon.Valid {
 			_ = p.pool.QueryRow(ctx, `SELECT ST_Y(geom::geometry), ST_X(geom::geometry) FROM terminals WHERE id=$1`, terminalID).Scan(&la, &lo)
 		}
@@ -405,7 +406,7 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 		net.Stops[code] = &model.Stop{ID: code, ProviderID: "mintrans", Name: name.String, Lat: la, Lon: lo, Type: model.StopType(stopType.String)}
 		stopIDMap[id] = code
 	}
-	routeRows, err := p.pool.Query(ctx, `SELECT id, provider_id, carrier_id, external_code, short_name, long_name, mode FROM routes`)
+	routeRows, err := p.pool.Query(ctx, `SELECT id, source_provider, carrier_id, external_code, short_name, long_name, mode FROM routes`)
 	if err != nil {
 		return nil, err
 	}
@@ -612,7 +613,6 @@ func (t *pgTxStore) Migrate(ctx context.Context) error                          
 func (t *pgTxStore) Close() error                                                 { return nil }
 func (t *pgTxStore) WithTx(ctx context.Context, fn func(store.Store) error) error { return fn(t) }
 
-
 func (t *pgTxStore) UpsertStop(ctx context.Context, s StopRow) (int64, error) {
 	if s.TerminalID == 0 {
 		return 0, fmt.Errorf("UpsertStop: terminal_id required")
@@ -692,7 +692,6 @@ func (t *pgTxStore) ClearQualityIssues(ctx context.Context, providerID string) e
 	return err
 }
 func (t *pgTxStore) ClearProviderData(ctx context.Context, providerID string) error {
-	_, _ = t.tx.Exec(ctx, `DELETE FROM stop_times WHERE trip_id IN (SELECT id FROM trips WHERE provider_id=$1)`, providerID)
 	_, _ = t.tx.Exec(ctx, `DELETE FROM stop_times WHERE trip_id IN (SELECT id FROM trips WHERE provider_id=$1)`, providerID)
 	_, _ = t.tx.Exec(ctx, `DELETE FROM trips WHERE provider_id=$1`, providerID)
 	_, _ = t.tx.Exec(ctx, `DELETE FROM routes WHERE source_provider=$1`, providerID)

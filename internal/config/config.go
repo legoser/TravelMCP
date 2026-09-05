@@ -281,26 +281,20 @@ func syncLegacy(cfg *Config) {
 	if cfg.Cities.Path == "" {
 		cfg.Cities.Path = "configs/cities.yaml"
 	}
-	if cfg.Verification.ConfidenceThreshold == 0 {
-		cfg.Verification.ConfidenceThreshold = 0.6
-	}
-	if cfg.Verification.DistanceM == 0 {
-		cfg.Verification.DistanceM = 500
-	}
-	if cfg.Verification.StrongDistanceM == 0 {
-		cfg.Verification.StrongDistanceM = 200
-	}
-	if cfg.Verification.LevThreshold == 0 {
-		cfg.Verification.LevThreshold = 0.15
-	}
 	if cfg.Deduplication.DistanceM == 0 {
 		cfg.Deduplication.DistanceM = 200
+	}
+	if cfg.Verification.ConfidenceThreshold == 0 {
+		cfg.Verification.ConfidenceThreshold = 0.6
 	}
 	if cfg.Verification.DistanceM == 0 {
 		cfg.Verification.DistanceM = cfg.Deduplication.DistanceM
 	}
 	if cfg.Verification.StrongDistanceM == 0 {
 		cfg.Verification.StrongDistanceM = cfg.Deduplication.DistanceM / 2
+	}
+	if cfg.Verification.LevThreshold == 0 {
+		cfg.Verification.LevThreshold = 0.15
 	}
 	if cfg.Verification.DensityThresholds == nil {
 		cfg.Verification.DensityThresholds = map[string]DensityThreshold{}

@@ -75,7 +75,6 @@ func (c *Compiler) writeFromStore(ctx context.Context, zw *zip.Writer, st store.
 	if err != nil {
 		return err
 	}
-	_ = region
 	files := make(map[string]*bytes.Buffer)
 	for _, name := range []string{"agency.txt", "stops.txt", "routes.txt", "trips.txt", "stop_times.txt", "calendar.txt", "calendar_dates.txt", "transfers.txt", "feed_info.txt", "fare_attributes.txt", "fare_rules.txt"} {
 		files[name] = &bytes.Buffer{}
@@ -101,6 +100,7 @@ func (c *Compiler) writeFromStore(ctx context.Context, zw *zip.Writer, st store.
 		zone := net.StopZones[sid]
 		fmt.Fprintf(files["stops.txt"], "%s,%s,%s,%f,%f,%s\n", s.ID, s.ID, s.Name, s.Lat, s.Lon, zone)
 	}
+	_ = region
 	files["routes.txt"].WriteString("route_id,agency_id,route_short_name,route_long_name,route_type\n")
 	routeIDs := make([]string, 0, len(net.Routes))
 	for id := range net.Routes {
@@ -110,9 +110,13 @@ func (c *Compiler) writeFromStore(ctx context.Context, zw *zip.Writer, st store.
 	for _, rid := range routeIDs {
 		r := net.Routes[rid]
 		agency := "0"
-		if r.ProviderID != "" {
-			agency = "0"
+		if len(net.Carriers) > 0 {
+			for cid := range net.Carriers {
+				agency = cid
+				break
+			}
 		}
+		_ = r.ProviderID
 		routeType := "3"
 		if r.Mode == "rail" {
 			routeType = "2"

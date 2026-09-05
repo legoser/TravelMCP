@@ -38,14 +38,6 @@ type Verifier interface {
 	Verify(cand model.AdaptedRecord, b, c, d *model.AdaptedRecord) (confidence float64, verified bool, reason string)
 }
 
-type DBLogger struct {
-	Exec func(ctx context.Context, query string, args ...interface{}) (interface{}, error)
-	QueryRow func(ctx context.Context, query string, args ...interface{}) interface{}
-	pool interface {
-		Exec(ctx context.Context, sql string, args ...interface{}) (interface{}, error)
-	}
-}
-
 type Pipeline struct {
 	verify Verifier
 	logger Logger
@@ -56,7 +48,9 @@ type Pipeline struct {
 
 func New(v Verifier, l Logger) *Pipeline { return &Pipeline{verify: v, logger: l} }
 
-func NewWithStore(v Verifier, s interface{ LogEntry(ctx context.Context, e LogEntry) error }) *Pipeline {
+func NewWithStore(v Verifier, s interface {
+	LogEntry(ctx context.Context, e LogEntry) error
+}) *Pipeline {
 	return &Pipeline{verify: v, store: s}
 }
 
