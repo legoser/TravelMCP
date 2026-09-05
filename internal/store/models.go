@@ -246,3 +246,15 @@ type ApiCallRow struct {
 	At       int64
 	Cost     int
 }
+
+type JobRow struct {
+	ID        int64
+	Type      string
+	Payload   string
+	Region    string
+	State     string
+	Attempts  int
+	NextRun   string
+	LastError string
+	CreatedAt int64
+}

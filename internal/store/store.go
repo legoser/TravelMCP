@@ -65,6 +65,15 @@ type QuotaStore interface {
 	ListQuotas(ctx context.Context) ([]QuotaRow, error)
 }
 
+type JobStore interface {
+	EnqueueJob(ctx context.Context, j JobRow) (int64, error)
+	ClaimNextJob(ctx context.Context) (*JobRow, error)
+	MarkJobDone(ctx context.Context, id int64) error
+	MarkJobRetry(ctx context.Context, id int64, errMsg string) error
+	MarkJobDead(ctx context.Context, id int64, errMsg string) error
+	ListJobs(ctx context.Context, limit int) ([]JobRow, error)
+}
+
 type Store interface {
 	StopStore
 	RouteStore
@@ -75,6 +84,7 @@ type Store interface {
 	QualityStore
 	FareStore
 	QuotaStore
+	JobStore
 	UpsertFare(ctx context.Context, f FareRow) error
 	ImportAdaptedRecords(ctx context.Context, records []model.AdaptedRecord) (int, int, error)
 

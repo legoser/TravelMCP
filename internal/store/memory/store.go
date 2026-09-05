@@ -61,6 +61,7 @@ type MemoryStore struct {
 	apiKeysByKey map[string]int64
 	quotas       map[string]store.QuotaRow
 	apiCalls     []store.ApiCallRow
+	jobs         map[int64]store.JobRow
 	nextID       int64
 }
 
@@ -78,6 +79,7 @@ func NewMemoryStore() *MemoryStore {
 		apiKeys:      make(map[int64]ApiKeyRow),
 		apiKeysByKey: make(map[string]int64),
 		quotas:       make(map[string]store.QuotaRow),
+		jobs:         make(map[int64]store.JobRow),
 		nextID:       1,
 	}
 }
@@ -326,6 +328,103 @@ func (m *MemoryStore) ListQuotas(ctx context.Context) ([]store.QuotaRow, error) 
 		out = append(out, q)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Provider < out[j].Provider })
+	return out, nil
+}
+
+func (m *MemoryStore) EnqueueJob(ctx context.Context, j store.JobRow) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id := m.allocID()
+	j.ID = id
+	if j.State == "" {
+		j.State = "pending"
+	}
+	j.CreatedAt = time.Now().Unix()
+	j.NextRun = time.Now().Format(time.RFC3339)
+	m.jobs[id] = j
+	return id, nil
+}
+
+func (m *MemoryStore) ClaimNextJob(ctx context.Context) (*store.JobRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var best *store.JobRow
+	for _, j := range m.jobs {
+		if j.State != "pending" && j.State != "retry" {
+			continue
+		}
+		if best == nil || j.CreatedAt < best.CreatedAt {
+			cp := j
+			best = &cp
+		}
+	}
+	if best == nil {
+		return nil, fmt.Errorf("no jobs")
+	}
+	best.State = "running"
+	best.Attempts++
+	m.jobs[best.ID] = *best
+	return best, nil
+}
+
+func (m *MemoryStore) MarkJobDone(ctx context.Context, id int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	j, ok := m.jobs[id]
+	if !ok {
+		return fmt.Errorf("job %d not found", id)
+	}
+	j.State = "done"
+	m.jobs[id] = j
+	return nil
+}
+
+func (m *MemoryStore) MarkJobRetry(ctx context.Context, id int64, errMsg string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	j, ok := m.jobs[id]
+	if !ok {
+		return fmt.Errorf("job %d not found", id)
+	}
+	j.State = "retry"
+	j.LastError = errMsg
+	j.Attempts++
+	backoff := time.Duration(j.Attempts*2) * time.Minute
+	if backoff > 30*time.Minute {
+		backoff = 30 * time.Minute
+	}
+	j.NextRun = time.Now().Add(backoff).Format(time.RFC3339)
+	m.jobs[id] = j
+	return nil
+}
+
+func (m *MemoryStore) MarkJobDead(ctx context.Context, id int64, errMsg string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	j, ok := m.jobs[id]
+	if !ok {
+		return fmt.Errorf("job %d not found", id)
+	}
+	j.State = "dead"
+	j.LastError = errMsg
+	m.jobs[id] = j
+	return nil
+}
+
+func (m *MemoryStore) ListJobs(ctx context.Context, limit int) ([]store.JobRow, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if limit <= 0 {
+		limit = 20
+	}
+	out := make([]store.JobRow, 0, len(m.jobs))
+	for _, j := range m.jobs {
+		out = append(out, j)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt > out[j].CreatedAt })
+	if len(out) > limit {
+		out = out[:limit]
+	}
 	return out, nil
 }
 

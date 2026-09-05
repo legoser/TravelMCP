@@ -102,6 +102,12 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 	mux.Handle("GET /api/v1/gtfs", s.auth(http.HandlerFunc(s.handleGTFS), "mcp:read"))
 	mux.Handle("GET /api/v1/review", s.auth(http.HandlerFunc(s.handleReview), "mcp:read"))
 	mux.Handle("GET /api/v1/review/export.csv", s.auth(http.HandlerFunc(s.handleReviewExport), "mcp:read"))
+	mux.Handle("GET /api/v1/jobs", s.auth(http.HandlerFunc(s.handleListJobs), "admin"))
+	mux.Handle("POST /api/v1/jobs", s.auth(http.HandlerFunc(s.handleEnqueueJob), "admin"))
+	mux.Handle("GET /api/v1/quotas", s.auth(http.HandlerFunc(s.handleListQuotas), "admin"))
+	mux.Handle("POST /api/v1/import/gtfs", s.auth(http.HandlerFunc(s.handleImportGTFS), "admin"))
+	mux.Handle("POST /api/v1/import/mintrans", s.auth(http.HandlerFunc(s.handleSyncMintrans), "admin"))
+	mux.Handle("POST /api/v1/import/rail", s.auth(http.HandlerFunc(s.handleSyncRail), "admin"))
 	mux.Handle("POST /api/v1/route", s.auth(http.HandlerFunc(s.handleRoute), "mcp:read"))
 	adminFS, _ := fs.Sub(webFS, "web")
 	mux.Handle("GET /admin", http.HandlerFunc(s.handleAdminPage))
@@ -336,6 +342,92 @@ func (s *Server) handleReviewExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", `attachment; filename="review.csv"`)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("entity_type,entity_id,reason,score,created_at\n"))
+}
+
+func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
+		return
+	}
+	jobs, _ := s.store.ListJobs(r.Context(), 50)
+	writeJSONResponse(w, http.StatusOK, jobs)
+}
+
+func (s *Server) handleEnqueueJob(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
+		return
+	}
+	var req struct {
+		Type    string `json:"type"`
+		Payload string `json:"payload"`
+		Region  string `json:"region"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONDecodeError(w, err, s.logger, r.URL.Path)
+		return
+	}
+	if req.Type == "" {
+		req.Type = "import_gtfs"
+	}
+	payload := req.Payload
+	if payload == "" {
+		payload = "{}"
+	}
+	id, err := s.store.EnqueueJob(r.Context(), store.JobRow{Type: req.Type, Payload: payload, Region: req.Region})
+	if err != nil {
+		writeJSONResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSONResponse(w, http.StatusCreated, map[string]any{"id": id, "type": req.Type})
+}
+
+func (s *Server) handleListQuotas(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSONResponse(w, http.StatusOK, []any{})
+		return
+	}
+	qs, _ := s.store.ListQuotas(r.Context())
+	writeJSONResponse(w, http.StatusOK, qs)
+}
+
+func (s *Server) handleImportGTFS(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
+		return
+	}
+	id, _ := s.store.EnqueueJob(r.Context(), store.JobRow{Type: "import_gtfs", Payload: "{}"})
+	writeJSONResponse(w, http.StatusCreated, map[string]any{"id": id, "type": "import_gtfs"})
+}
+
+func (s *Server) handleSyncMintrans(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
+		return
+	}
+	var payload map[string]any
+	_ = json.NewDecoder(r.Body).Decode(&payload)
+	b, _ := json.Marshal(payload)
+	if len(b) == 0 {
+		b = []byte("{}")
+	}
+	id, _ := s.store.EnqueueJob(r.Context(), store.JobRow{Type: "sync_mintrans", Payload: string(b)})
+	writeJSONResponse(w, http.StatusCreated, map[string]any{"id": id, "type": "sync_mintrans"})
+}
+
+func (s *Server) handleSyncRail(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
+		return
+	}
+	var payload map[string]any
+	_ = json.NewDecoder(r.Body).Decode(&payload)
+	b, _ := json.Marshal(payload)
+	if len(b) == 0 {
+		b = []byte("{}")
+	}
+	id, _ := s.store.EnqueueJob(r.Context(), store.JobRow{Type: "sync_rail", Payload: string(b)})
+	writeJSONResponse(w, http.StatusCreated, map[string]any{"id": id, "type": "sync_rail"})
 }
 
 func gtfsCompile(net *model.Network) ([]byte, error) {

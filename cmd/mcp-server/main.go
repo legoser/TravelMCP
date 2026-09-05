@@ -15,6 +15,7 @@ import (
 	"travelmcp/internal/adapters/mintrans"
 	"travelmcp/internal/config"
 	"travelmcp/internal/geocoder"
+	"travelmcp/internal/jobs"
 	"travelmcp/internal/logger"
 	"travelmcp/internal/pricing"
 	"travelmcp/internal/providers"
@@ -105,6 +106,14 @@ func main() {
 	} else {
 		logger.Info("storage disabled", "reason", "DATABASE_DSN empty")
 	}
+	if st != nil {
+		go func() {
+			workerLogger := factory.For("jobs")
+			w := newJobsWorker(st, workerLogger)
+			workerLogger.Info("jobs worker started")
+			w.Run(context.Background(), 5*time.Second)
+		}()
+	}
 
 	readTimeout := parseDuration(cfg.HTTP.ReadHeaderTimeout, 10*time.Second)
 	shutdownTimeout := parseDuration(cfg.HTTP.ShutdownTimeout, 10*time.Second)
@@ -172,4 +181,21 @@ func parseDuration(s string, def time.Duration) time.Duration {
 // deprecated: use logger.NewFactory
 func newLogger(level, format string, addSource bool) *slog.Logger {
 	return logger.NewFactory(config.Log{Level: level, Format: format, AddSource: addSource}).For("main")
+}
+
+func newJobsWorker(st store.Store, l *slog.Logger) *jobs.Worker {
+	w := jobs.NewWorker(st, l)
+	w.Register("import_gtfs", func(ctx context.Context, job store.JobRow) error {
+		l.Info("handling import_gtfs", "id", job.ID)
+		return nil
+	})
+	w.Register("sync_mintrans", func(ctx context.Context, job store.JobRow) error {
+		l.Info("handling sync_mintrans", "id", job.ID)
+		return nil
+	})
+	w.Register("sync_rail", func(ctx context.Context, job store.JobRow) error {
+		l.Info("handling sync_rail", "id", job.ID)
+		return nil
+	})
+	return w
 }

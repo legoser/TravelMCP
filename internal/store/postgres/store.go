@@ -673,6 +673,102 @@ func (p *PostgresStore) ListQuotas(ctx context.Context) ([]store.QuotaRow, error
 	return out, nil
 }
 
+func (p *PostgresStore) EnqueueJob(ctx context.Context, j store.JobRow) (int64, error) {
+	if p.pool == nil {
+		return 0, fmt.Errorf("pool nil")
+	}
+	var id int64
+	payload := j.Payload
+	if payload == "" {
+		payload = "{}"
+	}
+	err := p.pool.QueryRow(ctx, `INSERT INTO jobs(type, payload, region, state, next_run) VALUES($1,$2::jsonb,$3,'pending', now()) RETURNING id`, j.Type, payload, j.Region).Scan(&id)
+	return id, err
+}
+
+func (p *PostgresStore) ClaimNextJob(ctx context.Context) (*store.JobRow, error) {
+	if p.pool == nil {
+		return nil, fmt.Errorf("pool nil")
+	}
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var r store.JobRow
+	var payload string
+	var nextRun time.Time
+	var createdAt time.Time
+	err = tx.QueryRow(ctx, `SELECT id, type, payload::text, coalesce(region,''), state, attempts, next_run, coalesce(last_error,''), created_at FROM jobs WHERE state IN ('pending','retry') AND next_run <= now() ORDER BY next_run LIMIT 1 FOR UPDATE SKIP LOCKED`).Scan(&r.ID, &r.Type, &payload, &r.Region, &r.State, &r.Attempts, &nextRun, &r.LastError, &createdAt)
+	if err != nil {
+		return nil, err
+	}
+	r.Payload = payload
+	r.NextRun = nextRun.Format(time.RFC3339)
+	r.CreatedAt = createdAt.Unix()
+	if _, err := tx.Exec(ctx, `UPDATE jobs SET state='running', attempts=attempts+1, updated_at=now() WHERE id=$1`, r.ID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	r.State = "running"
+	return &r, nil
+}
+
+func (p *PostgresStore) MarkJobDone(ctx context.Context, id int64) error {
+	if p.pool == nil {
+		return nil
+	}
+	_, err := p.pool.Exec(ctx, `UPDATE jobs SET state='done', updated_at=now() WHERE id=$1`, id)
+	return err
+}
+
+func (p *PostgresStore) MarkJobRetry(ctx context.Context, id int64, errMsg string) error {
+	if p.pool == nil {
+		return nil
+	}
+	var attempts int
+	_ = p.pool.QueryRow(ctx, `SELECT attempts FROM jobs WHERE id=$1`, id).Scan(&attempts)
+	backoff := time.Duration((attempts+1)*2) * time.Minute
+	if backoff > 30*time.Minute {
+		backoff = 30 * time.Minute
+	}
+	_, err := p.pool.Exec(ctx, `UPDATE jobs SET state='retry', last_error=$2, attempts=attempts+1, next_run=now()+$3::interval, updated_at=now() WHERE id=$1`, id, errMsg, fmt.Sprintf("%d seconds", int(backoff.Seconds())))
+	return err
+}
+
+func (p *PostgresStore) MarkJobDead(ctx context.Context, id int64, errMsg string) error {
+	if p.pool == nil {
+		return nil
+	}
+	_, err := p.pool.Exec(ctx, `UPDATE jobs SET state='dead', last_error=$2, updated_at=now() WHERE id=$1`, id, errMsg)
+	return err
+}
+
+func (p *PostgresStore) ListJobs(ctx context.Context, limit int) ([]store.JobRow, error) {
+	if p.pool == nil {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := p.pool.Query(ctx, `SELECT id, type, payload::text, coalesce(region,''), state, attempts, next_run::text, coalesce(last_error,''), extract(epoch from created_at)::bigint FROM jobs ORDER BY created_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.JobRow
+	for rows.Next() {
+		var r store.JobRow
+		if err := rows.Scan(&r.ID, &r.Type, &r.Payload, &r.Region, &r.State, &r.Attempts, &r.NextRun, &r.LastError, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
 type pgTxStore struct {
 	tx     pgx.Tx
 	parent *PostgresStore
@@ -963,6 +1059,76 @@ func (t *pgTxStore) ListQuotas(ctx context.Context) ([]store.QuotaRow, error) {
 			return nil, err
 		}
 		r.ResetAt = resetAt
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+func (t *pgTxStore) EnqueueJob(ctx context.Context, j store.JobRow) (int64, error) {
+	var id int64
+	payload := j.Payload
+	if payload == "" {
+		payload = "{}"
+	}
+	err := t.tx.QueryRow(ctx, `INSERT INTO jobs(type, payload, region, state, next_run) VALUES($1,$2::jsonb,$3,'pending', now()) RETURNING id`, j.Type, payload, j.Region).Scan(&id)
+	return id, err
+}
+
+func (t *pgTxStore) ClaimNextJob(ctx context.Context) (*store.JobRow, error) {
+	var r store.JobRow
+	var payload string
+	var nextRun time.Time
+	var createdAt time.Time
+	err := t.tx.QueryRow(ctx, `SELECT id, type, payload::text, coalesce(region,''), state, attempts, next_run, coalesce(last_error,''), created_at FROM jobs WHERE state IN ('pending','retry') AND next_run <= now() ORDER BY next_run LIMIT 1 FOR UPDATE SKIP LOCKED`).Scan(&r.ID, &r.Type, &payload, &r.Region, &r.State, &r.Attempts, &nextRun, &r.LastError, &createdAt)
+	if err != nil {
+		return nil, err
+	}
+	r.Payload = payload
+	r.NextRun = nextRun.Format(time.RFC3339)
+	r.CreatedAt = createdAt.Unix()
+	if _, err := t.tx.Exec(ctx, `UPDATE jobs SET state='running', attempts=attempts+1, updated_at=now() WHERE id=$1`, r.ID); err != nil {
+		return nil, err
+	}
+	r.State = "running"
+	return &r, nil
+}
+
+func (t *pgTxStore) MarkJobDone(ctx context.Context, id int64) error {
+	_, err := t.tx.Exec(ctx, `UPDATE jobs SET state='done', updated_at=now() WHERE id=$1`, id)
+	return err
+}
+
+func (t *pgTxStore) MarkJobRetry(ctx context.Context, id int64, errMsg string) error {
+	var attempts int
+	_ = t.tx.QueryRow(ctx, `SELECT attempts FROM jobs WHERE id=$1`, id).Scan(&attempts)
+	backoff := time.Duration((attempts+1)*2) * time.Minute
+	if backoff > 30*time.Minute {
+		backoff = 30 * time.Minute
+	}
+	_, err := t.tx.Exec(ctx, `UPDATE jobs SET state='retry', last_error=$2, attempts=attempts+1, next_run=now()+$3::interval, updated_at=now() WHERE id=$1`, id, errMsg, fmt.Sprintf("%d seconds", int(backoff.Seconds())))
+	return err
+}
+
+func (t *pgTxStore) MarkJobDead(ctx context.Context, id int64, errMsg string) error {
+	_, err := t.tx.Exec(ctx, `UPDATE jobs SET state='dead', last_error=$2, updated_at=now() WHERE id=$1`, id, errMsg)
+	return err
+}
+
+func (t *pgTxStore) ListJobs(ctx context.Context, limit int) ([]store.JobRow, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := t.tx.Query(ctx, `SELECT id, type, payload::text, coalesce(region,''), state, attempts, next_run::text, coalesce(last_error,''), extract(epoch from created_at)::bigint FROM jobs ORDER BY created_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.JobRow
+	for rows.Next() {
+		var r store.JobRow
+		if err := rows.Scan(&r.ID, &r.Type, &r.Payload, &r.Region, &r.State, &r.Attempts, &r.NextRun, &r.LastError, &r.CreatedAt); err != nil {
+			return nil, err
+		}
 		out = append(out, r)
 	}
 	return out, nil
