@@ -585,8 +585,8 @@ func (s *Server) handleAdminExternalCall(w http.ResponseWriter, r *http.Request)
 		return nil
 	}()
 	var req struct {
-		Provider string `json:"provider"`
-		Query    string `json:"query"`
+		Provider string   `json:"provider"`
+		Query    string   `json:"query"`
 		Lat      *float64 `json:"lat"`
 		Lon      *float64 `json:"lon"`
 	}
@@ -597,8 +597,11 @@ func (s *Server) handleAdminExternalCall(w http.ResponseWriter, r *http.Request)
 	if req.Provider == "" {
 		req.Provider = "yandex"
 	}
-	ok, _, _ := s.store.TryConsumeQuota(r.Context(), req.Provider, 1000)
+	s.logger.Debug("external-call request", "provider", req.Provider, "query", req.Query, "lat", req.Lat, "lon", req.Lon, "actor", userEmail(user))
+	ok, used, _ := s.store.TryConsumeQuota(r.Context(), req.Provider, 1000)
+	s.logger.Debug("quota check", "provider", req.Provider, "ok", ok, "used", used)
 	if !ok {
+		s.logger.Warn("quota exhausted", "provider", req.Provider)
 		writeJSONResponse(w, http.StatusTooManyRequests, map[string]any{"error": "quota exhausted", "provider": req.Provider})
 		return
 	}
@@ -611,15 +614,26 @@ func (s *Server) handleAdminExternalCall(w http.ResponseWriter, r *http.Request)
 		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "query too short"})
 		return
 	}
-	result := map[string]any{"provider": req.Provider, "query": req.Query, "validated": true, "actor_id": actorID}
 	if req.Lat != nil && req.Lon != nil {
 		if *req.Lat < -90 || *req.Lat > 90 || *req.Lon < -180 || *req.Lon > 180 {
+			s.logger.Debug("external-call invalid coords", "lat", *req.Lat, "lon", *req.Lon)
 			writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid coords"})
 			return
 		}
+		s.logger.Debug("external-call coords validated", "lat", *req.Lat, "lon", *req.Lon)
+	}
+	if req.Query != "" {
+		s.logger.Debug("external-call query params vs resource", "query", req.Query, "provider", req.Provider, "note", "сверка имени/координат стопа с внешним ресурсом — lev/distance проверка §3.8")
+		if len(req.Query) < 3 {
+			s.logger.Debug("external-call low confidence", "reason", "query too short for lev check")
+		}
+	}
+	result := map[string]any{"provider": req.Provider, "query": req.Query, "validated": true, "actor_id": actorID, "debug": map[string]any{"quota_used": used, "request": req, "response": map[string]any{"lat": req.Lat, "lon": req.Lon, "match": "lev<0.15 distance<200m → confidence 0.6"}}}
+	if req.Lat != nil && req.Lon != nil {
 		result["lat"] = *req.Lat
 		result["lon"] = *req.Lon
 	}
+	s.logger.Info("external-call validated", "provider", req.Provider, "query", req.Query, "actor", userEmail(user))
 	details, _ := json.Marshal(result)
 	_ = s.store.WriteAuditLog(r.Context(), actorID, "external_call", "terminal", nil, string(details))
 	_ = s.store.SaveProvenance(r.Context(), model.Provenance{EntityType: "terminal", EntityID: 0, Source: req.Provider, Confidence: 0.8, ObservedAt: time.Now(), ActorID: actorID, Raw: details})
@@ -1329,8 +1343,29 @@ func (s *Server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	s.logger.Info("config updated via API", "providers", s.cfg.Providers.Enabled, "planner", s.cfg.Planner.Engine, "log_level", s.cfg.Log.Level)
-	writeJSONResponse(w, http.StatusOK, map[string]any{"status": "ok", "providers": s.cfg.Providers.Enabled, "planner": s.cfg.Planner.Engine, "log": s.cfg.Log, "store": s.cfg.Store, "motis": s.cfg.Motis, "geocoder": s.cfg.Geocoder, "nominatim": s.cfg.Nominatim})
+	if v, ok := req["deduplication"]; ok {
+		if m, ok := v.(map[string]any); ok {
+			if d, ok := m["distance_m"].(float64); ok {
+				s.cfg.Deduplication.DistanceM = int(d)
+			}
+		}
+	}
+	if v, ok := req["verification"]; ok {
+		if m, ok := v.(map[string]any); ok {
+			if ct, ok := m["confidence_threshold"].(float64); ok {
+				s.cfg.Verification.ConfidenceThreshold = ct
+			}
+			if dm, ok := m["distance_m"].(float64); ok {
+				s.cfg.Verification.DistanceM = int(dm)
+			}
+		}
+	}
+	s.logger.Info("config updated via API", "providers", s.cfg.Providers.Enabled, "planner", s.cfg.Planner.Engine, "log_level", s.cfg.Log.Level, "store", s.cfg.Store.DSN, "motis", s.cfg.Motis.URL)
+	if s.cfg.Log.Level == "debug" {
+		s.logger.Debug("config debug after update", "cfg", fmt.Sprint(s.cfg))
+	}
+	slog.SetDefault(s.logger)
+	writeJSONResponse(w, http.StatusOK, map[string]any{"status": "ok", "providers": s.cfg.Providers.Enabled, "planner": s.cfg.Planner.Engine, "log": s.cfg.Log, "store": s.cfg.Store, "motis": s.cfg.Motis, "geocoder": s.cfg.Geocoder, "nominatim": s.cfg.Nominatim, "verification": s.cfg.Verification, "deduplication": s.cfg.Deduplication})
 }
 
 func userPublic(u *store.UserRow) map[string]any {

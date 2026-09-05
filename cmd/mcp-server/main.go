@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"context"
 	"encoding/json"
 	"flag"
@@ -186,18 +187,37 @@ func newLogger(level, format string, addSource bool) *slog.Logger {
 	return logger.NewFactory(config.Log{Level: level, Format: format, AddSource: addSource}).For("main")
 }
 
+func zipOpen(f *os.File, size int64) (*zip.Reader, error) { return zip.NewReader(f, size) }
+
 func newJobsWorker(st store.Store, l *slog.Logger) *jobs.Worker {
 	w := jobs.NewWorker(st, l)
 	w.Register("import_gtfs", func(ctx context.Context, job store.JobRow) error {
 		l.Info("handling import_gtfs", "id", job.ID, "payload", job.Payload)
-		if job.Payload != "" && job.Payload != "{}" {
-			var p map[string]any
-			if err := json.Unmarshal([]byte(job.Payload), &p); err == nil {
-				if path, ok := p["path"].(string); ok && path != "" {
-					l.Info("gtfs file ready", "path", path)
-				}
-			}
+		var p map[string]any
+		_ = json.Unmarshal([]byte(job.Payload), &p)
+		path, _ := p["path"].(string)
+		if path == "" {
+			l.Warn("gtfs import: no path, nothing to do (upload file first)")
+			return nil
 		}
+		f, err := os.Open(path)
+		if err != nil {
+			l.Error("gtfs open failed", "path", path, "err", err)
+			return err
+		}
+		defer f.Close()
+		fi, _ := f.Stat()
+		l.Debug("gtfs file", "path", path, "size", fi.Size())
+		zr, err := zip.NewReader(f, fi.Size())
+		if err != nil {
+			l.Error("gtfs zip invalid", "err", err)
+			return err
+		}
+		l.Info("gtfs zip validated", "files", len(zr.File), "path", path)
+		for _, zf := range zr.File {
+			l.Debug("gtfs entry", "name", zf.Name, "size", zf.UncompressedSize64)
+		}
+		l.Info("gtfs import done (MVP: validated only, canonical import via AdaptedRecord в фазе 6)")
 		return nil
 	})
 	w.Register("sync_mintrans", func(ctx context.Context, job store.JobRow) error {
