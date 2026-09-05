@@ -46,8 +46,8 @@ SELECT setval('carriers_id_seq', (SELECT GREATEST(MAX(id),0)+1 FROM carriers), f
 
 CREATE TABLE IF NOT EXISTS carrier_identifiers (
   carrier_id bigint NOT NULL REFERENCES carriers(id) ON DELETE CASCADE,
-  system text NOT NULL CHECK (system IN ('mintrans','yandex','osm','gtfs','motis','nominatim')),
-  code_type text NOT NULL CHECK (code_type IN ('inn','ogrn','code','op_reg','station_code','osm_id','gtfs_stop_id','motis_id','yandex_code')),
+  system text NOT NULL CHECK (system IN ('mintrans','yandex','gtfs','nominatim')),
+  code_type text NOT NULL CHECK (code_type IN ('inn','ogrn','code','yandex_code')),
   code text NOT NULL,
   PRIMARY KEY (carrier_id, system, code_type),
   UNIQUE (system, code)
@@ -252,7 +252,6 @@ CREATE TABLE IF NOT EXISTS stop_times (
   dwell int,
   PRIMARY KEY(trip_id, seq)
 );
-CREATE INDEX IF NOT EXISTS idx_stop_times_trip ON stop_times(trip_id, seq);
 CREATE INDEX IF NOT EXISTS idx_stop_times_stop_departure ON stop_times(stop_id, departure);
 
 CREATE TABLE IF NOT EXISTS transfers (
