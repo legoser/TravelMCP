@@ -54,4 +54,6 @@ Go-каркас реализован: MCP-сервер (Streamable HTTP stateles
 авторизацией), ядро CSA-планировщика и телеметрия. Продакшн-источников по
 умолчанию нет (подключаются по мере реализации, см. `docs/05-roadmap.md`);
 синтетическая сеть `synth` — мок только для тестов/демо (`PROVIDERS_ENABLED=synth`).
+Админка — `GET /admin` (см. `docs/admin.md`): импорты/jobs/logs, ручная правка `terminals` (`is_locked` + `provenance.actor_id` + `audit_log`), вызов внешнего API с валидацией и квотой `api_quotas` (429 ротация B/C/D).
+
 Тестирование — через `make test` (unit + integration + smoke).
