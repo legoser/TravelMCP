@@ -10,11 +10,15 @@ import (
 type JobType string
 
 const (
-	JobImportGTFS   JobType = "import_gtfs"
-	JobSyncMintrans JobType = "sync_mintrans"
-	JobSyncRail     JobType = "sync_rail"
-	JobNotify       JobType = "notify"
-	JobCleanup      JobType = "cleanup"
+	JobImportGTFS      JobType = "import_gtfs"
+	JobSyncMintrans    JobType = "sync_mintrans"
+	JobSyncRail        JobType = "sync_rail"
+	JobNotify          JobType = "notify"
+	JobCleanup         JobType = "cleanup"
+	JobSyncStations    JobType = "sync_stations"
+	JobSyncRefresh     JobType = "sync_refresh"
+	JobSyncTerminals   JobType = "sync_terminals_chunk"
+	JobSyncTripsAttach JobType = "sync_trips_attach"
 )
 
 type JobState string

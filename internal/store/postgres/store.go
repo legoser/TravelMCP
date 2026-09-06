@@ -181,13 +181,14 @@ func (p *PostgresStore) UpsertRoute(ctx context.Context, r RouteRow) (int64, err
 	if src == "" {
 		src = "mintrans"
 	}
-	err := p.pool.QueryRow(ctx, `INSERT INTO routes(carrier_id, external_route_code, short_name, long_name, mode, external_uid, ord, source_provider) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(source_provider, external_route_code) DO UPDATE SET long_name=EXCLUDED.long_name, short_name=EXCLUDED.short_name, carrier_id=EXCLUDED.carrier_id RETURNING id`, r.CarrierID, r.ExternalRouteCode, r.ShortName, r.LongName, r.Mode, r.ExternalUID, r.Ord, src).Scan(&id)
+	err := p.pool.QueryRow(ctx, `INSERT INTO routes(carrier_id, external_route_code, short_name, long_name, mode, external_uid, ord, source_provider, valid_to) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NULL) ON CONFLICT(source_provider, external_route_code) DO UPDATE SET long_name=EXCLUDED.long_name, short_name=EXCLUDED.short_name, carrier_id=EXCLUDED.carrier_id, mode=EXCLUDED.mode, valid_to=NULL RETURNING id`, r.CarrierID, r.ExternalRouteCode, r.ShortName, r.LongName, r.Mode, r.ExternalUID, r.Ord, src).Scan(&id)
 	return id, err
 }
 func (p *PostgresStore) UpsertRouteRegion(ctx context.Context, routeID int64, region string) error {
 	if p.pool == nil {
 		return nil
 	}
+	_, _ = p.pool.Exec(ctx, `INSERT INTO regions(code, name_ru) VALUES($1,$1) ON CONFLICT DO NOTHING`, region)
 	_, err := p.pool.Exec(ctx, `INSERT INTO route_regions(route_id, region_code) VALUES($1,$2) ON CONFLICT DO NOTHING`, routeID, region)
 	return err
 }
@@ -196,7 +197,7 @@ func (p *PostgresStore) UpsertTrip(ctx context.Context, t TripRow) (int64, error
 		return 0, errNotImplemented
 	}
 	var id int64
-	err := p.pool.QueryRow(ctx, `INSERT INTO trips(route_id, provider_id, external_trip_code, direction, service_days, frequency_flag, period, service_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(route_id, external_trip_code) DO UPDATE SET direction=EXCLUDED.direction, service_days=EXCLUDED.service_days, frequency_flag=EXCLUDED.frequency_flag, period=EXCLUDED.period, service_id=EXCLUDED.service_id RETURNING id`, t.RouteID, t.ProviderID, t.ExternalTripCode, t.Direction, t.ServiceDays, t.FrequencyFlag, t.Period, t.ServiceID).Scan(&id)
+	err := p.pool.QueryRow(ctx, `INSERT INTO trips(route_id, provider_id, external_trip_code, direction, direction_id, service_days, frequency_flag, period, service_id, duration_s, distance_m, method, valid_to) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NULL) ON CONFLICT(route_id, external_trip_code) DO UPDATE SET direction=EXCLUDED.direction, direction_id=EXCLUDED.direction_id, service_days=EXCLUDED.service_days, frequency_flag=EXCLUDED.frequency_flag, period=EXCLUDED.period, service_id=EXCLUDED.service_id, duration_s=EXCLUDED.duration_s, distance_m=EXCLUDED.distance_m, method=EXCLUDED.method, valid_to=NULL RETURNING id`, t.RouteID, t.ProviderID, t.ExternalTripCode, t.Direction, t.DirectionID, t.ServiceDays, t.FrequencyFlag, t.Period, t.ServiceID, t.DurationS, t.DistanceM, t.Method).Scan(&id)
 	return id, err
 }
 func (p *PostgresStore) UpsertFrequency(ctx context.Context, f FrequencyRow) error {
@@ -250,7 +251,7 @@ func (p *PostgresStore) UpsertService(ctx context.Context, s ServiceRow) error {
 	if p.pool == nil {
 		return nil
 	}
-	_, err := p.pool.Exec(ctx, `INSERT INTO services(id, provider_id, name, start_date, end_date) VALUES($1,$2,$3,$4,$5) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name, start_date=EXCLUDED.start_date, end_date=EXCLUDED.end_date`, s.ID, s.ProviderID, s.Name, s.StartDate, s.EndDate)
+	_, err := p.pool.Exec(ctx, `INSERT INTO services(id, provider_id, name, start_date, end_date) VALUES($1,$2,$3,$4,$5) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name, start_date=EXCLUDED.start_date, end_date=EXCLUDED.end_date`, s.ID, s.ProviderID, emptyToNil(s.Name), emptyToNil(s.StartDate), emptyToNil(s.EndDate))
 	return err
 }
 func (p *PostgresStore) UpsertServiceDay(ctx context.Context, d ServiceDayRow) error {
@@ -1038,16 +1039,17 @@ func (t *pgTxStore) UpsertRoute(ctx context.Context, r RouteRow) (int64, error) 
 	if src == "" {
 		src = "mintrans"
 	}
-	err := t.tx.QueryRow(ctx, `INSERT INTO routes(carrier_id, external_route_code, short_name, long_name, mode, external_uid, ord, source_provider) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(source_provider, external_route_code) DO UPDATE SET long_name=EXCLUDED.long_name, short_name=EXCLUDED.short_name, carrier_id=EXCLUDED.carrier_id RETURNING id`, r.CarrierID, r.ExternalRouteCode, r.ShortName, r.LongName, r.Mode, r.ExternalUID, r.Ord, src).Scan(&id)
+	err := t.tx.QueryRow(ctx, `INSERT INTO routes(carrier_id, external_route_code, short_name, long_name, mode, external_uid, ord, source_provider, valid_to) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NULL) ON CONFLICT(source_provider, external_route_code) DO UPDATE SET long_name=EXCLUDED.long_name, short_name=EXCLUDED.short_name, carrier_id=EXCLUDED.carrier_id, mode=EXCLUDED.mode, valid_to=NULL RETURNING id`, r.CarrierID, r.ExternalRouteCode, r.ShortName, r.LongName, r.Mode, r.ExternalUID, r.Ord, src).Scan(&id)
 	return id, err
 }
 func (t *pgTxStore) UpsertRouteRegion(ctx context.Context, routeID int64, region string) error {
+	_, _ = t.tx.Exec(ctx, `INSERT INTO regions(code, name_ru) VALUES($1,$1) ON CONFLICT DO NOTHING`, region)
 	_, err := t.tx.Exec(ctx, `INSERT INTO route_regions(route_id, region_code) VALUES($1,$2) ON CONFLICT DO NOTHING`, routeID, region)
 	return err
 }
 func (t *pgTxStore) UpsertTrip(ctx context.Context, r TripRow) (int64, error) {
 	var id int64
-	err := t.tx.QueryRow(ctx, `INSERT INTO trips(route_id, provider_id, external_trip_code, direction, service_days, frequency_flag, period, service_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(route_id, external_trip_code) DO UPDATE SET direction=EXCLUDED.direction, service_days=EXCLUDED.service_days, frequency_flag=EXCLUDED.frequency_flag, period=EXCLUDED.period, service_id=EXCLUDED.service_id RETURNING id`, r.RouteID, r.ProviderID, r.ExternalTripCode, r.Direction, r.ServiceDays, r.FrequencyFlag, r.Period, r.ServiceID).Scan(&id)
+	err := t.tx.QueryRow(ctx, `INSERT INTO trips(route_id, provider_id, external_trip_code, direction, direction_id, service_days, frequency_flag, period, service_id, duration_s, distance_m, method, valid_to) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NULL) ON CONFLICT(route_id, external_trip_code) DO UPDATE SET direction=EXCLUDED.direction, direction_id=EXCLUDED.direction_id, service_days=EXCLUDED.service_days, frequency_flag=EXCLUDED.frequency_flag, period=EXCLUDED.period, service_id=EXCLUDED.service_id, duration_s=EXCLUDED.duration_s, distance_m=EXCLUDED.distance_m, method=EXCLUDED.method, valid_to=NULL RETURNING id`, r.RouteID, r.ProviderID, r.ExternalTripCode, r.Direction, r.DirectionID, r.ServiceDays, r.FrequencyFlag, r.Period, r.ServiceID, r.DurationS, r.DistanceM, r.Method).Scan(&id)
 	return id, err
 }
 func (t *pgTxStore) UpsertFrequency(ctx context.Context, f FrequencyRow) error {
@@ -1079,7 +1081,7 @@ func (t *pgTxStore) ClearProviderData(ctx context.Context, providerID string) er
 	return nil
 }
 func (t *pgTxStore) UpsertService(ctx context.Context, s ServiceRow) error {
-	_, err := t.tx.Exec(ctx, `INSERT INTO services(id, provider_id, name, start_date, end_date) VALUES($1,$2,$3,$4,$5) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name`, s.ID, s.ProviderID, s.Name, s.StartDate, s.EndDate)
+	_, err := t.tx.Exec(ctx, `INSERT INTO services(id, provider_id, name, start_date, end_date) VALUES($1,$2,$3,$4,$5) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name`, s.ID, s.ProviderID, emptyToNil(s.Name), emptyToNil(s.StartDate), emptyToNil(s.EndDate))
 	return err
 }
 func (t *pgTxStore) UpsertServiceDay(ctx context.Context, d ServiceDayRow) error {

@@ -30,6 +30,13 @@ func nullSource(s string) any {
 	return s
 }
 
+func emptyToNil(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
 func (p *PostgresStore) UpsertTerminalAlias(ctx context.Context, a store.TerminalAliasRow) error {
 	if p.pool == nil {
 		return errNotImplemented

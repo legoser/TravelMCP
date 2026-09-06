@@ -54,6 +54,9 @@ type PromotableTrip struct {
 	Run            int               `json:"run"`
 	IsSyntheticKey bool              `json:"is_synthetic_key"`
 	WinnerSource   string            `json:"winner_source"`
+	WinnerPeriod   string            `json:"winner_period"`
+	Carrier        string            `json:"carrier"`
+	CarrierINN     string            `json:"carrier_inn"`
 	StopTimes      []MatchedStopTime `json:"stop_times"`
 	RouteSynthetic bool              `json:"route_synthetic"`
 }
@@ -61,11 +64,17 @@ type PromotableTrip struct {
 type StagedTrip struct {
 	RouteNK        string            `json:"route_nk"`
 	TripNK         string            `json:"trip_nk"`
+	RouteReg       string            `json:"route_reg"`
+	Direction      string            `json:"direction"`
+	ServiceID      int               `json:"service_id"`
+	Run            int               `json:"run"`
 	State          string            `json:"state"`
 	Reason         string            `json:"reason"`
 	Matched        []MatchedStopTime `json:"matched"`
 	Unmatched      []string          `json:"unmatched"`
 	IsSyntheticKey bool              `json:"is_synthetic_key"`
+	Carrier        string            `json:"carrier"`
+	CarrierINN     string            `json:"carrier_inn"`
 }
 
 type DeadTrip struct {
@@ -129,18 +138,22 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 		current[tripNK] = routeNK
 		if ft.FrequencyOnly || len(ft.Stops) < 2 {
 			rep.Staged = append(rep.Staged, StagedTrip{
-				RouteNK: routeNK, TripNK: tripNK, State: "awaiting_times",
+				RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg,
+				Direction: ft.Direction, ServiceID: ft.ServiceID, Run: ft.Run,
+				State:          "awaiting_times",
 				Reason:         "нет точных времён: frequency-only или меньше двух timed-стопов",
-				IsSyntheticKey: true,
+				IsSyntheticKey: true, Carrier: ft.Carrier, CarrierINN: ft.CarrierINN,
 			})
 			continue
 		}
 		if len(ft.Untimed) > 0 {
 			rep.Staged = append(rep.Staged, StagedTrip{
-				RouteNK: routeNK, TripNK: tripNK, State: "incomplete_trip",
+				RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg,
+				Direction: ft.Direction, ServiceID: ft.ServiceID, Run: ft.Run,
+				State:          "incomplete_trip",
 				Reason:         "стопы без времён, интерполяция запрещена",
 				Unmatched:      append([]string{}, ft.Untimed...),
-				IsSyntheticKey: true,
+				IsSyntheticKey: true, Carrier: ft.Carrier, CarrierINN: ft.CarrierINN,
 			})
 			rep.Reviews = append(rep.Reviews, tripReview(source, routeNK, tripNK, "incomplete_trip", 0))
 			continue
@@ -148,11 +161,13 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 		matched, worstReason, worstScore, unmatched := matchStops(ft, in.Terminals, source, classFor, in.ParamsFor)
 		if len(unmatched) > 0 {
 			rep.Staged = append(rep.Staged, StagedTrip{
-				RouteNK: routeNK, TripNK: tripNK, State: "incomplete_trip",
+				RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg,
+				Direction: ft.Direction, ServiceID: ft.ServiceID, Run: ft.Run,
+				State:          "incomplete_trip",
 				Reason:         worstReason,
 				Matched:        matched,
 				Unmatched:      unmatched,
-				IsSyntheticKey: true,
+				IsSyntheticKey: true, Carrier: ft.Carrier, CarrierINN: ft.CarrierINN,
 			})
 			rep.Reviews = append(rep.Reviews, tripReview(source, routeNK, tripNK, worstReason, worstScore))
 			continue
@@ -169,10 +184,12 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 		}
 		if soft := softSpeeds(collapsed, in.Terminals, maxSpeed); soft != "" {
 			rep.Staged = append(rep.Staged, StagedTrip{
-				RouteNK: routeNK, TripNK: tripNK, State: "needs_review",
+				RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg,
+				Direction: ft.Direction, ServiceID: ft.ServiceID, Run: ft.Run,
+				State:          "needs_review",
 				Reason:         soft,
 				Matched:        collapsed,
-				IsSyntheticKey: true,
+				IsSyntheticKey: true, Carrier: ft.Carrier, CarrierINN: ft.CarrierINN,
 			})
 			rep.Reviews = append(rep.Reviews, tripReview(source, routeNK, tripNK, "low_confidence", 0))
 			continue
@@ -181,7 +198,9 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 			RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg,
 			Direction: ft.Direction, ServiceID: ft.ServiceID, Run: ft.Run,
 			IsSyntheticKey: true, RouteSynthetic: routeSynthetic,
-			WinnerSource: source + ":" + ft.Period, StopTimes: collapsed,
+			WinnerSource: source + ":" + ft.Period, WinnerPeriod: ft.Period,
+			Carrier: ft.Carrier, CarrierINN: ft.CarrierINN,
+			StopTimes: collapsed,
 		})
 	}
 	sort.Slice(rep.Promoted, func(i, j int) bool { return rep.Promoted[i].TripNK < rep.Promoted[j].TripNK })

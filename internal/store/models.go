@@ -71,6 +71,7 @@ type RouteRow struct {
 	Mode              string
 	ExternalUID       string
 	Ord               int
+	ValidTo           *string
 }
 
 type TripRow struct {
@@ -79,10 +80,15 @@ type TripRow struct {
 	ProviderID       string
 	ExternalTripCode string
 	Direction        string
+	DirectionID      *int
 	ServiceDays      string
 	FrequencyFlag    int
 	Period           string
 	ServiceID        int
+	DurationS        *int
+	DistanceM        *int
+	Method           *string
+	ValidTo          *string
 }
 
 type FrequencyRow struct {
@@ -329,6 +335,40 @@ type JobRow struct {
 	NextRun   string
 	LastError string
 	CreatedAt int64
+}
+
+type StagingTripRow struct {
+	ID                int64
+	Source            string
+	ExternalRouteCode string
+	ExternalTripCode  string
+	IsSyntheticKey    bool
+	RouteRaw          string
+	Region            string
+	TransportType     string
+	State             string
+	MatchedStopTimes  string
+	UnmatchedStops    string
+	RetryCount        int
+}
+
+type TripSourceRow struct {
+	TripID        int64
+	Source        string
+	Price         *float64
+	PriceCurrency *string
+	ScheduleURL   *string
+	DurationS     *int
+	DistanceM     *int
+	Method        *string
+}
+
+type OutboxEvent struct {
+	ID          int64
+	Aggregate   string
+	AggregateID string
+	Event       string
+	Payload     string
 }
 
 type AuditLogRow struct {

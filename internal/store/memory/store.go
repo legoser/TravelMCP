@@ -74,6 +74,9 @@ type MemoryStore struct {
 	terminalIdents map[int64][]model.AdaptedIdentifier
 	provenance     map[string]store.ProvenanceVote
 	reviewQueue    []store.ReviewQueueRow
+	stagingTrips   map[string]store.StagingTripRow
+	tripSources    map[int64]map[string]store.TripSourceRow
+	outbox         []store.OutboxEvent
 	nextID         int64
 }
 
