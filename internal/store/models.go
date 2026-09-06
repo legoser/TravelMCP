@@ -1,5 +1,6 @@
 package store
 
+// Deprecated: CityRow/StationRow/StationCodeRow — legacy, удалить вместе с MemoryStore legacy методами (UpsertCity/Station/StationCode, FindStation).
 type CityRow struct {
 	ID         int64
 	Name       string

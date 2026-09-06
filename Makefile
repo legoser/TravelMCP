@@ -36,3 +36,26 @@ run-example:
 
 clean:
 	rm -rf $(BIN) bin
+
+.PHONY: check-layers check-deprecated
+
+## check-layers: проверка направления зависимостей и SOLID-границ (AGENTS.md)
+check-layers:
+	@echo "==> go vet"
+	go vet ./...
+	@echo "==> store не должен импортировать providers/server/mcp"
+	@if grep -rl "travelmcp/internal/providers\|travelmcp/internal/server\|travelmcp/internal/mcp" internal/store --include="*.go" | grep -v "_test.go"; then \
+		echo "FAIL: internal/store импортирует верхние слои"; exit 1; \
+	fi
+	@echo "==> ни один SQLiteStore не раскидан по нескольким файлам без явного разделения по ответственности"
+	@grep -rl "SQLiteStore" internal/store --include="*.go" | grep -v "_test.go" | sort
+	@echo "OK (просмотреть список выше вручную — не все совпадения являются нарушением)"
+
+## check-deprecated: поиск устаревшего кода после закрытия пункта плана
+## (см. docs/15-dev-status.md §6 за объяснением каждого паттерна)
+check-deprecated:
+	@echo "==> явно помеченный устаревший код"
+	@grep -rn "Deprecated\|TODO.*phase" --include="*.go" . || true
+	@echo "==> файлы, привязанные к legacy JSON/sqlite-пути"
+	@grep -rln "seed_pilot\|places_sqlite\|import_intercity" --include="*.go" . || true
+	@echo "==> напоминание: сверить найденное со статусом перехода в docs/15-dev-status.md §2"

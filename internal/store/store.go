@@ -35,12 +35,26 @@ type PlaceStore interface {
 
 type TerminalStore interface {
 	UpsertTerminal(ctx context.Context, r TerminalRow, names map[string]string, identifiers []model.AdaptedIdentifier) (int64, error)
+	GetTerminal(ctx context.Context, id int64) (map[string]any, error)
 	ListTerminals(ctx context.Context, limit, offset int, sort string) ([]map[string]any, int, error)
+	ListTerminalsFiltered(ctx context.Context, limit, offset int, sort, order, q string) ([]map[string]any, int, error)
+	GetTerminalTags(ctx context.Context, id int64) (map[string]string, error)
+	SetTerminalTag(ctx context.Context, id int64, key, value string) error
+}
+
+type ReviewQueueRow struct {
+	EntityType string
+	EntityID   int64
+	Reason     string
+	Score      float64
+	CreatedAt  int64
 }
 
 type ProvenanceStore interface {
 	SaveProvenance(ctx context.Context, p model.Provenance) error
 	SaveReviewQueue(ctx context.Context, e model.ReviewQueueEntry) error
+	ListReviewQueue(ctx context.Context, limit int) ([]ReviewQueueRow, error)
+	DeleteReviewQueue(ctx context.Context, entityType string, entityID int64, reason string) error
 }
 
 type QualityStore interface {

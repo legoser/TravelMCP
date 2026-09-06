@@ -2,10 +2,10 @@ package verification
 
 import (
 	"math"
-	"strings"
 
 	"travelmcp/internal/config"
 	"travelmcp/internal/model"
+	"travelmcp/internal/support/namesim"
 )
 
 type Candidate struct {
@@ -84,45 +84,9 @@ func haversineMeters(lat1, lon1, lat2, lon2 float64) float64 {
 	return 2 * R * math.Asin(math.Sqrt(a))
 }
 
-func normalizedLevenshtein(a, b string) float64 {
-	a = strings.ToLower(strings.TrimSpace(a))
-	b = strings.ToLower(strings.TrimSpace(b))
-	if a == b {
-		return 0
-	}
-	la, lb := len([]rune(a)), len([]rune(b))
-	if la == 0 || lb == 0 {
-		return 1
-	}
-	dist := levenshtein(a, b)
-	maxLen := la
-	if lb > maxLen {
-		maxLen = lb
-	}
-	return float64(dist) / float64(maxLen)
-}
+func normalizedLevenshtein(a, b string) float64 { return namesim.NormalizedLevenshtein(a, b) }
 
-func levenshtein(a, b string) int {
-	ra, rb := []rune(a), []rune(b)
-	da := make([][]int, len(ra)+1)
-	for i := range da {
-		da[i] = make([]int, len(rb)+1)
-		da[i][0] = i
-	}
-	for j := range da[0] {
-		da[0][j] = j
-	}
-	for i := 1; i <= len(ra); i++ {
-		for j := 1; j <= len(rb); j++ {
-			cost := 0
-			if ra[i-1] != rb[j-1] {
-				cost = 1
-			}
-			da[i][j] = min(da[i-1][j]+1, da[i][j-1]+1, da[i-1][j-1]+cost)
-		}
-	}
-	return da[len(ra)][len(rb)]
-}
+func levenshtein(a, b string) int { return namesim.Levenshtein(a, b) }
 
 func AdaptedToCandidates(rec model.AdaptedRecord) Candidate {
 	lat, lon := 0.0, 0.0

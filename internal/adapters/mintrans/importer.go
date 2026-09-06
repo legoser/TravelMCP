@@ -9,8 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/http"
-	"net/url"
 	"os"
 	"regexp"
 	"runtime"
@@ -27,6 +25,10 @@ import (
 	"travelmcp/internal/geo"
 	"travelmcp/internal/model"
 )
+
+type GeoResolver interface {
+	Resolve(ctx context.Context, name, region string) (float64, float64, string, float64, bool)
+}
 
 func dedupDistanceM() float64 {
 	cfg, _ := config.Load("")
@@ -106,6 +108,10 @@ type reestrBlock struct {
 }
 
 func ImportIntercity(ctx context.Context, s store.Store, path string, logger *slog.Logger) error {
+	return ImportIntercityWithResolver(ctx, s, path, logger, nil)
+}
+
+func ImportIntercityWithResolver(ctx context.Context, s store.Store, path string, logger *slog.Logger, resolver GeoResolver) error {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -142,6 +148,40 @@ func ImportIntercity(ctx context.Context, s store.Store, path string, logger *sl
 	if err := s.Migrate(ctx); err != nil {
 		return err
 	}
+	type resolved struct {
+		lat, lon float64
+		source   string
+		conf     float64
+		ok       bool
+	}
+	resolvedByName := map[string]resolved{}
+	if resolver != nil {
+		uniqueKeys := map[string]string{}
+		for _, st := range ds.Stops {
+			if st.Lat != nil && st.Lon != nil {
+				continue
+			}
+			key := st.Name + "|" + st.Region
+			if _, ok := uniqueKeys[key]; !ok {
+				uniqueKeys[key] = st.Name
+			}
+		}
+		if len(uniqueKeys) > 0 {
+			logger.Info("geocoding missing coords", "unique", len(uniqueKeys))
+			for key, name := range uniqueKeys {
+				region := strings.SplitN(key, "|", 2)[1]
+				lat, lon, src, conf, ok := resolver.Resolve(ctx, name, region)
+				if ok {
+					resolvedByName[key] = resolved{lat: lat, lon: lon, source: src, conf: conf, ok: true}
+					logger.Debug("geocoded", "name", name, "region", region, "lat", lat, "lon", lon, "source", src, "conf", conf)
+				} else {
+					resolvedByName[key] = resolved{ok: false}
+					logger.Debug("geocode not found", "name", name, "region", region)
+				}
+			}
+			logger.Info("geocoding done", "resolved", len(resolvedByName))
+		}
+	}
 	// Use transaction for batch insert - Store.WithTx hides sqlite details
 	var importErr error
 	importErr = s.WithTx(ctx, func(tx store.Store) error {
@@ -161,6 +201,14 @@ func ImportIntercity(ctx context.Context, s store.Store, path string, logger *sl
 			if st.Lon != nil {
 				lon = *st.Lon
 			}
+			resSrc, resConf, resOk := "", 0.0, false
+			if lat == 0 && lon == 0 && resolver != nil {
+				key := st.Name + "|" + st.Region
+				if r, ok := resolvedByName[key]; ok && r.ok {
+					lat, lon = r.lat, r.lon
+					resSrc, resConf, resOk = r.source, r.conf, true
+				}
+			}
 			found := int64(0)
 			for _, tr := range terminalRows {
 				if tr.Lat == 0 && tr.Lon == 0 || lat == 0 && lon == 0 {
@@ -173,17 +221,19 @@ func ImportIntercity(ctx context.Context, s store.Store, path string, logger *sl
 				}
 			}
 			if found == 0 {
-				if lat == 0 && lon == 0 && os.Getenv("ENABLE_GEOCODE") == "1" {
-					if nlat, nlon, ok := geocodeStation(st.Name, st.Region); ok {
-						lat, lon = nlat, nlon
-					}
-				}
 				tr := store.TerminalRow{Lat: lat, Lon: lon, Tz: "", ValidFrom: "", ValidTo: nil}
 				id, _ := tx.UpsertTerminal(ctx, tr, map[string]string{"ru": st.Name}, []model.AdaptedIdentifier{{System: "mintrans", CodeType: "op_reg", Code: st.OpReg}})
 				tr.ID = id
 				terminalRows = append(terminalRows, tr)
 				terminalByID[id] = tr
 				stopToTerminal[st.ID] = id
+				if resOk {
+					raw := []byte(fmt.Sprintf(`{"geocoder":%q,"similarity":%.3f}`, resSrc, resConf))
+					_ = tx.SaveProvenance(ctx, model.Provenance{EntityType: "terminal", EntityID: id, Source: "mintrans", Confidence: resConf, ObservedAt: time.Now(), Raw: raw})
+					_ = tx.SaveReviewQueue(ctx, model.ReviewQueueEntry{EntityType: "terminal", EntityID: id, Reason: "low_confidence", Score: resConf})
+				} else if lat == 0 && lon == 0 {
+					_ = tx.SaveReviewQueue(ctx, model.ReviewQueueEntry{EntityType: "terminal", EntityID: id, Reason: "missing_coords", Score: 0.3})
+				}
 			} else {
 				stopToTerminal[st.ID] = found
 			}
@@ -508,68 +558,4 @@ func timeAt(list []string, run int) (int, bool) {
 		return 0, false
 	}
 	return parseTimeMinutes(list[run])
-}
-
-var regionNames = map[string]string{
-	"22": "Алтайский край", "04": "Республика Алтай", "42": "Кемеровская область",
-	"54": "Новосибирская область", "70": "Томская область", "24": "Красноярский край",
-	"19": "Республика Хакасия", "17": "Республика Тыва", "86": "Ханты-Мансийский АО",
-}
-
-func geocodeStation(name, region string) (float64, float64, bool) {
-	key := os.Getenv("YANDEX_GEOCODE_KEY")
-	if key == "" {
-		if data, err := os.ReadFile(".env"); err == nil {
-			for _, line := range strings.Split(string(data), "\n") {
-				if strings.HasPrefix(strings.TrimSpace(line), "YANDEX_GEOCODE_KEY=") {
-					key = strings.Trim(strings.SplitN(line, "=", 2)[1], "\"' ")
-					break
-				}
-			}
-		}
-	}
-	if key == "" {
-		return 0, 0, false
-	}
-	regionName := regionNames[region]
-	q := fmt.Sprintf("Россия, %s, %s", regionName, name)
-	u := "https://geocode-maps.yandex.ru/1.x/?format=json&results=1&apikey=" + url.QueryEscape(key) + "&geocode=" + url.QueryEscape(q)
-	client := &http.Client{Timeout: 10 * time.Second}
-	slog.Default().Debug("geocode yandex fallback", "q", q, "region", region)
-	resp, err := client.Get(u)
-	if err != nil {
-		return 0, 0, false
-	}
-	defer resp.Body.Close()
-	var body struct {
-		Response struct {
-			GeoObjectCollection struct {
-				FeatureMember []struct {
-					GeoObject struct {
-						Point struct {
-							Pos string `json:"pos"`
-						} `json:"Point"`
-					} `json:"GeoObject"`
-				} `json:"featureMember"`
-			} `json:"GeoObjectCollection"`
-		} `json:"response"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return 0, 0, false
-	}
-	if len(body.Response.GeoObjectCollection.FeatureMember) == 0 {
-		return 0, 0, false
-	}
-	pos := body.Response.GeoObjectCollection.FeatureMember[0].GeoObject.Point.Pos
-	parts := strings.Split(pos, " ")
-	if len(parts) != 2 {
-		return 0, 0, false
-	}
-	var lon, lat float64
-	fmt.Sscan(parts[0], &lon)
-	fmt.Sscan(parts[1], &lat)
-	if lat == 0 && lon == 0 {
-		return 0, 0, false
-	}
-	return lat, lon, true
 }

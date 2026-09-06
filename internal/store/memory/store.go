@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,50 +43,53 @@ type PlaceRow = store.PlaceRow
 type TerminalRow = store.TerminalRow
 
 type MemoryStore struct {
-	mu           sync.RWMutex
-	cities       map[int64]CityRow
-	stations     map[int64]StationRow
-	stops        map[int64]StopRow
-	stationCodes []StationCodeRow
-	carriers     map[int64]CarrierRow
-	routes       map[int64]RouteRow
-	trips        map[int64]TripRow
-	frequencies  []FrequencyRow
-	stopTimes    []StopTimeRow
-	transfers    []TransferRow
-	quality      []QualityRow
-	imports      map[string]time.Time
-	users        map[int64]UserRow
-	usersByEmail map[string]int64
-	apiKeys      map[int64]ApiKeyRow
-	apiKeysByKey map[string]int64
-	quotas       map[string]store.QuotaRow
-	apiCalls     []store.ApiCallRow
-	jobs         map[int64]store.JobRow
-	auditLogs    []store.AuditLogRow
-	terminals    map[int64]TerminalRow
+	mu            sync.RWMutex
+	cities        map[int64]CityRow
+	stations      map[int64]StationRow
+	stops         map[int64]StopRow
+	stationCodes  []StationCodeRow
+	carriers      map[int64]CarrierRow
+	routes        map[int64]RouteRow
+	trips         map[int64]TripRow
+	frequencies   []FrequencyRow
+	stopTimes     []StopTimeRow
+	transfers     []TransferRow
+	quality       []QualityRow
+	imports       map[string]time.Time
+	users         map[int64]UserRow
+	usersByEmail  map[string]int64
+	apiKeys       map[int64]ApiKeyRow
+	apiKeysByKey  map[string]int64
+	quotas        map[string]store.QuotaRow
+	apiCalls      []store.ApiCallRow
+	jobs          map[int64]store.JobRow
+	auditLogs     []store.AuditLogRow
+	terminals     map[int64]TerminalRow
 	terminalNames map[int64]map[string]string
-	nextID       int64
+	terminalTags  map[int64]map[string]string
+	reviewQueue   []store.ReviewQueueRow
+	nextID        int64
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		cities:       make(map[int64]CityRow),
-		stations:     make(map[int64]StationRow),
-		stops:        make(map[int64]StopRow),
-		carriers:     make(map[int64]CarrierRow),
-		routes:       make(map[int64]RouteRow),
-		trips:        make(map[int64]TripRow),
-		imports:      make(map[string]time.Time),
-		users:        make(map[int64]UserRow),
-		usersByEmail: make(map[string]int64),
-		apiKeys:      make(map[int64]ApiKeyRow),
-		apiKeysByKey: make(map[string]int64),
-		quotas:       make(map[string]store.QuotaRow),
-		jobs:         make(map[int64]store.JobRow),
-		terminals:    make(map[int64]TerminalRow),
+		cities:        make(map[int64]CityRow),
+		stations:      make(map[int64]StationRow),
+		stops:         make(map[int64]StopRow),
+		carriers:      make(map[int64]CarrierRow),
+		routes:        make(map[int64]RouteRow),
+		trips:         make(map[int64]TripRow),
+		imports:       make(map[string]time.Time),
+		users:         make(map[int64]UserRow),
+		usersByEmail:  make(map[string]int64),
+		apiKeys:       make(map[int64]ApiKeyRow),
+		apiKeysByKey:  make(map[string]int64),
+		quotas:        make(map[string]store.QuotaRow),
+		jobs:          make(map[int64]store.JobRow),
+		terminals:     make(map[int64]TerminalRow),
 		terminalNames: make(map[int64]map[string]string),
-		nextID:       1,
+		terminalTags:  make(map[int64]map[string]string),
+		nextID:        1,
 	}
 }
 
@@ -384,23 +388,74 @@ func (m *MemoryStore) ListImportLogs(ctx context.Context, limit int) ([]store.Im
 }
 
 func (m *MemoryStore) ListTerminals(ctx context.Context, limit, offset int, sort string) ([]map[string]any, int, error) {
+	return m.ListTerminalsFiltered(ctx, limit, offset, sort, "asc", "")
+}
+
+func (m *MemoryStore) ListTerminalsFiltered(ctx context.Context, limit, offset int, sort, order, q string) ([]map[string]any, int, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	total := len(m.terminals)
-	out := make([]map[string]any, 0, total)
+	q = strings.TrimSpace(strings.ToLower(q))
+	filtered := make([]map[string]any, 0)
 	for id, tr := range m.terminals {
 		name := ""
 		if m.terminalNames[id] != nil {
 			name = m.terminalNames[id]["ru"]
+			if name == "" {
+				for _, v := range m.terminalNames[id] {
+					name = v
+					break
+				}
+			}
 		}
-		out = append(out, map[string]any{"id": id, "name": name, "lat": tr.Lat, "lon": tr.Lon, "is_locked": tr.IsLocked, "place_id": tr.PlaceID})
+		if q != "" {
+			matched := strings.Contains(strings.ToLower(name), q)
+			if !matched {
+				for _, v := range m.terminalNames[id] {
+					if strings.Contains(strings.ToLower(v), q) {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					continue
+				}
+			}
+		}
+		filtered = append(filtered, map[string]any{"id": id, "name": name, "lat": tr.Lat, "lon": tr.Lon, "is_locked": tr.IsLocked, "place_id": tr.PlaceID})
 	}
+	total := len(filtered)
+	out := filtered
+	dirDesc := strings.ToLower(order) == "desc"
 	if sort == "name" {
-		sortSlice(out, func(a, b map[string]any) bool { return fmt.Sprint(a["name"]) < fmt.Sprint(b["name"]) })
+		sortSlice(out, func(a, b map[string]any) bool {
+			av := fmt.Sprint(a["name"])
+			bv := fmt.Sprint(b["name"])
+			if dirDesc {
+				return av > bv
+			}
+			return av < bv
+		})
 	} else if sort == "is_locked" {
-		sortSlice(out, func(a, b map[string]any) bool { return fmt.Sprint(a["is_locked"]) > fmt.Sprint(b["is_locked"]) })
+		sortSlice(out, func(a, b map[string]any) bool {
+			av := a["is_locked"].(bool)
+			bv := b["is_locked"].(bool)
+			if av == bv {
+				return a["id"].(int64) < b["id"].(int64)
+			}
+			if dirDesc {
+				return !av && bv
+			}
+			return av && !bv
+		})
 	} else {
-		sortSlice(out, func(a, b map[string]any) bool { return a["id"].(int64) < b["id"].(int64) })
+		sortSlice(out, func(a, b map[string]any) bool {
+			av := a["id"].(int64)
+			bv := b["id"].(int64)
+			if dirDesc {
+				return av > bv
+			}
+			return av < bv
+		})
 	}
 	if offset >= len(out) {
 		return []map[string]any{}, total, nil
@@ -721,9 +776,85 @@ func (m *MemoryStore) UpsertTerminal(ctx context.Context, r TerminalRow, names m
 	}
 	return r.ID, nil
 }
+func (m *MemoryStore) GetTerminal(ctx context.Context, id int64) (map[string]any, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	tr, ok := m.terminals[id]
+	if !ok {
+		return nil, fmt.Errorf("terminal %d not found", id)
+	}
+	name := ""
+	if m.terminalNames[id] != nil {
+		name = m.terminalNames[id]["ru"]
+		if name == "" {
+			for _, v := range m.terminalNames[id] {
+				name = v
+				break
+			}
+		}
+	}
+	return map[string]any{"id": id, "name": name, "lat": tr.Lat, "lon": tr.Lon, "is_locked": tr.IsLocked, "place_id": tr.PlaceID}, nil
+}
+func (m *MemoryStore) GetTerminalTags(ctx context.Context, id int64) (map[string]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := map[string]string{}
+	for k, v := range m.terminalTags[id] {
+		out[k] = v
+	}
+	return out, nil
+}
+func (m *MemoryStore) SetTerminalTag(ctx context.Context, id int64, key, value string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.terminals[id]; !ok {
+		return fmt.Errorf("terminal %d not found", id)
+	}
+	if m.terminalTags[id] == nil {
+		m.terminalTags[id] = map[string]string{}
+	}
+	if value == "" {
+		delete(m.terminalTags[id], key)
+		return nil
+	}
+	m.terminalTags[id][key] = value
+	return nil
+}
+func (m *MemoryStore) DeleteReviewQueue(ctx context.Context, entityType string, entityID int64, reason string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	kept := m.reviewQueue[:0]
+	for _, r := range m.reviewQueue {
+		if r.EntityType == entityType && r.EntityID == entityID && (reason == "" || r.Reason == reason) {
+			continue
+		}
+		kept = append(kept, r)
+	}
+	m.reviewQueue = kept
+	return nil
+}
 func (m *MemoryStore) SaveProvenance(ctx context.Context, p model.Provenance) error { return nil }
 func (m *MemoryStore) SaveReviewQueue(ctx context.Context, e model.ReviewQueueEntry) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i, r := range m.reviewQueue {
+		if r.EntityType == e.EntityType && r.EntityID == e.EntityID && r.Reason == e.Reason {
+			m.reviewQueue[i].Score = e.Score
+			return nil
+		}
+	}
+	m.reviewQueue = append(m.reviewQueue, store.ReviewQueueRow{EntityType: e.EntityType, EntityID: e.EntityID, Reason: e.Reason, Score: e.Score, CreatedAt: time.Now().Unix()})
 	return nil
+}
+func (m *MemoryStore) ListReviewQueue(ctx context.Context, limit int) ([]store.ReviewQueueRow, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if limit <= 0 || limit > len(m.reviewQueue) {
+		limit = len(m.reviewQueue)
+	}
+	out := make([]store.ReviewQueueRow, limit)
+	copy(out, m.reviewQueue[:limit])
+	return out, nil
 }
 func (m *MemoryStore) GetPlaceCity(ctx context.Context, placeID int64) (int64, string, error) {
 	return placeID, "", nil

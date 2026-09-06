@@ -16,6 +16,7 @@ import (
 
 	"travelmcp/internal/adapters/mintrans"
 	"travelmcp/internal/config"
+	"travelmcp/internal/geo"
 	"travelmcp/internal/geocoder"
 	"travelmcp/internal/jobs"
 	"travelmcp/internal/logger"
@@ -52,11 +53,25 @@ func main() {
 	httpLogger := factory.For("http")
 	httpxLogger := factory.For("httpx")
 	httpxClient := httpx.New(httpxLogger, "geocoder")
+	var geoResolver *geo.GeoResolver
 	if g, err := geocoder.New(*cfg, httpxClient); err != nil {
 		logger.Warn("geocoder init", "error", err)
 	} else {
+		enabled := true
+		if cfg.Geocode.Enabled != nil {
+			enabled = *cfg.Geocode.Enabled
+		}
+		if !enabled {
+			logger.Info("geocode disabled by config")
+		} else {
+			maxCalls := cfg.Geocode.MaxCalls
+			if maxCalls <= 0 {
+				maxCalls = 500
+			}
+			geoResolver = geo.NewGeoResolver(g, cfg.Geocoder.Limit, cfg.Verification.NameSimilarity, maxCalls)
+			logger.Info("geocoder ready", "attempts", cfg.Geocoder.Attempts, "limit", cfg.Geocoder.Limit, "name_similarity", cfg.Verification.NameSimilarity, "max_calls", maxCalls, "preferred", cfg.Geocoder.Kind, "registered", geocoder.RegisteredKinds())
+		}
 		_ = g
-		logger.Info("geocoder ready", "attempts", cfg.Geocoder.Attempts, "preferred", cfg.Geocoder.Kind, "registered", geocoder.RegisteredKinds())
 	}
 
 	metrics := telemetry.New()
@@ -98,8 +113,14 @@ func main() {
 					go func() {
 						is := time.Now()
 						logger.Info("import started (async)", "provider", id, "path", cfg.Providers.Intercity.ReestrPath)
-						if err := mintrans.ImportIntercity(context.Background(), st, cfg.Providers.Intercity.ReestrPath, logger); err != nil {
-							logger.Warn("import failed", "provider", id, "error", err, "elapsed_ms", time.Since(is).Milliseconds())
+						var impErr error
+						if geoResolver != nil {
+							impErr = mintrans.ImportIntercityWithResolver(context.Background(), st, cfg.Providers.Intercity.ReestrPath, logger, geoResolver)
+						} else {
+							impErr = mintrans.ImportIntercity(context.Background(), st, cfg.Providers.Intercity.ReestrPath, logger)
+						}
+						if impErr != nil {
+							logger.Warn("import failed", "provider", id, "error", impErr, "elapsed_ms", time.Since(is).Milliseconds())
 						} else {
 							logger.Info("import completed", "provider", id, "path", cfg.Providers.Intercity.ReestrPath, "elapsed_ms", time.Since(is).Milliseconds())
 						}
@@ -113,7 +134,7 @@ func main() {
 	if st != nil {
 		go func() {
 			workerLogger := factory.For("jobs")
-			w := newJobsWorker(st, workerLogger)
+			w := newJobsWorker(st, workerLogger, geoResolver, cfg.Providers.Intercity.ReestrPath, cfg)
 			workerLogger.Info("jobs worker started")
 			w.Run(context.Background(), 5*time.Second)
 		}()
@@ -182,20 +203,14 @@ func parseDuration(s string, def time.Duration) time.Duration {
 	return def
 }
 
-// deprecated: use logger.NewFactory
-func newLogger(level, format string, addSource bool) *slog.Logger {
-	return logger.NewFactory(config.Log{Level: level, Format: format, AddSource: addSource}).For("main")
-}
-
-func zipOpen(f *os.File, size int64) (*zip.Reader, error) { return zip.NewReader(f, size) }
-
-func newJobsWorker(st store.Store, l *slog.Logger) *jobs.Worker {
+func newJobsWorker(st store.Store, l *slog.Logger, geoResolver *geo.GeoResolver, reestrPath string, cfg *config.Config) *jobs.Worker {
 	w := jobs.NewWorker(st, l)
 	w.Register("import_gtfs", func(ctx context.Context, job store.JobRow) error {
 		l.Info("handling import_gtfs", "id", job.ID, "payload", job.Payload)
 		var p map[string]any
 		_ = json.Unmarshal([]byte(job.Payload), &p)
 		path, _ := p["path"].(string)
+		tmpDir, _ := p["tmp_dir"].(string)
 		if path == "" {
 			l.Warn("gtfs import: no path, nothing to do (upload file first)")
 			return nil
@@ -217,11 +232,66 @@ func newJobsWorker(st store.Store, l *slog.Logger) *jobs.Worker {
 		for _, zf := range zr.File {
 			l.Debug("gtfs entry", "name", zf.Name, "size", zf.UncompressedSize64)
 		}
+		if tmpDir != "" {
+			unpacked := tmpDir + "/unpacked"
+			_ = os.MkdirAll(unpacked, 0755)
+			for _, zf := range zr.File {
+				if zf.FileInfo().IsDir() {
+					continue
+				}
+				clean := zf.Name
+				if clean == "" || strings.Contains(clean, "..") {
+					continue
+				}
+				dest := unpacked + "/" + clean
+				if !strings.HasPrefix(dest, unpacked) {
+					continue
+				}
+				_ = os.MkdirAll(dest[:strings.LastIndex(dest, "/")+1], 0755)
+				rc, err := zf.Open()
+				if err != nil {
+					continue
+				}
+				out, err := os.Create(dest)
+				if err != nil {
+					rc.Close()
+					continue
+				}
+				_, _ = out.ReadFrom(rc)
+				_ = out.Close()
+				_ = rc.Close()
+			}
+			l.Info("gtfs unpacked", "tmp_dir", tmpDir, "unpacked", unpacked)
+		}
 		l.Info("gtfs import done (MVP: validated only, canonical import via AdaptedRecord в фазе 6)")
+		if tmpDir != "" {
+			if err := os.RemoveAll(tmpDir); err != nil {
+				l.Warn("gtfs tmp cleanup failed", "tmp_dir", tmpDir, "err", err)
+			} else {
+				l.Info("gtfs tmp cleaned", "tmp_dir", tmpDir)
+			}
+		}
 		return nil
 	})
 	w.Register("sync_mintrans", func(ctx context.Context, job store.JobRow) error {
 		l.Info("handling sync_mintrans", "id", job.ID)
+		if reestrPath == "" && cfg != nil {
+			reestrPath = cfg.Providers.Intercity.ReestrPath
+		}
+		if reestrPath == "" {
+			reestrPath = "data/reestr/regions.json"
+		}
+		var err error
+		if geoResolver != nil {
+			err = mintrans.ImportIntercityWithResolver(ctx, st, reestrPath, l, geoResolver)
+		} else {
+			err = mintrans.ImportIntercity(ctx, st, reestrPath, l)
+		}
+		if err != nil {
+			l.Error("sync_mintrans failed", "err", err)
+			return err
+		}
+		l.Info("sync_mintrans done")
 		return nil
 	})
 	w.Register("sync_rail", func(ctx context.Context, job store.JobRow) error {

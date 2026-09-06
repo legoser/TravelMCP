@@ -36,6 +36,7 @@ providers:
   #   scripts/extract-minstran.py с --osm и не хранится в git)
   enabled: [
     intercity
+    gtfs
   ]
   intercity:
     # путь к JSON-датасету реестра (см. scripts/extract-minstran.py)

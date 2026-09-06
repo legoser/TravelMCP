@@ -99,7 +99,6 @@ queue: { kind: "memory", url: "" }              # memory|nats
 ## Почему `reestr_path` в конфиге
 
 `providers.intercity.reestr_path: "data/reestr/regions.json"` — путь к датасету Минтранса, собранному `scripts/extract-minstran.py` (XLSX → JSON + `--osm` геокодинг). Файл не коммитится (`data/` в `.gitignore`), путь меняется между контурами:
-- `config.test.yaml: "testdata/reestr/mini.json"` — мини-фикстура для тестов,
 - `config.dev.yaml: "data/reestr/regions.json"` — локальный полный дамп,
 - `config.prod.yaml` — тот же путь, но dataset кладётся волюмом/секретом.
 `PROVIDERS_ENABLED=intercity` без пути → `intercity.Health() Up:false`. Для смены источника (`gtfs`) добавляется `providers.gtfs.path` — та же точка.

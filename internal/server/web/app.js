@@ -106,30 +106,100 @@ async function enqueueGTFS(input){
   }
   try{const j=await api('/api/v1/import/gtfs',{method:'POST',body:'{}'});toast('gtfs job '+j.id+' (без файла — pending)');loadJobs()}catch(e){toast(e.message,true)}
 }
-async function loadReview(){try{const r=await api('/api/v1/review');const tb=$('reviewBody');tb.innerHTML='';(r||[]).forEach(x=>{const tr=document.createElement('tr');tr.innerHTML='<td>'+x.entity_type+'</td><td>'+x.entity_id+'</td><td>'+x.reason+'</td><td>'+(x.score||'')+'</td><td>'+(x.created_at||'')+'</td>';tb.appendChild(tr)});if((r||[]).length===0) tb.innerHTML='<tr><td colspan="5" class="muted">очередь пуста</td></tr>'}catch(e){$('reviewBody').innerHTML='<tr><td colspan="5" class="muted">'+e.message+'</td></tr>'}}
-async function exportReview(){window.open('/api/v1/review/export.csv','_blank')}
-let termPage=1, termLimit=20;
-async function loadTerminals(){
-  const sort=$('termSort')?$('termSort').value:'id';
-  const offset=(termPage-1)*termLimit;
+async function loadReview(){
   try{
-    const data=await api('/api/v1/admin/terminals?limit='+termLimit+'&offset='+offset+'&sort='+sort);
+    const r=await api('/api/v1/review');const tb=$('reviewBody');tb.innerHTML='';
+    (r||[]).forEach(x=>{
+      const tr=document.createElement('tr');
+      const t=x.terminal||{};
+      const where=t.missing?'<span class="muted">удалён из БД</span>':((t.name||'—')+'<br><span class="muted">'+(t.settlement||'НП?')+' • '+(t.lat||'')+','+(t.lon||'')+(t.is_locked?' • locked':'')+'</span>');
+      const dups=(x.duplicates||[]).map(d=>'<div>'+d.id+': '+(d.name||'—')+' ('+(d.similarity||'')+')</div>').join('')||'<span class="muted">—</span>';
+      const key='\''+x.entity_type+'\','+x.entity_id+',\''+x.reason+'\'';
+      tr.innerHTML='<td>'+x.entity_type+'</td><td>'+x.entity_id+'</td><td style="max-width:260px">'+where+'</td><td>'+x.reason+'<br><span class="muted">'+(x.score||'')+'</span></td><td>'+(x.score||'')+'</td><td style="max-width:220px">'+dups+'</td><td><div class="row" style="gap:4px"><button class="secondary" onclick="openReviewTerminal('+x.entity_id+')">→</button><button class="ok" onclick="resolveReview('+key+',\'approve\')">✓</button><button class="danger" onclick="resolveReview('+key+',\'dismiss\')">✕</button></div></td>';
+      tb.appendChild(tr);
+    });
+    if((r||[]).length===0) tb.innerHTML='<tr><td colspan="7" class="muted">очередь пуста</td></tr>';
+  }catch(e){$('reviewBody').innerHTML='<tr><td colspan="7" class="muted">'+e.message+'</td></tr>'}
+}
+async function resolveReview(etype,eid,reason,action){
+  if(action==='dismiss' && !confirm('Снять с ревью '+etype+':'+eid+' ('+reason+')?')) return;
+  try{await api('/api/v1/review/resolve',{method:'POST',body:JSON.stringify({entity_type:etype,entity_id:eid,reason,action})});toast(action==='approve'?'Подтверждено (locked)':'Снято с ревью');loadReview()}catch(e){toast(e.message,true)}
+}
+function openReviewTerminal(id){showTab('terminals');const s=$('termSearch');if(s){s.value='';}termPage=1;loadTerminals();$('termId').value=id;toast('Терминал '+id+' — подставлен в форму ниже')}
+async function exportReview(){window.open('/api/v1/review/export.csv','_blank')}
+let termPage=1, termLimit=20, termSort='id', termOrder='asc';
+function updateSortIndicators(){
+  ['id','name','is_locked'].forEach(c=>{
+    const el=$('sort-'+c);
+    if(!el) return;
+    if(c===termSort) el.textContent= termOrder==='asc'?'↑':'↓';
+    else el.textContent='↕';
+  });
+}
+function sortTerm(col){
+  if(termSort===col){
+    if(termOrder==='asc') termOrder='desc';
+    else if(termOrder==='desc'){ termSort='id'; termOrder='asc'; }
+  } else {
+    termSort=col; termOrder='asc';
+  }
+  termPage=1;
+  updateSortIndicators();
+  loadTerminals();
+}
+function clearTermSearch(){
+  const el=$('termSearch');
+  if(el) el.value='';
+  termPage=1;
+  loadTerminals();
+}
+async function loadTerminals(){
+  const q=($('termSearch')?$('termSearch').value.trim():'');
+  const off=(termPage-1)*termLimit;
+  try{
+    const qs='limit='+termLimit+'&offset='+off+'&sort='+encodeURIComponent(termSort)+'&order='+encodeURIComponent(termOrder)+'&q='+encodeURIComponent(q);
+    const data=await api('/api/v1/admin/terminals?'+qs);
     const tb=$('terminalsBody'); tb.innerHTML='';
+    updateSortIndicators();
     (data.items||data||[]).forEach(t=>{
       const tr=document.createElement('tr');
       const locked=t.is_locked? '<span class="badge blocked">locked</span>':'<span class="muted">—</span>';
-      tr.innerHTML='<td>'+t.id+'</td><td>'+(t.name||t.osm_compatible_name||'—')+'</td><td>'+(t.lat||'')+','+(t.lon||'')+'</td><td>'+locked+'</td><td>'+(t.place_id||'—')+'</td><td><button class="secondary" onclick="fillTerm('+t.id+',\''+(t.name||'').replace(/\'/g,"\\'")+'\','+(t.lat||0)+','+(t.lon||0)+')">→</button></td>';
+      const stl=(t.settlement||'')+(t.settlement_manual?' ✓':'');
+      tr.innerHTML='<td>'+t.id+'</td><td>'+(t.name||t.osm_compatible_name||'—')+'</td><td>'+(stl||'<span class="muted">—</span>')+'</td><td>'+(t.lat||'')+','+(t.lon||'')+'</td><td>'+locked+'</td><td>'+(t.place_id||'—')+'</td><td><button class="secondary" onclick="fillTerm('+t.id+',\''+(t.name||'').replace(/\'/g,"\\'")+'\',\''+(t.settlement||'').replace(/\'/g,"\\'")+'\','+(t.lat||0)+','+(t.lon||0)+')">→</button></td>';
       tb.appendChild(tr);
     });
-    if((data.items||data||[]).length===0) tb.innerHTML='<tr><td colspan="6" class="muted">терминалов нет</td></tr>';
+    if((data.items||data||[]).length===0) tb.innerHTML='<tr><td colspan="7" class="muted">терминалов нет</td></tr>';
     $('termPage').textContent=termPage;
-  }catch(e){ $('terminalsBody').innerHTML='<tr><td colspan="6" class="muted">'+e.message+'</td></tr>'}
+  }catch(e){ $('terminalsBody').innerHTML='<tr><td colspan="7" class="muted">'+e.message+'</td></tr>'}
 }
-function fillTerm(id,name,lat,lon){$('termId').value=id; $('termName').value=name; $('termLat').value=lat; $('termLon').value=lon;}
+function fillTerm(id,name,settlement,lat,lon){$('termId').value=id; $('termName').value=name; $('termSettlement').value=settlement||''; $('termLat').value=lat; $('termLon').value=lon;}
 function prevTermPage(){ if(termPage>1){termPage--; loadTerminals();}}
 function nextTermPage(){ termPage++; loadTerminals();}
-async function updateTerminal(){const id=$('termId').value;if(!id) return toast('ID терминала?',true);const body={name:$('termName').value, lat: parseFloat($('termLat').value)||0, lon: parseFloat($('termLon').value)||0};try{const j=await api('/api/v1/admin/terminals/'+id,{method:'PUT',body:JSON.stringify(body)});$('termMsg').textContent='Сохранено is_locked=true, provenance.actor_id проставлен';toast('Терминал '+j.id+' сохранён'); loadTerminals()}catch(e){$('termMsg').textContent='Ошибка: '+e.message;toast(e.message,true)}}
-async function callExternal(){const body={provider:$('extProvider').value, query:$('extQuery').value, lat: $('extLat').value?parseFloat($('extLat').value):undefined, lon: $('extLon').value?parseFloat($('extLon').value):undefined};try{const j=await api('/api/v1/admin/external-call',{method:'POST',body:JSON.stringify(body)});$('extOut').textContent=JSON.stringify(j,null,2);toast('Внешний вызов OK, provenance записан')}catch(e){$('extOut').textContent='Ошибка: '+e.message;toast(e.message,true)}}
+async function updateTerminal(){const id=$('termId').value;if(!id) return toast('ID терминала?',true);const body={name:$('termName').value, settlement:$('termSettlement').value.trim(), lat: parseFloat($('termLat').value)||0, lon: parseFloat($('termLon').value)||0};try{const j=await api('/api/v1/admin/terminals/'+id,{method:'PUT',body:JSON.stringify(body)});$('termMsg').textContent='Сохранено is_locked=true, provenance.actor_id проставлен';toast('Терминал '+j.id+' сохранён'); loadTerminals()}catch(e){$('termMsg').textContent='Ошибка: '+e.message;toast(e.message,true)}}
+async function settlementFromApi(){const lat=parseFloat($('termLat').value), lon=parseFloat($('termLon').value);if(!lat||!lon) return toast('Нужны lat/lon',true);try{const j=await api('/api/v1/admin/external-call',{method:'POST',body:JSON.stringify({provider:'nominatim',lat,lon})});if(j.settlement){$('termSettlement').value=j.settlement;toast('НП из API: '+j.settlement)}else{$('termMsg').textContent='НП не определён: '+(j.address||j.error||'');toast('НП не определён',true)}}catch(e){$('termMsg').textContent='Ошибка: '+e.message;toast(e.message,true)}}
+async function callExternal(){
+  const body={provider:$('extProvider').value, query:$('extQuery').value, lat: $('extLat').value?parseFloat($('extLat').value):undefined, lon: $('extLon').value?parseFloat($('extLon').value):undefined};
+  const box=$('extCands'); box.innerHTML='';
+  try{
+    const j=await api('/api/v1/admin/external-call',{method:'POST',body:JSON.stringify(body)});
+    $('extOut').textContent=JSON.stringify(j,null,2);
+    let h='';
+    if(j.errors) h+='<div class="muted">Ошибки провайдеров: '+Object.entries(j.errors).map(([k,v])=>'<b>'+k+'</b>: '+v).join('; ')+'</div>';
+    if(j.candidates && j.candidates.length){
+      h+='<table style="margin-top:8px"><thead><tr><th>name</th><th>lat/lon</th><th>provider</th><th>sim</th><th></th></tr></thead><tbody>';
+      j.candidates.forEach((c,i)=>{h+='<tr'+(i===0&&j.validated?' style="background:#f0fdf4"':'')+'><td>'+c.name+'</td><td>'+c.lat+','+c.lon+'</td><td>'+c.provider+'</td><td>'+(c.similarity||0).toFixed?c.similarity.toFixed(2):c.similarity+'</td><td><button class="secondary" onclick="useExtCand('+c.lat+','+c.lon+')">взять</button></td></tr>'});
+      h+='</tbody></table>';
+      if(j.validated) toast('Найдено: '+j.name); else toast('Лучший кандидат ниже порога '+((j.debug||{}).threshold||''),true);
+    } else if(j.address){
+      h+='<div>Адрес: '+j.address+'</div>'+(j.settlement?'<div>НП: <b>'+j.settlement+'</b></div>':'');
+      toast('Reverse OK'+(j.settlement?': '+j.settlement:''));
+    } else {
+      toast(j.error||'Ничего не найдено',true);
+    }
+    box.innerHTML=h;
+  }catch(e){$('extOut').textContent='Ошибка: '+e.message;toast(e.message,true)}
+}
+function useExtCand(lat,lon){$('extLat').value=lat;$('extLon').value=lon;toast('Координаты подставлены: '+lat+','+lon)}
 async function loadQuotas(){try{const q=await api('/api/v1/quotas');const tb=$('quotasBody');tb.innerHTML='';(q||[]).forEach(r=>{const tr=document.createElement('tr');tr.innerHTML='<td>'+r.Provider+'</td><td>'+r.Day+'</td><td>'+r.Used+'/'+r.Limit+'</td><td>'+(r.ResetAt||'—')+'</td>';tb.appendChild(tr)});if((q||[]).length===0) tb.innerHTML='<tr><td colspan="4" class="muted">нет данных</td></tr>'}catch(e){$('quotasBody').innerHTML='<tr><td colspan="4" class="muted">'+e.message+'</td></tr>'}}
 async function loadAudit(){try{const a=await api('/api/v1/admin/audit');const tb=$('auditBody');tb.innerHTML='';(a||[]).forEach(r=>{const tr=document.createElement('tr');tr.innerHTML='<td>'+r.ID+'</td><td>'+(r.UserID||'—')+'</td><td>'+r.Action+'</td><td>'+(r.EntityType||'—')+':'+(r.EntityID||'—')+'</td><td>'+fmtTime(r.At)+'</td>';tb.appendChild(tr)});if((a||[]).length===0) tb.innerHTML='<tr><td colspan="5" class="muted">пусто</td></tr>'}catch(e){$('auditBody').innerHTML='<tr><td colspan="5" class="muted">'+e.message+'</td></tr>'}}
 (async()=>{await updateWho();loadUsers();loadDash();})();

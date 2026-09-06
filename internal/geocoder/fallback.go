@@ -84,6 +84,48 @@ func (f *fallback) Geocode(ctx context.Context, query string) (*Result, error) {
 	return nil, fmt.Errorf("геокодер: все провайдеры недоступны после %d попыток: %w", f.attempts, lastErr)
 }
 
+func (f *fallback) GeocodeCandidates(ctx context.Context, query string, limit int) ([]Candidate, error) {
+	if len(f.providers) == 0 {
+		return nil, errors.New("геокодер: нет доступных провайдеров")
+	}
+	var all []Candidate
+	seen := map[string]bool{}
+	for _, p := range f.providers {
+		var cands []Candidate
+		if m, ok := p.g.(MultiGeocoder); ok {
+			c, err := m.GeocodeCandidates(ctx, query, limit)
+			if err != nil {
+				continue
+			}
+			cands = c
+		} else {
+			r, err := p.g.Geocode(ctx, query)
+			if err != nil {
+				continue
+			}
+			cands = []Candidate{{Lat: r.Lat, Lon: r.Lon, Name: r.Name, Provider: p.kind}}
+		}
+		for _, c := range cands {
+			if c.Provider == "" {
+				c.Provider = p.kind
+			}
+			key := fmt.Sprintf("%.5f,%.5f", c.Lat, c.Lon)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			all = append(all, c)
+		}
+	}
+	if len(all) == 0 {
+		return nil, fmt.Errorf("geocode candidates: not found for %q", query)
+	}
+	if limit > 0 && len(all) > limit*len(f.providers) {
+		all = all[:limit*len(f.providers)]
+	}
+	return all, nil
+}
+
 func (f *fallback) Reverse(ctx context.Context, lat, lon float64) (string, error) {
 	if len(f.providers) == 0 {
 		return "", errors.New("геокодер: нет доступных провайдеров")

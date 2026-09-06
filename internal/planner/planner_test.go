@@ -156,7 +156,7 @@ func TestPlanNoRoute(t *testing.T) {
 
 func TestFindStopByPlacePrefersAutoStation(t *testing.T) {
 	day := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC)
-	net, err := providers.NewIntercity(filepath.Join("..", "..", "testdata", "reestr", "mini.json"), day).NetworkForDay(day)
+	net, err := providers.NewIntercity(filepath.Join("..", "..", "testdata", "test.json"), day).NetworkForDay(day)
 	if err != nil {
 		t.Fatalf("network: %v", err)
 	}
@@ -168,10 +168,6 @@ func TestFindStopByPlacePrefersAutoStation(t *testing.T) {
 		}
 	}
 
-	// В mini.json автовокзал и вокзал ЖД Новосибирска лежат в одной точке
-	// (55.0410573, 83.0273816): op:54:54099 «АВ «Новосибирский автовокзал-Главный»
-	// и op:54:54098 «ОП «Вокзал «Новосибирск-Главный». По месту «Новосибирск»
-	// должен выбираться автовокзал, а не вокзал ЖД.
 	nsk := model.Coords{Lat: 55.0410573, Lon: 83.0273816}
 	st, ok := findStopByPlace(net.Stops, "Новосибирск", nsk, 30, origin)
 	if !ok {
@@ -185,7 +181,7 @@ func TestFindStopByPlacePrefersAutoStation(t *testing.T) {
 func TestPlaceJourneyStartsAtAutoStation(t *testing.T) {
 	day := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC)
 	p := New(nil)
-	net, err := providers.NewIntercity(filepath.Join("..", "..", "testdata", "reestr", "mini.json"), day).NetworkForDay(day)
+	net, err := providers.NewIntercity(filepath.Join("..", "..", "testdata", "test.json"), day).NetworkForDay(day)
 	if err != nil {
 		t.Fatalf("network: %v", err)
 	}

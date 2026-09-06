@@ -3,8 +3,10 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +15,7 @@ import (
 	"net/http"
 	"net/mail"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +28,7 @@ import (
 
 	"travelmcp/internal/config"
 	gtfspkg "travelmcp/internal/export/gtfs"
+	geocoderpkg "travelmcp/internal/geocoder"
 	gtfsperregion "travelmcp/internal/gtfs"
 	logfactory "travelmcp/internal/logger"
 	"travelmcp/internal/mcp"
@@ -33,7 +37,12 @@ import (
 	"travelmcp/internal/planner"
 	"travelmcp/internal/providers"
 	"travelmcp/internal/store"
+	"travelmcp/internal/support/httpx"
+	"travelmcp/internal/support/namesim"
 	"travelmcp/internal/telemetry"
+
+	_ "travelmcp/internal/adapters/nominatim"
+	_ "travelmcp/internal/adapters/yandex"
 )
 
 //go:embed web
@@ -47,6 +56,49 @@ type Server struct {
 	started  time.Time
 	store    store.Store
 	mu       sync.RWMutex
+
+	geocoder     geocoderpkg.Geocoder
+	geocoderOnce sync.Once
+}
+
+func (s *Server) withSettlements(ctx context.Context, items []map[string]any) []map[string]any {
+	tagger, _ := s.store.(interface {
+		GetTerminalTags(ctx context.Context, id int64) (map[string]string, error)
+	})
+	for _, it := range items {
+		idf, _ := it["id"].(int64)
+		if tagger != nil && idf != 0 {
+			if tags, err := tagger.GetTerminalTags(ctx, idf); err == nil {
+				if st, ok := tags["settlement"]; ok && st != "" {
+					it["settlement"] = st
+					it["settlement_manual"] = true
+					continue
+				}
+			}
+		}
+		if name, _ := it["name"].(string); name != "" {
+			if st := namesim.ExtractSettlement(name); st != "" {
+				it["settlement"] = st
+			}
+		}
+	}
+	return items
+}
+
+func (s *Server) getGeocoder() geocoderpkg.Geocoder {
+	s.geocoderOnce.Do(func() {
+		if s.cfg == nil {
+			return
+		}
+		client := httpx.New(s.logger, "geocoder")
+		g, err := geocoderpkg.New(*s.cfg, client)
+		if err != nil {
+			s.logger.Warn("admin geocoder init failed", "error", err)
+			return
+		}
+		s.geocoder = g
+	})
+	return s.geocoder
 }
 
 func New(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Metrics, registry *providers.Registry) http.Handler {
@@ -102,6 +154,7 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 	mux.Handle("GET /api/v1/zones", s.auth(http.HandlerFunc(s.handleZones), "mcp:read"))
 	mux.Handle("GET /api/v1/gtfs", s.auth(http.HandlerFunc(s.handleGTFS), "mcp:read"))
 	mux.Handle("GET /api/v1/review", s.auth(http.HandlerFunc(s.handleReview), "mcp:read"))
+	mux.Handle("POST /api/v1/review/resolve", s.auth(http.HandlerFunc(s.handleReviewResolve), "admin"))
 	mux.Handle("GET /api/v1/review/export.csv", s.auth(http.HandlerFunc(s.handleReviewExport), "mcp:read"))
 	mux.Handle("GET /api/v1/jobs", s.auth(http.HandlerFunc(s.handleListJobs), "admin"))
 	mux.Handle("POST /api/v1/jobs", s.auth(http.HandlerFunc(s.handleEnqueueJob), "admin"))
@@ -341,7 +394,148 @@ func (s *Server) handleGTFS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleReview(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSONResponse(w, http.StatusOK, []any{})
+		return
+	}
+	if lister, ok := s.store.(interface {
+		ListReviewQueue(ctx context.Context, limit int) ([]store.ReviewQueueRow, error)
+	}); ok {
+		rows, _ := lister.ListReviewQueue(r.Context(), 50)
+		out := make([]map[string]any, 0, len(rows))
+		for _, rq := range rows {
+			item := map[string]any{"entity_type": rq.EntityType, "entity_id": rq.EntityID, "reason": rq.Reason, "score": rq.Score, "created_at": rq.CreatedAt}
+			if rq.EntityType == "terminal" {
+				if snap := s.terminalSnapshot(r.Context(), rq.EntityID); snap != nil {
+					item["terminal"] = snap
+					if st, _ := snap["settlement"].(string); st != "" {
+						item["duplicates"] = s.findDuplicates(r.Context(), rq.EntityID, snap)
+					}
+				}
+			}
+			out = append(out, item)
+		}
+		writeJSONResponse(w, http.StatusOK, out)
+		return
+	}
 	writeJSONResponse(w, http.StatusOK, []any{})
+}
+
+func (s *Server) terminalSnapshot(ctx context.Context, id int64) map[string]any {
+	getter, ok := s.store.(interface {
+		GetTerminal(ctx context.Context, id int64) (map[string]any, error)
+	})
+	if !ok {
+		return nil
+	}
+	t, err := getter.GetTerminal(ctx, id)
+	if err != nil {
+		return map[string]any{"id": id, "missing": true}
+	}
+	s.withSettlements(ctx, []map[string]any{t})
+	return t
+}
+
+func (s *Server) findDuplicates(ctx context.Context, selfID int64, snap map[string]any) []map[string]any {
+	name, _ := snap["name"].(string)
+	settlement, _ := snap["settlement"].(string)
+	if name == "" {
+		return nil
+	}
+	lister, ok := s.store.(interface {
+		ListTerminalsFiltered(ctx context.Context, limit, offset int, sort, order, q string) ([]map[string]any, int, error)
+	})
+	if !ok {
+		return nil
+	}
+	q := settlement
+	if q == "" {
+		if core := namesim.Core(name); core != "" {
+			parts := strings.Fields(core)
+			if len(parts) > 0 {
+				q = parts[len(parts)-1]
+			}
+		}
+	}
+	items, _, err := lister.ListTerminalsFiltered(ctx, 50, 0, "id", "asc", q)
+	if err != nil {
+		return nil
+	}
+	var out []map[string]any
+	for _, it := range items {
+		idf, _ := it["id"].(int64)
+		if idf == 0 || idf == selfID {
+			continue
+		}
+		iname, _ := it["name"].(string)
+		if sim := namesim.Similarity(name, iname); sim >= 0.6 {
+			it["similarity"] = sim
+			out = append(out, it)
+			if len(out) >= 3 {
+				break
+			}
+		}
+	}
+	return out
+}
+
+func (s *Server) handleReviewResolve(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeJSONResponse(w, http.StatusMethodNotAllowed, map[string]any{"error": "POST required"})
+		return
+	}
+	user, _ := r.Context().Value(ctxUserKey).(*store.UserRow)
+	actorID := func() *int64 {
+		if user != nil && user.ID != 0 {
+			return &user.ID
+		}
+		return nil
+	}()
+	var req struct {
+		EntityType string `json:"entity_type"`
+		EntityID   int64  `json:"entity_id"`
+		Reason     string `json:"reason"`
+		Action     string `json:"action"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONDecodeError(w, err, s.logger, r.URL.Path)
+		return
+	}
+	if req.Action != "approve" && req.Action != "dismiss" {
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "action must be approve or dismiss"})
+		return
+	}
+	deleter, ok := s.store.(interface {
+		DeleteReviewQueue(ctx context.Context, entityType string, entityID int64, reason string) error
+	})
+	if !ok {
+		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "review not supported"})
+		return
+	}
+	if req.Action == "approve" && req.EntityType == "terminal" {
+		if snap := s.terminalSnapshot(r.Context(), req.EntityID); snap != nil {
+			if _, missing := snap["missing"]; !missing {
+				lat, _ := snap["lat"].(float64)
+				lon, _ := snap["lon"].(float64)
+				tr := store.TerminalRow{ID: req.EntityID, Lat: lat, Lon: lon, IsLocked: true}
+				if _, err := s.store.UpsertTerminal(r.Context(), tr, nil, nil); err != nil {
+					writeJSONResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+					return
+				}
+				_ = s.store.SaveProvenance(r.Context(), model.Provenance{EntityType: "terminal", EntityID: req.EntityID, Source: "manual", Confidence: 1.0, ObservedAt: time.Now(), ActorID: actorID})
+			}
+		}
+	}
+	if err := deleter.DeleteReviewQueue(r.Context(), req.EntityType, req.EntityID, req.Reason); err != nil {
+		writeJSONResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	_ = s.store.WriteAuditLog(r.Context(), actorID, "review_"+req.Action, req.EntityType, &req.EntityID, fmt.Sprintf(`{"reason":%q}`, req.Reason))
+	writeJSONResponse(w, http.StatusOK, map[string]any{"status": "ok", "action": req.Action})
 }
 
 func (s *Server) handleReviewExport(w http.ResponseWriter, r *http.Request) {
@@ -418,13 +612,19 @@ func (s *Server) handleImportGTFS(w http.ResponseWriter, r *http.Request) {
 				if filename == "" {
 					filename = fmt.Sprintf("gtfs_%d.zip", time.Now().Unix())
 				}
-				savePath := fmt.Sprintf("data/gtfs/%s", filename)
-				_ = os.MkdirAll("data/gtfs", 0755)
+				baseTmp := "data/tmp/gtfs"
+				if s.cfg != nil && s.cfg.GTFS.TmpDir != "" {
+					baseTmp = s.cfg.GTFS.TmpDir
+				}
+				tmpDir := filepath.Join(baseTmp, uuid.NewString())
+				_ = os.MkdirAll(tmpDir, 0755)
+				savePath := filepath.Join(tmpDir, filepath.Base(filename))
 				_ = os.WriteFile(savePath, data, 0644)
-				payload := fmt.Sprintf(`{"path":%q,"size":%d,"filename":%q}`, savePath, len(data), filename)
+				sum := sha256.Sum256(data)
+				hash := hex.EncodeToString(sum[:])
+				payload := fmt.Sprintf(`{"path":%q,"tmp_dir":%q,"size":%d,"filename":%q,"hash":%q}`, savePath, tmpDir, len(data), filename, hash)
 				id, _ := s.store.EnqueueJob(r.Context(), store.JobRow{Type: "import_gtfs", Payload: payload})
-				h := fmt.Sprintf("%x", len(data))
-				writeJSONResponse(w, http.StatusCreated, map[string]any{"id": id, "type": "import_gtfs", "path": savePath, "hash": h})
+				writeJSONResponse(w, http.StatusCreated, map[string]any{"id": id, "type": "import_gtfs", "path": savePath, "tmp_dir": tmpDir, "hash": hash})
 				return
 			}
 		}
@@ -511,11 +711,23 @@ func (s *Server) handleAdminListTerminals(w http.ResponseWriter, r *http.Request
 	if sort != "name" && sort != "is_locked" {
 		sort = "id"
 	}
+	order := strings.ToLower(r.URL.Query().Get("order"))
+	if order != "asc" && order != "desc" {
+		order = "asc"
+	}
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if filtered, ok := s.store.(interface {
+		ListTerminalsFiltered(ctx context.Context, limit, offset int, sort, order, q string) ([]map[string]any, int, error)
+	}); ok {
+		items, total, _ := filtered.ListTerminalsFiltered(r.Context(), limit, offset, sort, order, q)
+		writeJSONResponse(w, http.StatusOK, map[string]any{"items": s.withSettlements(r.Context(), items), "total": total, "limit": limit, "offset": offset, "sort": sort, "order": order, "q": q})
+		return
+	}
 	if lister, ok := s.store.(interface {
 		ListTerminals(ctx context.Context, limit, offset int, sort string) ([]map[string]any, int, error)
 	}); ok {
 		items, total, _ := lister.ListTerminals(r.Context(), limit, offset, sort)
-		writeJSONResponse(w, http.StatusOK, map[string]any{"items": items, "total": total, "limit": limit, "offset": offset})
+		writeJSONResponse(w, http.StatusOK, map[string]any{"items": s.withSettlements(r.Context(), items), "total": total, "limit": limit, "offset": offset})
 		return
 	}
 	writeJSONResponse(w, http.StatusOK, map[string]any{"items": []any{}, "total": 0})
@@ -540,10 +752,11 @@ func (s *Server) handleAdminUpdateTerminal(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var req struct {
-		Name  string   `json:"name"`
-		Lat   float64  `json:"lat"`
-		Lon   float64  `json:"lon"`
-		Names map[string]string `json:"names"`
+		Name       string            `json:"name"`
+		Lat        float64           `json:"lat"`
+		Lon        float64           `json:"lon"`
+		Names      map[string]string `json:"names"`
+		Settlement string            `json:"settlement"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSONDecodeError(w, err, s.logger, r.URL.Path)
@@ -567,6 +780,13 @@ func (s *Server) handleAdminUpdateTerminal(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	_ = s.store.SaveProvenance(r.Context(), model.Provenance{EntityType: "terminal", EntityID: tid, Source: "manual", Confidence: 1.0, ObservedAt: time.Now(), ActorID: actorID})
+	if req.Settlement != "" {
+		if tagger, ok := s.store.(interface {
+			SetTerminalTag(ctx context.Context, id int64, key, value string) error
+		}); ok {
+			_ = tagger.SetTerminalTag(r.Context(), tid, "settlement", strings.TrimSpace(req.Settlement))
+		}
+	}
 	_ = s.store.SaveReviewQueue(r.Context(), model.ReviewQueueEntry{EntityType: "terminal", EntityID: tid, Reason: "conflicts_with_confirmed", Score: 1.0})
 	_ = s.store.WriteAuditLog(r.Context(), actorID, "update_terminal", "terminal", &tid, fmt.Sprintf(`{"name":%q,"lat":%f,"lon":%f}`, req.Name, req.Lat, req.Lon))
 	writeJSONResponse(w, http.StatusOK, map[string]any{"id": tid, "is_locked": true})
@@ -622,21 +842,91 @@ func (s *Server) handleAdminExternalCall(w http.ResponseWriter, r *http.Request)
 		}
 		s.logger.Debug("external-call coords validated", "lat", *req.Lat, "lon", *req.Lon)
 	}
-	if req.Query != "" {
-		s.logger.Debug("external-call query params vs resource", "query", req.Query, "provider", req.Provider, "note", "сверка имени/координат стопа с внешним ресурсом — lev/distance проверка §3.8")
-		if len(req.Query) < 3 {
-			s.logger.Debug("external-call low confidence", "reason", "query too short for lev check")
-		}
+	threshold := 0.8
+	if s.cfg != nil && s.cfg.Verification.NameSimilarity > 0 {
+		threshold = s.cfg.Verification.NameSimilarity
 	}
-	result := map[string]any{"provider": req.Provider, "query": req.Query, "validated": true, "actor_id": actorID, "debug": map[string]any{"quota_used": used, "request": req, "response": map[string]any{"lat": req.Lat, "lon": req.Lon, "match": "lev<0.15 distance<200m → confidence 0.6"}}}
-	if req.Lat != nil && req.Lon != nil {
+	g := s.getGeocoder()
+	if g == nil {
+		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "geocoder unavailable"})
+		return
+	}
+	sg, err := geocoderpkg.NewSingle(*s.cfg, httpx.New(s.logger, "geocoder-admin"), req.Provider)
+	if err != nil {
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error(), "provider": req.Provider, "available": geocoderpkg.RegisteredKinds()})
+		return
+	}
+	result := map[string]any{"provider": req.Provider, "query": req.Query, "actor_id": actorID, "debug": map[string]any{"quota_used": used, "threshold": threshold, "expanded_query": namesim.ExpandAbbreviations(req.Query)}}
+	confidence := 0.0
+	if req.Query != "" {
+		s.logger.Debug("external-call geocode", "query", req.Query, "provider", req.Provider)
+		var cands []geocoderpkg.Candidate
+		var gerr error
+		if m, ok := sg.(geocoderpkg.MultiGeocoder); ok {
+			cands, gerr = m.GeocodeCandidates(r.Context(), req.Query, 5)
+		} else if res, err := sg.Geocode(r.Context(), req.Query); err == nil && res != nil {
+			cands = []geocoderpkg.Candidate{{Lat: res.Lat, Lon: res.Lon, Name: res.Name, Provider: req.Provider}}
+		} else {
+			gerr = err
+		}
+		if gerr != nil {
+			result["errors"] = map[string]any{req.Provider: gerr.Error()}
+			s.logger.Debug("external-call geocode error", "provider", req.Provider, "error", gerr.Error())
+		}
+		list := make([]map[string]any, 0, len(cands))
+		best, bestSim := -1, 0.0
+		for i, c := range cands {
+			if c.Provider == "" {
+				c.Provider = req.Provider
+			}
+			sim := namesim.Similarity(req.Query, c.Name)
+			list = append(list, map[string]any{"name": c.Name, "lat": c.Lat, "lon": c.Lon, "provider": c.Provider, "similarity": sim})
+			if sim > bestSim {
+				bestSim, best = sim, i
+			}
+		}
+		result["candidates"] = list
+		result["found"] = len(list)
+		if best < 0 {
+			result["validated"] = false
+			result["error"] = "not found"
+		} else {
+			c := cands[best]
+			result["name"] = c.Name
+			result["lat"] = c.Lat
+			result["lon"] = c.Lon
+			result["similarity"] = bestSim
+			result["validated"] = bestSim >= threshold
+			confidence = bestSim
+		}
+	} else {
+		addr, err := sg.Reverse(r.Context(), *req.Lat, *req.Lon)
+		if err != nil {
+			result["errors"] = map[string]any{req.Provider: err.Error()}
+			writeJSONResponse(w, http.StatusBadGateway, map[string]any{"error": "reverse failed", "provider": req.Provider, "details": err.Error(), "debug": result["debug"]})
+			return
+		}
 		result["lat"] = *req.Lat
 		result["lon"] = *req.Lon
+		result["address"] = addr
+		settlement := namesim.ExtractSettlement(addr)
+		if sr, ok := sg.(geocoderpkg.SettlementReverser); ok {
+			if st, serr := sr.ReverseSettlement(r.Context(), *req.Lat, *req.Lon); serr == nil && st != "" {
+				settlement = st
+			} else if serr != nil {
+				result["errors"] = map[string]any{req.Provider + "/settlement": serr.Error()}
+			}
+		}
+		if settlement != "" {
+			result["settlement"] = settlement
+		}
+		result["validated"] = true
+		confidence = 0.8
 	}
-	s.logger.Info("external-call validated", "provider", req.Provider, "query", req.Query, "actor", userEmail(user))
+	s.logger.Info("external-call done", "provider", req.Provider, "query", req.Query, "validated", result["validated"], "actor", userEmail(user))
 	details, _ := json.Marshal(result)
 	_ = s.store.WriteAuditLog(r.Context(), actorID, "external_call", "terminal", nil, string(details))
-	_ = s.store.SaveProvenance(r.Context(), model.Provenance{EntityType: "terminal", EntityID: 0, Source: req.Provider, Confidence: 0.8, ObservedAt: time.Now(), ActorID: actorID, Raw: details})
+	_ = s.store.SaveProvenance(r.Context(), model.Provenance{EntityType: "terminal", EntityID: 0, Source: req.Provider, Confidence: confidence, ObservedAt: time.Now(), ActorID: actorID, Raw: details})
 	writeJSONResponse(w, http.StatusOK, result)
 }
 

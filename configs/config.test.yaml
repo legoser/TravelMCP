@@ -9,7 +9,7 @@ store:
 providers:
   enabled: ["synth"]
   intercity:
-    reestr_path: "testdata/reestr/mini.json"
+    reestr_path: "testdata/test.json"
 
 log:
   level: "warn"

@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -327,6 +328,57 @@ func (p *PostgresStore) UpsertTerminal(ctx context.Context, r TerminalRow, names
 	}
 	return id, nil
 }
+func (p *PostgresStore) GetTerminal(ctx context.Context, id int64) (map[string]any, error) {
+	if p.pool == nil {
+		return nil, errNotImplemented
+	}
+	var name string
+	var lat, lon float64
+	var locked bool
+	var placeID *int64
+	err := p.pool.QueryRow(ctx, `SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' WHERE t.id=$1`, id).Scan(&id, &name, &lat, &lon, &locked, &placeID)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"id": id, "name": name, "lat": lat, "lon": lon, "is_locked": locked, "place_id": placeID}, nil
+}
+func (p *PostgresStore) GetTerminalTags(ctx context.Context, id int64) (map[string]string, error) {
+	out := map[string]string{}
+	if p.pool == nil {
+		return out, nil
+	}
+	var raw []byte
+	if err := p.pool.QueryRow(ctx, `SELECT coalesce(tags,'{}') FROM terminal_tags WHERE terminal_id=$1`, id).Scan(&raw); err != nil {
+		return out, nil
+	}
+	_ = json.Unmarshal(raw, &out)
+	if out == nil {
+		out = map[string]string{}
+	}
+	return out, nil
+}
+func (p *PostgresStore) SetTerminalTag(ctx context.Context, id int64, key, value string) error {
+	if p.pool == nil {
+		return errNotImplemented
+	}
+	if value == "" {
+		_, err := p.pool.Exec(ctx, `UPDATE terminal_tags SET tags = tags - $2 WHERE terminal_id=$1`, id, key)
+		return err
+	}
+	_, err := p.pool.Exec(ctx, `INSERT INTO terminal_tags(terminal_id, tags) VALUES($1, jsonb_build_object($2::text,$3::text)) ON CONFLICT(terminal_id) DO UPDATE SET tags = terminal_tags.tags || EXCLUDED.tags`, id, key, value)
+	return err
+}
+func (p *PostgresStore) DeleteReviewQueue(ctx context.Context, entityType string, entityID int64, reason string) error {
+	if p.pool == nil {
+		return nil
+	}
+	if reason == "" {
+		_, err := p.pool.Exec(ctx, `DELETE FROM review_queue WHERE entity_type=$1 AND entity_id=$2`, entityType, entityID)
+		return err
+	}
+	_, err := p.pool.Exec(ctx, `DELETE FROM review_queue WHERE entity_type=$1 AND entity_id=$2 AND reason=$3`, entityType, entityID, reason)
+	return err
+}
 func (p *PostgresStore) SaveProvenance(ctx context.Context, pr model.Provenance) error {
 	if p.pool == nil {
 		return nil
@@ -345,20 +397,62 @@ func (p *PostgresStore) SaveReviewQueue(ctx context.Context, e model.ReviewQueue
 	_, err := p.pool.Exec(ctx, `INSERT INTO review_queue(entity_type, entity_id, reason, score) VALUES($1,$2,$3,$4) ON CONFLICT(entity_type, entity_id, reason) DO UPDATE SET score=EXCLUDED.score`, e.EntityType, e.EntityID, e.Reason, e.Score)
 	return err
 }
+func (p *PostgresStore) ListReviewQueue(ctx context.Context, limit int) ([]store.ReviewQueueRow, error) {
+	if p.pool == nil {
+		return []store.ReviewQueueRow{}, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := p.pool.Query(ctx, `SELECT entity_type, entity_id, reason, score, extract(epoch from created_at)::bigint FROM review_queue ORDER BY created_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.ReviewQueueRow
+	for rows.Next() {
+		var r store.ReviewQueueRow
+		if err := rows.Scan(&r.EntityType, &r.EntityID, &r.Reason, &r.Score, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
 
 func (p *PostgresStore) ListTerminals(ctx context.Context, limit, offset int, sort string) ([]map[string]any, int, error) {
+	return p.ListTerminalsFiltered(ctx, limit, offset, sort, "asc", "")
+}
+
+func (p *PostgresStore) ListTerminalsFiltered(ctx context.Context, limit, offset int, sort, order, q string) ([]map[string]any, int, error) {
 	if p.pool == nil {
 		return []map[string]any{}, 0, nil
 	}
-	var total int
-	_ = p.pool.QueryRow(ctx, `SELECT count(*) FROM terminals`).Scan(&total)
-	order := "t.id"
-	if sort == "name" {
-		order = "tn.name"
-	} else if sort == "is_locked" {
-		order = "t.is_locked DESC, t.id"
+	dir := "ASC"
+	if strings.ToLower(order) == "desc" {
+		dir = "DESC"
 	}
-	rows, err := p.pool.Query(ctx, fmt.Sprintf(`SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' ORDER BY %s LIMIT $1 OFFSET $2`, order), limit, offset)
+	orderClause := "t.id " + dir
+	if sort == "name" {
+		orderClause = "tn.name " + dir + ", t.id " + dir
+	} else if sort == "is_locked" {
+		orderClause = "t.is_locked " + dir + ", t.id " + dir
+	}
+	q = strings.TrimSpace(q)
+	hasQ := q != ""
+	var total int
+	if hasQ {
+		_ = p.pool.QueryRow(ctx, `SELECT count(*) FROM terminals t WHERE EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE '%' || $1 || '%')`, q).Scan(&total)
+	} else {
+		_ = p.pool.QueryRow(ctx, `SELECT count(*) FROM terminals`).Scan(&total)
+	}
+	var rows pgx.Rows
+	var err error
+	if hasQ {
+		rows, err = p.pool.Query(ctx, fmt.Sprintf(`SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' WHERE EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE '%%' || $3 || '%%') ORDER BY %s LIMIT $1 OFFSET $2`, orderClause), limit, offset, q)
+	} else {
+		rows, err = p.pool.Query(ctx, fmt.Sprintf(`SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' ORDER BY %s LIMIT $1 OFFSET $2`, orderClause), limit, offset)
+	}
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1056,17 +1150,53 @@ func (t *pgTxStore) SaveReviewQueue(ctx context.Context, e model.ReviewQueueEntr
 	_, err := t.tx.Exec(ctx, `INSERT INTO review_queue(entity_type, entity_id, reason, score) VALUES($1,$2,$3,$4) ON CONFLICT(entity_type, entity_id, reason) DO UPDATE SET score=EXCLUDED.score`, e.EntityType, e.EntityID, e.Reason, e.Score)
 	return err
 }
+func (t *pgTxStore) ListReviewQueue(ctx context.Context, limit int) ([]store.ReviewQueueRow, error) {
+	return t.parent.ListReviewQueue(ctx, limit)
+}
+func (t *pgTxStore) DeleteReviewQueue(ctx context.Context, entityType string, entityID int64, reason string) error {
+	return t.parent.DeleteReviewQueue(ctx, entityType, entityID, reason)
+}
+func (t *pgTxStore) GetTerminal(ctx context.Context, id int64) (map[string]any, error) {
+	return t.parent.GetTerminal(ctx, id)
+}
+func (t *pgTxStore) GetTerminalTags(ctx context.Context, id int64) (map[string]string, error) {
+	return t.parent.GetTerminalTags(ctx, id)
+}
+func (t *pgTxStore) SetTerminalTag(ctx context.Context, id int64, key, value string) error {
+	_, err := t.tx.Exec(ctx, `INSERT INTO terminal_tags(terminal_id, tags) VALUES($1, jsonb_build_object($2::text,$3::text)) ON CONFLICT(terminal_id) DO UPDATE SET tags = terminal_tags.tags || EXCLUDED.tags`, id, key, value)
+	return err
+}
 
 func (t *pgTxStore) ListTerminals(ctx context.Context, limit, offset int, sort string) ([]map[string]any, int, error) {
-	var total int
-	_ = t.tx.QueryRow(ctx, `SELECT count(*) FROM terminals`).Scan(&total)
-	order := "t.id"
-	if sort == "name" {
-		order = "tn.name"
-	} else if sort == "is_locked" {
-		order = "t.is_locked DESC, t.id"
+	return t.ListTerminalsFiltered(ctx, limit, offset, sort, "asc", "")
+}
+
+func (t *pgTxStore) ListTerminalsFiltered(ctx context.Context, limit, offset int, sort, order, q string) ([]map[string]any, int, error) {
+	dir := "ASC"
+	if strings.ToLower(order) == "desc" {
+		dir = "DESC"
 	}
-	rows, err := t.tx.Query(ctx, fmt.Sprintf(`SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' ORDER BY %s LIMIT $1 OFFSET $2`, order), limit, offset)
+	orderClause := "t.id " + dir
+	if sort == "name" {
+		orderClause = "tn.name " + dir + ", t.id " + dir
+	} else if sort == "is_locked" {
+		orderClause = "t.is_locked " + dir + ", t.id " + dir
+	}
+	q = strings.TrimSpace(q)
+	hasQ := q != ""
+	var total int
+	if hasQ {
+		_ = t.tx.QueryRow(ctx, `SELECT count(*) FROM terminals t WHERE EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE '%' || $1 || '%')`, q).Scan(&total)
+	} else {
+		_ = t.tx.QueryRow(ctx, `SELECT count(*) FROM terminals`).Scan(&total)
+	}
+	var rows pgx.Rows
+	var err error
+	if hasQ {
+		rows, err = t.tx.Query(ctx, fmt.Sprintf(`SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' WHERE EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE '%%' || $3 || '%%') ORDER BY %s LIMIT $1 OFFSET $2`, orderClause), limit, offset, q)
+	} else {
+		rows, err = t.tx.Query(ctx, fmt.Sprintf(`SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' ORDER BY %s LIMIT $1 OFFSET $2`, orderClause), limit, offset)
+	}
 	if err != nil {
 		return nil, 0, err
 	}

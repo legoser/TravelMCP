@@ -10,7 +10,7 @@ import (
 
 func TestIntercityReestr(t *testing.T) {
 	day := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC)
-	p := NewIntercity(filepath.Join("..", "..", "testdata", "reestr", "mini.json"), day)
+	p := NewIntercity(filepath.Join("..", "..", "testdata", "test.json"), day)
 	net, err := p.NetworkForDay(day)
 	if err != nil {
 		t.Fatalf("NetworkForDay: %v", err)
@@ -66,7 +66,7 @@ func TestIntercityReestr(t *testing.T) {
 func TestIntercityDifferentDay(t *testing.T) {
 	day1 := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC)
 	day2 := time.Date(2026, 5, 17, 0, 0, 0, 0, time.UTC)
-	p := NewIntercity(filepath.Join("..", "..", "testdata", "reestr", "mini.json"), day1)
+	p := NewIntercity(filepath.Join("..", "..", "testdata", "test.json"), day1)
 
 	net1, err := p.NetworkForDay(day1)
 	if err != nil {

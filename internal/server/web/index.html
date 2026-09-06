@@ -59,35 +59,36 @@
 <div id="tab-imports" class="card hidden">
 <div class="row" style="justify-content:space-between"><h2>Импорты и Jobs</h2><button class="secondary" onclick="loadImports()">↻ Обновить</button></div>
 <div class="row" style="margin-top:8px;gap:8px"><button onclick="enqueueMintrans()">Обновить автобусы (mintrans)</button><button onclick="enqueueRail()">Обновить ж/д (rail)</button><label class="secondary" style="cursor:pointer;padding:6px 10px;border:1px solid #ccc;border-radius:4px">Выбрать gtfs.zip <input type="file" id="gtfsFile" accept=".zip" style="display:none" onchange="enqueueGTFS(this)"></label><button class="secondary" onclick="document.getElementById('gtfsFile').click()">Upload gtfs.zip</button><button class="secondary" onclick="loadJobs()">Jobs</button><button class="secondary" onclick="loadLogs()">Logs</button></div>
-<div class="muted" style="font-size:11px;margin-top:4px">Выбранный zip загружается на сервер через <code>POST /api/v1/import/gtfs</code> multipart, сохраняется в <code>data/gtfs/</code> и ставится <code>jobs import_gtfs payload={\"path\":\"data/gtfs/&lt;имя&gt;\",\"hash\":...}</code> — воркер ищет по <code>payload.path</code>, а не в рандоме.</div>
+<div class="muted" style="font-size:11px;margin-top:4px">Выбранный zip загружается в <code>data/tmp/gtfs/&lt;uuid&gt;/&lt;имя&gt;</code> (уникальный каталог), распаковывается в <code>unpacked/</code>; успешно — каталог удаляется, при <code>dead</code> остаётся для дебага. <code>POST /api/v1/import/gtfs</code> → <code>jobs import_gtfs payload={\"path\":...,\"tmp_dir\":...,\"hash\":sha256}</code>.</div>
 <div style="overflow:auto;margin-top:10px"><h3 style="font-size:13px">Последние импорты</h3><table><thead><tr><th>provider</th><th>at</th><th>records</th><th>status</th><th>checksum</th></tr></thead><tbody id="importsBody"><tr><td colspan="5" class="muted">—</td></tr></tbody></table></div>
 <div style="overflow:auto;margin-top:10px"><h3 style="font-size:13px">Jobs (pending/running/retry)</h3><table><thead><tr><th>ID</th><th>type</th><th>region</th><th>state</th><th>attempts</th><th>next_run</th><th>error</th></tr></thead><tbody id="jobsBody"><tr><td colspan="7" class="muted">—</td></tr></tbody></table></div>
 <div style="overflow:auto;margin-top:10px"><h3 style="font-size:13px">Import logs (последние 50)</h3><pre id="logsOut" class="mono" style="max-height:240px;overflow:auto">—</pre></div>
 </div>
 
 <div id="tab-terminals" class="card hidden">
-<h2>Ручная правка терминалов (пагинация 20, сортировка)</h2>
+<h2>Ручная правка терминалов (пагинация 20, сортировка, поиск по имени)</h2>
 <div class="muted" style="margin-bottom:8px">Правка ставит <code>is_locked=true</code> + <code>provenance.actor_id</code> + <code>audit_log</code>. Авто-импорт далее не перезапишет (hysteresis → <code>review_queue</code>).</div>
-<div class="row" style="gap:8px"><button class="secondary" onclick="loadTerminals()">Загрузить 20</button><select id="termSort" style="width:140px"><option value="id">сортировка: id</option><option value="name">name</option><option value="is_locked">is_locked</option></select><span class="muted">стр. <span id="termPage">1</span></span><button class="secondary" onclick="prevTermPage()">‹</button><button class="secondary" onclick="nextTermPage()">›</button></div>
-<div style="overflow:auto;margin-top:8px"><table><thead><tr><th>ID</th><th>name ru</th><th>lat/lon</th><th>locked</th><th>place</th><th></th></tr></thead><tbody id="terminalsBody"><tr><td colspan="6" class="muted">— нажми Загрузить</td></tr></tbody></table></div>
-<div class="row" style="gap:8px;margin-top:12px"><input id="termId" placeholder="terminal ID" style="width:120px"><input id="termName" placeholder="Название ru" style="flex:1"><input id="termLat" placeholder="lat" style="width:100px"><input id="termLon" placeholder="lon" style="width:100px"><button class="ok" onclick="updateTerminal()">Сохранить</button></div>
+<div class="row" style="gap:8px;flex-wrap:wrap"><input id="termSearch" placeholder="Поиск по имени (ru/en) — Enter" style="flex:1;min-width:180px" onkeydown="if(event.key==='Enter'){termPage=1;loadTerminals()}" oninput="if(this.value==='')clearTermSearch()"><button class="secondary" onclick="termPage=1;loadTerminals()">Найти</button><button class="secondary" onclick="clearTermSearch()">✕</button><button class="secondary" onclick="loadTerminals()">Загрузить 20</button><span class="muted" style="margin-left:8px">стр. <span id="termPage">1</span></span><button class="secondary" onclick="prevTermPage()">‹</button><button class="secondary" onclick="nextTermPage()">›</button></div>
+<div style="overflow:auto;margin-top:8px"><table><thead><tr><th onclick="sortTerm('id')" style="cursor:pointer;user-select:none">ID <span id="sort-id">↕</span></th><th onclick="sortTerm('name')" style="cursor:pointer;user-select:none">name ru <span id="sort-name">↕</span></th><th>НП</th><th>lat/lon</th><th onclick="sortTerm('is_locked')" style="cursor:pointer;user-select:none">locked <span id="sort-is_locked">↕</span></th><th>place</th><th></th></tr></thead><tbody id="terminalsBody"><tr><td colspan="7" class="muted">— нажми Загрузить</td></tr></tbody></table></div>
+<div class="row" style="gap:8px;margin-top:12px"><input id="termId" placeholder="terminal ID" style="width:120px"><input id="termName" placeholder="Название ru" style="flex:1"><input id="termSettlement" placeholder="НП (нас. пункт)" style="width:160px"><input id="termLat" placeholder="lat" style="width:100px"><input id="termLon" placeholder="lon" style="width:100px"><button class="ok" onclick="updateTerminal()">Сохранить</button><button class="secondary" onclick="settlementFromApi()" title="Reverse-геокодинг координат → подставить НП">НП из API</button></div>
 <div id="termMsg" class="muted" style="margin-top:8px"></div>
 </div>
 
 <div id="tab-review" class="card hidden">
 <div class="row" style="justify-content:space-between"><h2>Review queue — зачем?</h2><div class="row"><button class="secondary" onclick="loadReview()">Обновить</button><button class="secondary" onclick="exportReview()">Экспорт CSV</button></div></div>
 <div class="muted" style="font-size:12px;margin-top:6px">Сюда попадают объекты с <code>confidence<0.6</code>, <code>missing_coords</code>, <code>duplicate_ambiguous</code>, <code>conflicts_with_confirmed</code>. Без ручной проверки они не попадут в канон/GTFS/маршрут — иначе «мусор» испортит <code>find_route</code>. Оператор правит в <b>Терминалы</b> → <code>is_locked</code> → объект выходит из очереди.</div>
-<div style="overflow:auto;margin-top:10px"><table><thead><tr><th>entity</th><th>id</th><th>reason</th><th>score</th><th>created</th></tr></thead><tbody id="reviewBody"><tr><td colspan="5" class="muted">—</td></tr></tbody></table></div>
+<div style="overflow:auto;margin-top:10px"><table><thead><tr><th>entity</th><th>id</th><th>название / где</th><th>reason</th><th>score</th><th>дубликаты</th><th>действия</th></tr></thead><tbody id="reviewBody"><tr><td colspan="7" class="muted">—</td></tr></tbody></table></div>
 </div>
 
 <div id="tab-external" class="card hidden">
 <h2>Вызвать внешний API</h2>
-<div class="muted">Проверка квоты <code>api_quotas</code> (429 + ротация B/C/D) → валидация → <code>Сохранить</code> пишет <code>provenance.actor_id</code> (не <code>source</code>).</div>
+<div class="muted">Реальный вызов геокодера (nominatim/yandex, top-5) → сверка имени (<code>similarity ≥ 0.8</code>) → <code>lat/lon/name</code> в ответе. Проверка квоты <code>api_quotas</code> → <code>provenance</code> + <code>audit_log</code>.</div>
 <div class="grid" style="margin-top:10px">
-<div><label class="muted">Provider</label><select id="extProvider" style="width:100%"><option value="yandex">yandex</option><option value="nominatim">nominatim</option><option value="motis">motis</option><option value="mintrans">mintrans</option></select></div>
+<div><label class="muted">Provider (реально опрашивается выбранный)</label><select id="extProvider" style="width:100%"><option value="nominatim">nominatim</option><option value="yandex">yandex (нужен ключ)</option></select></div>
 <div><label class="muted">Запрос (query)</label><input id="extQuery" style="width:100%" placeholder="Кемерово автовокзал"></div>
 </div>
 <div class="row" style="margin-top:10px;gap:8px"><input id="extLat" placeholder="lat (опц.)" style="width:120px"><input id="extLon" placeholder="lon (опц.)" style="width:120px"><button class="ok" onclick="callExternal()">Вызвать API → Валидация</button></div>
+<div id="extCands" style="margin-top:12px"></div>
 <pre id="extOut" class="mono" style="margin-top:12px">—</pre>
 </div>
 

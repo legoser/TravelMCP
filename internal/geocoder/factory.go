@@ -41,12 +41,25 @@ func New(cfg config.Config, client *httpx.Client) (Geocoder, error) {
 	return NewFallback(providers, attempts, cfg.Geocoder.Kind), nil
 }
 
-func RegisteredKinds() []string {
+func NewSingle(cfg config.Config, client *httpx.Client, kind string) (Geocoder, error) {
 	mu.RLock()
 	defer mu.RUnlock()
+	fn, ok := registry[kind]
+	if !ok {
+		return nil, fmt.Errorf("geocoder kind %q not registered (available: %v)", kind, registeredKindsLocked())
+	}
+	return fn(cfg, client), nil
+}
+
+func registeredKindsLocked() []string {
 	kinds := make([]string, 0, len(registry))
 	for k := range registry {
 		kinds = append(kinds, k)
 	}
 	return kinds
+}
+func RegisteredKinds() []string {
+	mu.RLock()
+	defer mu.RUnlock()
+	return registeredKindsLocked()
 }

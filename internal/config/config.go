@@ -51,7 +51,13 @@ type Intercity struct {
 }
 
 type GTFS struct {
-	Path string `yaml:"path"`
+	Path   string `yaml:"path"`
+	TmpDir string `yaml:"tmp_dir"`
+}
+
+type Geocode struct {
+	Enabled  *bool `yaml:"enabled"`
+	MaxCalls int   `yaml:"max_calls"`
 }
 
 type Cities struct {
@@ -90,6 +96,7 @@ type Geocoder struct {
 	Key      string `yaml:"key"`
 	ApiKey   string `yaml:"api_key"`
 	Attempts int    `yaml:"attempts"`
+	Limit    int    `yaml:"limit"`
 }
 
 func (g *Geocoder) UnmarshalYAML(node *yaml.Node) error {
@@ -101,6 +108,7 @@ func (g *Geocoder) UnmarshalYAML(node *yaml.Node) error {
 		Key      string `yaml:"key"`
 		ApiKey   string `yaml:"api_key"`
 		Attempts *int   `yaml:"attempts"`
+		Limit    *int   `yaml:"limit"`
 	}
 	if err := node.Decode(&tmp); err != nil {
 		return err
@@ -121,6 +129,9 @@ func (g *Geocoder) UnmarshalYAML(node *yaml.Node) error {
 	if tmp.Attempts != nil {
 		g.Attempts = *tmp.Attempts
 	}
+	if tmp.Limit != nil {
+		g.Limit = *tmp.Limit
+	}
 	return nil
 }
 
@@ -139,6 +150,7 @@ type Verification struct {
 	DistanceM           int                         `yaml:"distance_m"`
 	StrongDistanceM     int                         `yaml:"strong_distance_m"`
 	LevThreshold        float64                     `yaml:"lev_threshold"`
+	NameSimilarity      float64                     `yaml:"name_similarity"`
 	DensityThresholds   map[string]DensityThreshold `yaml:"density_thresholds"`
 }
 
@@ -174,6 +186,7 @@ type Config struct {
 	Cities        Cities        `yaml:"cities"`
 	Auth          Auth          `yaml:"auth"`
 	Geocoder      Geocoder      `yaml:"geocoder"`
+	Geocode       Geocode       `yaml:"geocode"`
 	Yandex        Yandex        `yaml:"yandex"`
 	Nominatim     Nominatim     `yaml:"nominatim"`
 	Motis         Motis         `yaml:"motis"`
@@ -183,6 +196,7 @@ type Config struct {
 	Verification  Verification  `yaml:"verification"`
 	Deduplication Deduplication `yaml:"deduplication"`
 	Pricing       Pricing       `yaml:"pricing"`
+	GTFS          GTFS          `yaml:"gtfs"`
 }
 
 func Defaults() *Config {
@@ -204,7 +218,8 @@ func Defaults() *Config {
 			},
 		},
 		Cities:    Cities{Path: "configs/cities.yaml"},
-		Geocoder:  Geocoder{Kind: "", URL: "", Key: "", Attempts: 3},
+		Geocoder:  Geocoder{Kind: "", URL: "", Key: "", Attempts: 3, Limit: 5},
+		Geocode:   Geocode{Enabled: boolPtr(true), MaxCalls: 0},
 		Yandex:    Yandex{GeocodeURL: "https://geocode-maps.yandex.ru/1.x", GeocodeKind: ""},
 		Nominatim: Nominatim{URL: "https://nominatim.openstreetmap.org"},
 		Motis:     Motis{URL: "http://192.168.57.14:8077"},
@@ -215,10 +230,12 @@ func Defaults() *Config {
 			DistanceM:           200,
 			StrongDistanceM:     100,
 			LevThreshold:        0.15,
+			NameSimilarity:      0.8,
 			DensityThresholds:   map[string]DensityThreshold{},
 		},
 		Deduplication: Deduplication{DistanceM: 200},
 		Pricing:       Pricing{DefaultCurrency: "RUB"},
+		GTFS:          GTFS{TmpDir: "data/tmp/gtfs"},
 	}
 }
 
@@ -296,8 +313,23 @@ func syncLegacy(cfg *Config) {
 	if cfg.Verification.LevThreshold == 0 {
 		cfg.Verification.LevThreshold = 0.15
 	}
+	if cfg.Verification.NameSimilarity == 0 {
+		cfg.Verification.NameSimilarity = 0.8
+	}
 	if cfg.Verification.DensityThresholds == nil {
 		cfg.Verification.DensityThresholds = map[string]DensityThreshold{}
+	}
+	if cfg.Geocoder.Limit <= 0 {
+		cfg.Geocoder.Limit = 5
+	}
+	if cfg.Geocoder.Limit > 10 {
+		cfg.Geocoder.Limit = 10
+	}
+	if cfg.Geocode.Enabled == nil {
+		cfg.Geocode.Enabled = boolPtr(true)
+	}
+	if cfg.GTFS.TmpDir == "" {
+		cfg.GTFS.TmpDir = "data/tmp/gtfs"
 	}
 	if cfg.Pricing.DefaultCurrency == "" {
 		cfg.Pricing.DefaultCurrency = "RUB"
@@ -427,6 +459,28 @@ func applyEnv(cfg *Config) {
 			cfg.Verification.LevThreshold = f
 		}
 	}
+	if v := os.Getenv("VERIFICATION_NAME_SIMILARITY"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			cfg.Verification.NameSimilarity = f
+		}
+	}
+	if v := os.Getenv("GEOCODER_LIMIT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.Geocoder.Limit = n
+		}
+	}
+	if v := os.Getenv("GEOCODE_ENABLED"); v != "" {
+		b := v == "1" || v == "true"
+		cfg.Geocode.Enabled = &b
+	}
+	if v := os.Getenv("GEOCODE_MAX_CALLS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			cfg.Geocode.MaxCalls = n
+		}
+	}
+	if v := os.Getenv("GTFS_TMP_DIR"); v != "" {
+		cfg.GTFS.TmpDir = v
+	}
 	if v := os.Getenv("PRICING_DEFAULT_CURRENCY"); v != "" {
 		cfg.Pricing.DefaultCurrency = v
 	}
@@ -534,6 +588,25 @@ func setByPath(cfg *Config, parts []string, v string) {
 				cfg.Geocoder.Attempts = n
 			}
 		}
+		if len(parts) == 2 && parts[1] == "limit" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				cfg.Geocoder.Limit = n
+			}
+		}
+	case "geocode":
+		if len(parts) == 2 && parts[1] == "enabled" {
+			b := v == "1" || v == "true"
+			cfg.Geocode.Enabled = &b
+		}
+		if len(parts) == 2 && parts[1] == "max_calls" {
+			if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+				cfg.Geocode.MaxCalls = n
+			}
+		}
+	case "gtfs":
+		if len(parts) == 2 && parts[1] == "tmp_dir" {
+			cfg.GTFS.TmpDir = v
+		}
 	case "yandex":
 		if len(parts) == 2 && parts[1] == "rasp_key" {
 			cfg.Yandex.RaspKey = v
@@ -580,12 +653,19 @@ func setByPath(cfg *Config, parts []string, v string) {
 				cfg.Verification.LevThreshold = f
 			}
 		}
+		if len(parts) == 2 && parts[1] == "name_similarity" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				cfg.Verification.NameSimilarity = f
+			}
+		}
 	case "pricing":
 		if len(parts) == 2 && parts[1] == "default_currency" {
 			cfg.Pricing.DefaultCurrency = v
 		}
 	}
 }
+
+func boolPtr(b bool) *bool { return &b }
 
 func splitCsv(v string) []string {
 	parts := strings.Split(v, ",")
