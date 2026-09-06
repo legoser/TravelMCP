@@ -177,16 +177,17 @@ type Pricing struct {
 }
 
 type Sync struct {
-	LogDir            string  `yaml:"log_dir"`
-	CoverageGate      float64 `yaml:"coverage_gate"`
-	SkeletonChunkSize int     `yaml:"skeleton_chunk_size"`
-	OsmPath           string  `yaml:"osm_path"`
-	YandexDumpPath    string  `yaml:"yandex_dump_path"`
-	SkeletonRegion    string  `yaml:"skeleton_region"`
-	Bbox              string  `yaml:"bbox"`
-	ReestrPath        string  `yaml:"reestr_path"`
-	LegacyThreshold   float64 `yaml:"legacy_threshold"`
-	CoverageSoftScore float64 `yaml:"coverage_soft_score"`
+	LogDir              string  `yaml:"log_dir"`
+	CoverageGate        float64 `yaml:"coverage_gate"`
+	SkeletonChunkSize   int     `yaml:"skeleton_chunk_size"`
+	OsmPath             string  `yaml:"osm_path"`
+	YandexDumpPath      string  `yaml:"yandex_dump_path"`
+	SkeletonRegion      string  `yaml:"skeleton_region"`
+	Bbox                string  `yaml:"bbox"`
+	ReestrPath          string  `yaml:"reestr_path"`
+	LegacyThreshold     float64 `yaml:"legacy_threshold"`
+	CoverageSoftScore   float64 `yaml:"coverage_soft_score"`
+	TripsChurnThreshold float64 `yaml:"trips_churn_threshold"`
 }
 
 type Config struct {
@@ -248,7 +249,7 @@ func Defaults() *Config {
 		Deduplication: Deduplication{DistanceM: 200},
 		Pricing:       Pricing{DefaultCurrency: "RUB"},
 		GTFS:          GTFS{TmpDir: "data/tmp/gtfs"},
-		Sync:          Sync{LogDir: "data/logs", CoverageGate: 0, SkeletonChunkSize: 100, OsmPath: "data/osm/stations.json", YandexDumpPath: "data/yandex/cache/global_stations_list.json", SkeletonRegion: "Кемеровская область - Кузбасс", Bbox: "53.5,84.0,57.0,88.5", LegacyThreshold: 0.6, CoverageSoftScore: 0.4},
+		Sync:          Sync{LogDir: "data/logs", CoverageGate: 0, SkeletonChunkSize: 100, OsmPath: "data/osm/stations.json", YandexDumpPath: "data/yandex/cache/global_stations_list.json", SkeletonRegion: "Кемеровская область - Кузбасс", Bbox: "53.5,84.0,57.0,88.5", LegacyThreshold: 0.6, CoverageSoftScore: 0.4, TripsChurnThreshold: 0.2},
 	}
 }
 
@@ -373,6 +374,9 @@ func syncLegacy(cfg *Config) {
 	}
 	if cfg.Sync.CoverageSoftScore == 0 {
 		cfg.Sync.CoverageSoftScore = 0.4
+	}
+	if cfg.Sync.TripsChurnThreshold == 0 {
+		cfg.Sync.TripsChurnThreshold = 0.2
 	}
 	if cfg.Pricing.DefaultCurrency == "" {
 		cfg.Pricing.DefaultCurrency = "RUB"
@@ -557,6 +561,11 @@ func applyEnv(cfg *Config) {
 			cfg.Sync.CoverageSoftScore = f
 		}
 	}
+	if v := os.Getenv("SYNC_TRIPS_CHURN_THRESHOLD"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			cfg.Sync.TripsChurnThreshold = f
+		}
+	}
 	if v := os.Getenv("SYNC_SKELETON_CHUNK_SIZE"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			cfg.Sync.SkeletonChunkSize = n
@@ -729,6 +738,11 @@ func setByPath(cfg *Config, parts []string, v string) {
 		if len(parts) == 2 && parts[1] == "coverage_soft_score" {
 			if f, err := strconv.ParseFloat(v, 64); err == nil {
 				cfg.Sync.CoverageSoftScore = f
+			}
+		}
+		if len(parts) == 2 && parts[1] == "trips_churn_threshold" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				cfg.Sync.TripsChurnThreshold = f
 			}
 		}
 		if len(parts) == 2 && parts[1] == "skeleton_chunk_size" {
