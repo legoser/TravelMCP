@@ -143,6 +143,23 @@ func (m *MemoryStore) ListStagingTrips(ctx context.Context, region string, limit
 	return out, nil
 }
 
+func (m *MemoryStore) ListCanonTrips(ctx context.Context, source string) (map[string][]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := map[string][]string{}
+	for _, t := range m.trips {
+		if t.ProviderID != source || t.ValidTo != nil {
+			continue
+		}
+		r, ok := m.routes[t.RouteID]
+		if !ok || r.ProviderID != source || r.ValidTo != nil {
+			continue
+		}
+		out[r.ExternalRouteCode] = append(out[r.ExternalRouteCode], r.ExternalRouteCode+"|"+t.ExternalTripCode)
+	}
+	return out, nil
+}
+
 func (m *MemoryStore) DeleteStagingTrip(ctx context.Context, source, routeCode, tripCode string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -153,6 +153,26 @@ func (p *PostgresStore) ListStagingTrips(ctx context.Context, region string, lim
 	return out, rs.Err()
 }
 
+func (p *PostgresStore) ListCanonTrips(ctx context.Context, source string) (map[string][]string, error) {
+	if p.pool == nil {
+		return nil, errNotImplemented
+	}
+	rs, err := p.pool.Query(ctx, `SELECT r.external_route_code, r.external_route_code || '|' || t.external_trip_code FROM trips t JOIN routes r ON r.id=t.route_id WHERE r.source_provider=$1 AND t.provider_id=$1 AND t.valid_to IS NULL AND r.valid_to IS NULL`, source)
+	if err != nil {
+		return nil, err
+	}
+	defer rs.Close()
+	out := map[string][]string{}
+	for rs.Next() {
+		var route, trip string
+		if err := rs.Scan(&route, &trip); err != nil {
+			return nil, err
+		}
+		out[route] = append(out[route], trip)
+	}
+	return out, rs.Err()
+}
+
 func (p *PostgresStore) DeleteStagingTrip(ctx context.Context, source, routeCode, tripCode string) error {
 	if p.pool == nil {
 		return errNotImplemented
@@ -295,6 +315,10 @@ func (t *pgTxStore) UpsertStagingTrip(ctx context.Context, s store.StagingTripRo
 
 func (t *pgTxStore) ListStagingTrips(ctx context.Context, region string, limit int) ([]store.StagingTripRow, error) {
 	return t.parent.ListStagingTrips(ctx, region, limit)
+}
+
+func (t *pgTxStore) ListCanonTrips(ctx context.Context, source string) (map[string][]string, error) {
+	return t.parent.ListCanonTrips(ctx, source)
 }
 
 func (t *pgTxStore) DeleteStagingTrip(ctx context.Context, source, routeCode, tripCode string) error {

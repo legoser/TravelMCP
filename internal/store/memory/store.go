@@ -795,6 +795,8 @@ func (m *MemoryStore) UpsertTerminal(ctx context.Context, r TerminalRow, names m
 	defer m.mu.Unlock()
 	if r.ID == 0 {
 		r.ID = m.allocID()
+	} else if r.ID >= m.nextID {
+		m.nextID = r.ID + 1
 	}
 	if r.EnrichmentStatus == "" {
 		r.EnrichmentStatus = "identity_only"

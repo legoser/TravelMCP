@@ -26,6 +26,8 @@ type TripsStore interface {
 	DeleteStopTimes(ctx context.Context, tripID int64) error
 	UpsertStop(ctx context.Context, s store.StopRow) (int64, error)
 	EnsureStopForTerminal(ctx context.Context, terminalID int64, lat, lon float64, name string) (int64, error)
+	SetTerminalTag(ctx context.Context, id int64, key, value string) error
+	ListCanonTrips(ctx context.Context, source string) (map[string][]string, error)
 	UpsertStopTime(ctx context.Context, st store.StopTimeRow) error
 	UpsertTripSource(ctx context.Context, s store.TripSourceRow) error
 	UpsertStagingTrip(ctx context.Context, s store.StagingTripRow) (int64, error)
@@ -223,6 +225,11 @@ func persistPromotedTrip(ctx context.Context, db store.Store, ts TripsStore, p P
 			TripID: tripID, Source: baseSource(p.WinnerSource), DurationS: tripDurationS(p.StopTimes),
 		}); err != nil {
 			return err
+		}
+		for _, m := range p.StopTimes {
+			if err := tts.SetTerminalTag(ctx, m.TerminalID, "intercity", "1"); err != nil {
+				return err
+			}
 		}
 		if err := tts.DeleteStagingTrip(ctx, source, p.RouteNK, tripCode); err != nil {
 			return err

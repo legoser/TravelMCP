@@ -210,17 +210,8 @@ func TestAttachFrequencyOnlyStaged(t *testing.T) {
 
 func currentNKs(rep AttachReport) map[string][]string {
 	out := map[string][]string{}
-	add := func(route, trip string) {
-		out[route] = append(out[route], trip)
-	}
 	for _, p := range rep.Promoted {
-		add(p.RouteNK, p.TripNK)
-	}
-	for _, s := range rep.Staged {
-		add(s.RouteNK, s.TripNK)
-	}
-	for _, d := range rep.Dead {
-		add(d.RouteNK, d.TripNK)
+		out[p.RouteNK] = append(out[p.RouteNK], p.TripNK)
 	}
 	return out
 }

@@ -181,6 +181,7 @@ type Pricing struct {
 type Sync struct {
 	LogDir              string  `yaml:"log_dir"`
 	CoverageGate        float64 `yaml:"coverage_gate"`
+	AttachWait          string  `yaml:"attach_wait"`
 	SkeletonChunkSize   int     `yaml:"skeleton_chunk_size"`
 	OsmPath             string  `yaml:"osm_path"`
 	YandexDumpPath      string  `yaml:"yandex_dump_path"`
@@ -560,6 +561,9 @@ func applyEnv(cfg *Config) {
 			cfg.Sync.CoverageGate = f
 		}
 	}
+	if v := os.Getenv("SYNC_ATTACH_WAIT"); v != "" {
+		cfg.Sync.AttachWait = v
+	}
 	if v := os.Getenv("SYNC_OSM_PATH"); v != "" {
 		cfg.Sync.OsmPath = v
 	}
@@ -743,6 +747,9 @@ func setByPath(cfg *Config, parts []string, v string) {
 			if f, err := strconv.ParseFloat(v, 64); err == nil {
 				cfg.Sync.CoverageGate = f
 			}
+		}
+		if len(parts) == 2 && parts[1] == "attach_wait" {
+			cfg.Sync.AttachWait = v
 		}
 		if len(parts) == 2 && parts[1] == "osm_path" {
 			cfg.Sync.OsmPath = v

@@ -135,7 +135,8 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 			routeSynthetic = true
 		}
 		tripNK := routeNK + "|" + ft.Direction + ":" + strconv.Itoa(ft.ServiceID) + ":" + strconv.Itoa(ft.Run)
-		current[tripNK] = routeNK
+		// В diff против канона (§5.3) входят только промоутнутые рейсы:
+		// staged/dead в каноне не живут, их «добавление» не churn.
 		if ft.FrequencyOnly || len(ft.Stops) < 2 {
 			rep.Staged = append(rep.Staged, StagedTrip{
 				RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg,
@@ -194,6 +195,7 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 			rep.Reviews = append(rep.Reviews, tripReview(source, routeNK, tripNK, "low_confidence", 0))
 			continue
 		}
+		current[tripNK] = routeNK
 		rep.Promoted = append(rep.Promoted, PromotableTrip{
 			RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg,
 			Direction: ft.Direction, ServiceID: ft.ServiceID, Run: ft.Run,
@@ -231,25 +233,32 @@ func tripReview(source, routeNK, tripNK, reason string, score float64) model.Rev
 	}
 }
 
+func PairItemFromTerminal(t AttachTerminal) verification.PairItem {
+	return verification.PairItem{
+		Name: t.Name, Lat: t.Lat, Lon: t.Lon,
+		Transport: t.Transport, Settlement: t.Settlement,
+		Codes: t.Codes, Source: t.Source,
+	}
+}
+
+func PairItemFromStop(name string, lat, lon *float64, settlement, source string) verification.PairItem {
+	return verification.PairItem{
+		Name: name, Lat: lat, Lon: lon,
+		Settlement: settlement, Source: source,
+	}
+}
+
 func matchStops(ft model.FlatTrip, terms []AttachTerminal, source string, classFor func(string) model.DensityClass, paramsFor func(model.DensityClass) verification.Params) ([]MatchedStopTime, string, float64, []string) {
 	cands := make([]verification.PairItem, 0, len(terms))
 	for _, t := range terms {
-		cands = append(cands, verification.PairItem{
-			Name: t.Name, Lat: t.Lat, Lon: t.Lon,
-			Transport: t.Transport, Settlement: t.Settlement,
-			Codes: t.Codes, Source: t.Source,
-		})
+		cands = append(cands, PairItemFromTerminal(t))
 	}
 	var matched []MatchedStopTime
 	var unmatched []string
 	worstReason := "incomplete_trip"
 	worstScore := 0.0
 	for seq, s := range ft.Stops {
-		stop := verification.PairItem{
-			Name: s.Name, Lat: s.Lat, Lon: s.Lon,
-			Settlement: namesim.ExtractSettlement(s.Name),
-			Source:     source,
-		}
+		stop := PairItemFromStop(s.Name, s.Lat, s.Lon, namesim.ExtractSettlement(s.Name), source)
 		class := classFor(s.Region)
 		idx, d, score := verification.MatchStopToTerminal(stop, cands, class, paramsFor(class))
 		if d != verification.DecisionVerified {
