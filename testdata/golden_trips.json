@@ -21,5 +21,103 @@
     "task": "validate",
     "expect": "review",
     "reason": "guard §5.1: интерполированный конец — soft review_queue{low_confidence}, не dead"
+  },
+  {
+    "id": "sp-exact-urban",
+    "task": "stop_terminal",
+    "matcher": "scorepair",
+    "class": "urban",
+    "stop": {"name": "Кемерово автовокзал", "lat": 55.3416, "lon": 86.061, "source": "mintrans", "settlement": "кемерово"},
+    "terminals": [
+      {"name": "Кемерово автовокзал", "lat": 55.3417, "lon": 86.0612, "source": "osm", "settlement": "кемерово", "transport": "bus"},
+      {"name": "Новосибирск автовокзал", "lat": 55.0301, "lon": 82.8986, "source": "osm", "settlement": "новосибирск", "transport": "bus"}
+    ],
+    "expect": "verified",
+    "expect_best": 0
+  },
+  {
+    "id": "sp-code-match",
+    "task": "stop_terminal",
+    "matcher": "scorepair",
+    "class": "urban",
+    "stop": {"name": "ОП ЛПК", "source": "mintrans", "codes": [{"system": "yandex", "code_type": "yandex_code", "code": "c999"}]},
+    "terminals": [
+      {"name": "Заречная", "lat": 55.0, "lon": 83.0, "source": "yandex", "settlement": "заречная", "codes": [{"system": "yandex", "code_type": "yandex_code", "code": "c999"}]}
+    ],
+    "expect": "verified",
+    "expect_best": 0
+  },
+  {
+    "id": "sp-far-different",
+    "task": "stop_terminal",
+    "matcher": "scorepair",
+    "class": "urban",
+    "stop": {"name": "Кемерово автовокзал", "lat": 55.3416, "lon": 86.061, "source": "mintrans", "settlement": "кемерово"},
+    "terminals": [
+      {"name": "Новосибирск автовокзал", "lat": 55.0301, "lon": 82.8986, "source": "osm", "settlement": "новосибирск", "transport": "bus"}
+    ],
+    "expect": "rejected",
+    "expect_best": 0
+  },
+  {
+    "id": "sp-urban-nogeom-name-only",
+    "task": "stop_terminal",
+    "matcher": "scorepair",
+    "class": "urban",
+    "stop": {"name": "Кемерово автовокзал", "source": "mintrans", "settlement": "кемерово"},
+    "terminals": [
+      {"name": "Кемерово автовокзал", "lat": 55.3416, "lon": 86.061, "source": "osm", "settlement": "кемерово", "transport": "bus"}
+    ],
+    "expect": "low_confidence",
+    "expect_best": 0
+  },
+  {
+    "id": "sp-rural-nogeom-name-settlement",
+    "task": "stop_terminal",
+    "matcher": "scorepair",
+    "class": "rural",
+    "stop": {"name": "Кемерово автовокзал", "source": "mintrans", "settlement": "кемерово"},
+    "terminals": [
+      {"name": "Кемерово автовокзал", "lat": 55.3416, "lon": 86.061, "source": "osm", "settlement": "кемерово", "transport": "bus"}
+    ],
+    "expect": "verified",
+    "expect_best": 0
+  },
+  {
+    "id": "sp-ambiguous-twins",
+    "task": "stop_terminal",
+    "matcher": "scorepair",
+    "class": "urban",
+    "stop": {"name": "Кемерово автовокзал", "lat": 55.3416, "lon": 86.061, "source": "mintrans", "settlement": "кемерово"},
+    "terminals": [
+      {"name": "Кемерово автовокзал", "lat": 55.3417, "lon": 86.0612, "source": "osm", "settlement": "кемерово", "transport": "bus"},
+      {"name": "Кемерово автовокзал", "lat": 55.3417, "lon": 86.0612, "source": "yandex", "settlement": "кемерово", "transport": "bus"}
+    ],
+    "expect": "duplicate_ambiguous",
+    "expect_best": 0
+  },
+  {
+    "id": "sp-same-voice-rural-nogeom",
+    "task": "stop_terminal",
+    "matcher": "scorepair",
+    "class": "rural",
+    "stop": {"name": "Кемерово автовокзал", "source": "mintrans", "settlement": "кемерово"},
+    "terminals": [
+      {"name": "Кемерово автовокзал", "source": "mintrans", "settlement": "кемерово"}
+    ],
+    "expect": "low_confidence",
+    "expect_best": 0
+  },
+  {
+    "id": "sp-generic-names-far",
+    "task": "stop_terminal",
+    "matcher": "scorepair",
+    "class": "urban",
+    "stop": {"name": "Автовокзал", "lat": 55.3416, "lon": 86.061, "source": "mintrans"},
+    "terminals": [
+      {"name": "Автовокзал", "lat": 55.0301, "lon": 82.8986, "source": "osm"}
+    ],
+    "expect": "low_confidence",
+    "expect_best": 0
   }
 ]

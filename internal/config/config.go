@@ -151,6 +151,8 @@ type Verification struct {
 	StrongDistanceM     int                         `yaml:"strong_distance_m"`
 	LevThreshold        float64                     `yaml:"lev_threshold"`
 	NameSimilarity      float64                     `yaml:"name_similarity"`
+	ScoreMargin         float64                     `yaml:"score_margin"`
+	ScoreAmbiguity      float64                     `yaml:"score_ambiguity"`
 	DensityThresholds   map[string]DensityThreshold `yaml:"density_thresholds"`
 }
 
@@ -244,6 +246,8 @@ func Defaults() *Config {
 			StrongDistanceM:     100,
 			LevThreshold:        0.15,
 			NameSimilarity:      0.8,
+			ScoreMargin:         0.1,
+			ScoreAmbiguity:      0.05,
 			DensityThresholds:   map[string]DensityThreshold{},
 		},
 		Deduplication: Deduplication{DistanceM: 200},
@@ -326,6 +330,12 @@ func syncLegacy(cfg *Config) {
 	}
 	if cfg.Verification.NameSimilarity == 0 {
 		cfg.Verification.NameSimilarity = 0.8
+	}
+	if cfg.Verification.ScoreMargin == 0 {
+		cfg.Verification.ScoreMargin = 0.1
+	}
+	if cfg.Verification.ScoreAmbiguity == 0 {
+		cfg.Verification.ScoreAmbiguity = 0.05
 	}
 	if cfg.Verification.DensityThresholds == nil {
 		cfg.Verification.DensityThresholds = map[string]DensityThreshold{}
@@ -503,6 +513,16 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("VERIFICATION_NAME_SIMILARITY"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			cfg.Verification.NameSimilarity = f
+		}
+	}
+	if v := os.Getenv("VERIFICATION_SCORE_MARGIN"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			cfg.Verification.ScoreMargin = f
+		}
+	}
+	if v := os.Getenv("VERIFICATION_SCORE_AMBIGUITY"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			cfg.Verification.ScoreAmbiguity = f
 		}
 	}
 	if v := os.Getenv("GEOCODER_LIMIT"); v != "" {
@@ -798,6 +818,16 @@ func setByPath(cfg *Config, parts []string, v string) {
 		if len(parts) == 2 && parts[1] == "name_similarity" {
 			if f, err := strconv.ParseFloat(v, 64); err == nil {
 				cfg.Verification.NameSimilarity = f
+			}
+		}
+		if len(parts) == 2 && parts[1] == "score_margin" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				cfg.Verification.ScoreMargin = f
+			}
+		}
+		if len(parts) == 2 && parts[1] == "score_ambiguity" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				cfg.Verification.ScoreAmbiguity = f
 			}
 		}
 	case "pricing":

@@ -102,6 +102,8 @@ verification:
   distance_m: 500
   strong_distance_m: 200
   lev_threshold: 0.15
+  score_margin: 0.1 # полоса ниже порога → review low_confidence (ScorePair, Фаза 4.1)
+  score_ambiguity: 0.05 # зазор top1−top2 ниже → review duplicate_ambiguous (ScorePair, Фаза 4.1)
   density_thresholds:
     rural: { distance_m: 500, strong_distance_m: 200, lev_threshold: 0.15 }
     urban: { distance_m: 200, strong_distance_m: 100, lev_threshold: 0.10 }

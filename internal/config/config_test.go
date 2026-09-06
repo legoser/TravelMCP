@@ -46,6 +46,31 @@ func TestEnvOverride(t *testing.T) {
 	}
 }
 
+func TestScorepairDefaults(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Verification.ScoreMargin != 0.1 {
+		t.Fatalf("score_margin = %v, want 0.1", cfg.Verification.ScoreMargin)
+	}
+	if cfg.Verification.ScoreAmbiguity != 0.05 {
+		t.Fatalf("score_ambiguity = %v, want 0.05", cfg.Verification.ScoreAmbiguity)
+	}
+	t.Setenv("VERIFICATION_SCORE_MARGIN", "0.2")
+	t.Setenv("VERIFICATION_SCORE_AMBIGUITY", "0.07")
+	cfg, err = Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Verification.ScoreMargin != 0.2 {
+		t.Fatalf("score_margin = %v, want 0.2", cfg.Verification.ScoreMargin)
+	}
+	if cfg.Verification.ScoreAmbiguity != 0.07 {
+		t.Fatalf("score_ambiguity = %v, want 0.07", cfg.Verification.ScoreAmbiguity)
+	}
+}
+
 func TestMissingNoError(t *testing.T) {
 	cfg, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
 	if err != nil {
