@@ -20,7 +20,7 @@
 
 ### Терминалы — ручная правка
 `PUT /api/v1/admin/terminals/{id} {"name":"Кемерово АВ","lat":55.355,"lon":86.088}`  
-Эффект: `terminals.is_locked=true`, `last_verified_at=now`, `terminal_names ru`, `terminal_identifiers`, триггер `trg_sync_osm_name` обновляет `osm_compatible_name`, `provenance(entity_type=terminal, source=manual, confidence=1.0, actor_id=user.ID)` + `review_queue(conflicts_with_confirmed)` + `audit_log(action=update_terminal)`. Последующие авто-импорты не перезапишут `is_locked` (hysteresis, §3.8).
+Эффект: `terminals.is_locked=true`, `last_verified_at=now`, `terminal_names ru`, `terminal_identifiers`, `provenance(entity_type=terminal, source=manual, confidence=1.0, actor_id=user.ID)` + `review_queue(conflicts_with_confirmed)` + `audit_log(action=update_terminal)`. Последующие авто-импорты не перезапишут `is_locked` (hysteresis, §3.8).
 
 ### Ревью
 `GET /api/v1/review?region=42&reason=low_confidence` — `v_review_stops` (джойн `review_queue` + `terminals` + `import_logs` по `entity_type+entity_id`), `GET /api/v1/review/export.csv` — CSV для ручного анализа. Проблемные причины: `low_confidence, missing_coords, duplicate_ambiguous, speed_implausible, conflicts_with_confirmed`.

@@ -18,11 +18,16 @@ func TestLoadExample(t *testing.T) {
 	if len(cfg.Providers.Enabled) != 0 {
 		t.Fatalf("enabled = %v, want [] (нет продакшн-источников по умолчанию)", cfg.Providers.Enabled)
 	}
+	if cfg.Sync.LogDir == "" {
+		t.Fatal("sync.log_dir пуст после загрузки примера (ожидался data/logs через default)")
+	}
 }
 
 func TestEnvOverride(t *testing.T) {
 	t.Setenv("HTTP_ADDR", ":9999")
 	t.Setenv("PROVIDERS_ENABLED", "synth, gtfs")
+	t.Setenv("SYNC_LOG_DIR", "/tmp/sync-logs")
+	t.Setenv("SYNC_COVERAGE_GATE", "0.7")
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -32,6 +37,12 @@ func TestEnvOverride(t *testing.T) {
 	}
 	if len(cfg.Providers.Enabled) != 2 || cfg.Providers.Enabled[0] != "synth" || cfg.Providers.Enabled[1] != "gtfs" {
 		t.Fatalf("enabled = %v, want [synth gtfs]", cfg.Providers.Enabled)
+	}
+	if cfg.Sync.LogDir != "/tmp/sync-logs" {
+		t.Fatalf("sync.log_dir = %q, want /tmp/sync-logs", cfg.Sync.LogDir)
+	}
+	if cfg.Sync.CoverageGate != 0.7 {
+		t.Fatalf("sync.coverage_gate = %v, want 0.7", cfg.Sync.CoverageGate)
 	}
 }
 

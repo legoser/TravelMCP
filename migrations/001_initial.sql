@@ -95,7 +95,6 @@ CREATE TABLE IF NOT EXISTS terminals (
   geom geography(Point,4326) NOT NULL,
   tz text,
   validity daterange,
-  osm_compatible_name text,
   valid_from date NOT NULL DEFAULT CURRENT_DATE,
   valid_to date,
   is_current bool GENERATED ALWAYS AS (valid_to IS NULL) STORED,
@@ -110,7 +109,6 @@ CREATE TABLE IF NOT EXISTS terminals (
 CREATE INDEX IF NOT EXISTS idx_terminals_place ON terminals(place_id);
 CREATE INDEX IF NOT EXISTS idx_terminals_geom ON terminals USING gist(geom);
 CREATE INDEX IF NOT EXISTS idx_terminals_validity ON terminals USING gist(validity);
-CREATE INDEX IF NOT EXISTS idx_terminals_osm_name ON terminals USING gin(osm_compatible_name gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_terminals_is_current ON terminals(is_current) WHERE is_current;
 
 CREATE TABLE IF NOT EXISTS stops_canonical (
@@ -440,28 +438,6 @@ DROP TRIGGER IF EXISTS trg_places_closure_sync ON places;
 CREATE TRIGGER trg_places_closure_sync
 AFTER INSERT OR UPDATE OF parent_id OR DELETE ON places
 FOR EACH ROW EXECUTE FUNCTION fn_sync_closure_trigger();
-
-CREATE OR REPLACE FUNCTION fn_sync_osm_name() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
-  IF TG_OP = 'DELETE' THEN
-    IF OLD.lang = 'ru' THEN
-      UPDATE terminals SET osm_compatible_name = (
-        SELECT lower(public.unaccent(name)) FROM terminal_names
-        WHERE terminal_id = OLD.terminal_id AND lang='ru' LIMIT 1
-      ) WHERE id = OLD.terminal_id;
-    END IF;
-    RETURN OLD;
-  ELSE
-    IF NEW.lang <> 'ru' THEN RETURN NEW; END IF;
-    UPDATE terminals SET osm_compatible_name = lower(public.unaccent(NEW.name))
-    WHERE id = NEW.terminal_id;
-    RETURN NEW;
-  END IF;
-END; $$;
-DROP TRIGGER IF EXISTS trg_sync_osm_name ON terminal_names;
-CREATE TRIGGER trg_sync_osm_name
-AFTER INSERT OR UPDATE OF name OR DELETE ON terminal_names
-FOR EACH ROW EXECUTE FUNCTION fn_sync_osm_name();
 
 CREATE OR REPLACE FUNCTION verify_closure_consistency() RETURNS TABLE(descendant_id bigint, expected_ancestors bigint[], actual_ancestors bigint[]) LANGUAGE sql AS $$
   WITH RECURSIVE expected(descendant_id, ancestor_id, depth) AS (

@@ -1,0 +1,1276 @@
+{
+ "source": "minstran_reestr",
+ "snapshot": "2026-05-10",
+ "regions": [
+  "22",
+  "54",
+  "70"
+ ],
+ "routes": [
+  {
+   "reg": "54.22.030",
+   "name": "«ОП «Вокзал «Новосибирск-Главный» – Каменская автостанция",
+   "order": 1106,
+   "carrier": "ООО «Сибирские ресурсосберегающие технологии»",
+   "carrier_inn": "5410134455",
+   "carrier_ogrn": "1025403912324",
+   "carrier_address": "Ельцовская ул., д. 6/2, офис № 3, г. Новосибирск, 630001",
+   "carrier_email": "autosrst@mail.ru"
+  },
+  {
+   "reg": "54.22.049",
+   "name": "«ОП «Вокзал «Новосибирск-Главный» – АВ г. Барнаул",
+   "order": 4904,
+   "carrier": "ИП Лядусов Алексей Николаевич",
+   "carrier_inn": "545262224140",
+   "carrier_ogrn": "314547605600380",
+   "carrier_address": "",
+   "carrier_email": "kt_baza@mail.ru"
+  },
+  {
+   "reg": "54.22.078",
+   "name": "«ОП «Вокзал «Новосибирск-Главный» – АВ г. Барнаул",
+   "order": 6315,
+   "carrier": "ООО «СибАвто»",
+   "carrier_inn": "5407476579",
+   "carrier_ogrn": "1125476091487",
+   "carrier_address": "Аэропорт ул., 2/9, оф. 2, г. Новосибирск, 630123",
+   "carrier_email": "zaika202006@yandex.ru"
+  },
+  {
+   "reg": "54.70.040",
+   "name": "АВ «Новосибирский автовокзал-Главный» – Автовокзал АО «Томскавтотранс»",
+   "order": 8122,
+   "carrier": "ООО «ВИМАН»",
+   "carrier_inn": "5410148970",
+   "carrier_ogrn": "1235400043416",
+   "carrier_address": "Спектр мкр., д. 7, кв. 28, рп Кольцово, Новосибирская обл., 630559",
+   "carrier_email": "Vint180@mail.ru"
+  }
+ ],
+ "stops": [
+  {
+   "id": "op:54:54098",
+   "name": "«ОП «Вокзал «Новосибирск-Главный»",
+   "region": "54",
+   "op_reg": "54098",
+   "lat": 55.03631869523268,
+   "lon": 82.89818682076192
+  },
+  {
+   "id": "op:22:22007",
+   "name": "Каменская автостанция",
+   "region": "22",
+   "op_reg": "22007",
+   "lat": 53.7901957064213,
+   "lon": 81.315934187835
+  },
+  {
+   "id": "op:22:22163",
+   "name": "Крутихинский ОП",
+   "region": "22",
+   "op_reg": "22163",
+   "lat": 53.965376395374825,
+   "lon": 81.2134006640053
+  },
+  {
+   "id": "op:54:54006",
+   "name": "АС рп Ордынское",
+   "region": "54",
+   "op_reg": "54006",
+   "lat": 54.3635398031301,
+   "lon": 81.9086985848844
+  },
+  {
+   "id": "op:54:54017",
+   "name": "ДКП «Юго-Западная» г. Новосибирск",
+   "region": "54",
+   "op_reg": "54017",
+   "lat": 54.9714799207,
+   "lon": 82.8728526199
+  },
+  {
+   "id": "op:54:54099",
+   "name": "АВ «Новосибирский автовокзал-Главный»",
+   "region": "54",
+   "op_reg": "54099",
+   "lat": 55.0409859734935,
+   "lon": 83.0275267575736
+  },
+  {
+   "id": "op:70:70016",
+   "name": "Автовокзал АО «Томскавтотранс»",
+   "region": "70",
+   "op_reg": "70016",
+   "lat": 56.4612664816162,
+   "lon": 84.9912958591767
+  },
+  {
+   "id": "op:54:54021",
+   "name": "Автостанция г. Болотное",
+   "region": "54",
+   "op_reg": "54021",
+   "lat": 55.66842282171524,
+   "lon": 84.39373020082148
+  },
+  {
+   "id": "op:22:22165",
+   "name": "АВ г. Барнаул",
+   "region": "22",
+   "op_reg": "22165",
+   "lat": 53.3517518948,
+   "lon": 83.758644294
+  },
+  {
+   "id": "op:54:54040",
+   "name": "ОП пгт Линево",
+   "region": "54",
+   "op_reg": "54040",
+   "lat": 54.4545075867456,
+   "lon": 83.3558348379782
+  },
+  {
+   "id": "op:54:54020",
+   "name": "ДКП г. Искитим",
+   "region": "54",
+   "op_reg": "54020",
+   "lat": 54.6113220952968,
+   "lon": 83.2808032259345
+  },
+  {
+   "id": "op:54:54106",
+   "name": "ОП «Речной»",
+   "region": "54",
+   "op_reg": "54106",
+   "lat": 55.008070590379944,
+   "lon": 82.93647936902936
+  },
+  {
+   "id": "op:54:54107",
+   "name": "ОП «Речной вокзал»",
+   "region": "54",
+   "op_reg": "54107",
+   "lat": 55.008070590379944,
+   "lon": 82.93647936902936
+  },
+  {
+   "id": "op:54:54042",
+   "name": "ОП с. Безменово",
+   "region": "54",
+   "op_reg": "54042",
+   "lat": 55.8348014340681,
+   "lon": 84.7491340935174
+  },
+  {
+   "id": "op:54:54019",
+   "name": "ОП г. Бердск",
+   "region": "54",
+   "op_reg": "54019",
+   "lat": 54.761974339161014,
+   "lon": 83.11377310405305
+  },
+  {
+   "id": "op:22:22070",
+   "name": "ОП с. Масляха",
+   "region": "22",
+   "op_reg": "22070",
+   "lat": 54.051414244758725,
+   "lon": 81.26924386247678
+  }
+ ],
+ "services": [
+  {
+   "id": 3,
+   "name": "ежедневно",
+   "start_date": "2026-01-01",
+   "end_date": "2026-12-31"
+  }
+ ],
+ "service_days": [
+  {
+   "service_id": 3,
+   "weekday": 0
+  },
+  {
+   "service_id": 3,
+   "weekday": 1
+  },
+  {
+   "service_id": 3,
+   "weekday": 2
+  },
+  {
+   "service_id": 3,
+   "weekday": 3
+  },
+  {
+   "service_id": 3,
+   "weekday": 4
+  },
+  {
+   "service_id": 3,
+   "weekday": 5
+  },
+  {
+   "service_id": 3,
+   "weekday": 6
+  }
+ ],
+ "service_exceptions": [],
+ "carriers": [
+  {
+   "name": "ООО «СибАвто»",
+   "inn": "5407476579",
+   "ogrn": "1125476091487",
+   "address": "Аэропорт ул., 2/9, оф. 2, г. Новосибирск, 630123",
+   "email": "zaika202006@yandex.ru"
+  },
+  {
+   "name": "ООО «ВИМАН»",
+   "inn": "5410148970",
+   "ogrn": "1235400043416",
+   "address": "Спектр мкр., д. 7, кв. 28, рп Кольцово, Новосибирская обл., 630559",
+   "email": "Vint180@mail.ru"
+  },
+  {
+   "name": "ООО «Сибирские ресурсосберегающие технологии»",
+   "inn": "5410134455",
+   "ogrn": "1025403912324",
+   "address": "Ельцовская ул., д. 6/2, офис № 3, г. Новосибирск, 630001",
+   "email": "autosrst@mail.ru"
+  },
+  {
+   "name": "ИП Лядусов Алексей Николаевич",
+   "inn": "545262224140",
+   "ogrn": "314547605600380",
+   "address": "",
+   "email": "kt_baza@mail.ru"
+  }
+ ],
+ "schedules": [
+  {
+   "route": "54.22.078",
+   "direction": "forward",
+   "service_id": 3,
+   "stops": [
+    {
+     "stop": "op:54:54098",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "12:30"
+      ],
+      "dwell": [
+       "0"
+      ],
+      "arr": [],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:54:54106",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "12:45"
+      ],
+      "dwell": [
+       "0:05"
+      ],
+      "arr": [
+       "12:40"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:54:54019",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "13:20"
+      ],
+      "dwell": [
+       "0:01"
+      ],
+      "arr": [
+       "13:19"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:54:54020",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "13:50"
+      ],
+      "dwell": [
+       "0:05"
+      ],
+      "arr": [
+       "13:45"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:54:54040",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "14:10"
+      ],
+      "dwell": [
+       "0:00"
+      ],
+      "arr": [
+       "14:10"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:54:54042",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "14:45"
+      ],
+      "dwell": [
+       "0:00"
+      ],
+      "arr": [
+       "14:45"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:22:22165",
+     "region": "22",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [],
+      "dwell": [
+       "0"
+      ],
+      "arr": [
+       "17:00"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    }
+   ]
+  },
+  {
+   "route": "54.22.049",
+   "direction": "forward",
+   "service_id": 3,
+   "stops": [
+    {
+     "stop": "op:54:54098",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "06:49"
+      ],
+      "dwell": [
+       "0"
+      ],
+      "arr": [],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:54:54107",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "06:59"
+      ],
+      "dwell": [
+       "0:02"
+      ],
+      "arr": [
+       "06:57"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:54:54106",
+     "region": "54",
+     "winter": {
+      "days": "нет отправлений",
+      "dep": [],
+      "dwell": [
+       "0"
+      ],
+      "arr": [],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:22:22165",
+     "region": "22",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [],
+      "dwell": [
+       "0"
+      ],
+      "arr": [
+       "11:19"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    }
+   ]
+  },
+  {
+   "route": "54.70.040",
+   "direction": "forward",
+   "service_id": 3,
+   "stops": [
+    {
+     "stop": "op:54:54099",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "10:00"
+      ],
+      "dwell": [
+       "0"
+      ],
+      "arr": [],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:54:54098",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "10:40"
+      ],
+      "dwell": [
+       "0:05"
+      ],
+      "arr": [
+       "10:35"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:54:54021",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "13:10"
+      ],
+      "dwell": [
+       "0:05"
+      ],
+      "arr": [
+       "13:05"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:70:70016",
+     "region": "70",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [],
+      "dwell": [
+       "0"
+      ],
+      "arr": [
+       "15:00"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    }
+   ]
+  },
+  {
+   "route": "54.22.030",
+   "direction": "forward",
+   "service_id": 3,
+   "stops": [
+    {
+     "stop": "op:54:54098",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "07:30"
+      ],
+      "dwell": [
+       "0"
+      ],
+      "arr": [],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:54:54017",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "08:00"
+      ],
+      "dwell": [
+       "0:10"
+      ],
+      "arr": [
+       "07:50"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:54:54006",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "09:40"
+      ],
+      "dwell": [
+       "0:10"
+      ],
+      "arr": [
+       "09:30"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:22:22070",
+     "region": "22",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "10:30"
+      ],
+      "dwell": [
+       "0:05"
+      ],
+      "arr": [
+       "10:25"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:22:22163",
+     "region": "22",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "10:50"
+      ],
+      "dwell": [
+       "0:05"
+      ],
+      "arr": [
+       "10:45"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:22:22007",
+     "region": "22",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [],
+      "dwell": [
+       "0"
+      ],
+      "arr": [
+       "11:20"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    }
+   ]
+  },
+  {
+   "route": "54.22.078",
+   "direction": "backward",
+   "service_id": 3,
+   "stops": [
+    {
+     "stop": "op:22:22165",
+     "region": "22",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "19:59"
+      ],
+      "dwell": [
+       "0"
+      ],
+      "arr": [],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:54:54042",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "21:45"
+      ],
+      "dwell": [
+       "0:00"
+      ],
+      "arr": [
+       "21:45"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:54:54040",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "22:25"
+      ],
+      "dwell": [
+       "0:00"
+      ],
+      "arr": [
+       "22:25"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:54:54020",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "22:50"
+      ],
+      "dwell": [
+       "0:05"
+      ],
+      "arr": [
+       "22:45"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:54:54019",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "23:10"
+      ],
+      "dwell": [
+       "0:00"
+      ],
+      "arr": [
+       "23:10"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:54:54106",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "23:50"
+      ],
+      "dwell": [
+       "0:05"
+      ],
+      "arr": [
+       "23:45"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:54:54098",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [],
+      "dwell": [
+       "0"
+      ],
+      "arr": [
+       "00:00"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    }
+   ]
+  },
+  {
+   "route": "54.22.049",
+   "direction": "backward",
+   "service_id": 3,
+   "stops": [
+    {
+     "stop": "op:22:22165",
+     "region": "22",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "14:44"
+      ],
+      "dwell": [
+       "0"
+      ],
+      "arr": [],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:54:54106",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "18:59"
+      ],
+      "dwell": [
+       "0:05"
+      ],
+      "arr": [
+       "18:54"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:54:54107",
+     "region": "54",
+     "winter": {
+      "days": "нет отправлений",
+      "dep": [],
+      "dwell": [
+       "0"
+      ],
+      "arr": [],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:54:54098",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [],
+      "dwell": [
+       "0"
+      ],
+      "arr": [
+       "19:14"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    }
+   ]
+  },
+  {
+   "route": "54.70.040",
+   "direction": "backward",
+   "service_id": 3,
+   "stops": [
+    {
+     "stop": "op:70:70016",
+     "region": "70",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "18:00"
+      ],
+      "dwell": [
+       "0"
+      ],
+      "arr": [],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:54:54021",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "20:00"
+      ],
+      "dwell": [
+       "0:05"
+      ],
+      "arr": [
+       "19:55"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:54:54098",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "22:05"
+      ],
+      "dwell": [
+       "0:05"
+      ],
+      "arr": [
+       "22:00"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:54:54099",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [],
+      "dwell": [
+       "0"
+      ],
+      "arr": [
+       "22:25"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    }
+   ]
+  },
+  {
+   "route": "54.22.030",
+   "direction": "backward",
+   "service_id": 3,
+   "stops": [
+    {
+     "stop": "op:22:22007",
+     "region": "22",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "14:50"
+      ],
+      "dwell": [
+       "0"
+      ],
+      "arr": [],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:22:22163",
+     "region": "22",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "15:25"
+      ],
+      "dwell": [
+       "0:05"
+      ],
+      "arr": [
+       "15:20"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:22:22070",
+     "region": "22",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "15:45"
+      ],
+      "dwell": [
+       "0:05"
+      ],
+      "arr": [
+       "15:40"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:54:54006",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "16:30"
+      ],
+      "dwell": [
+       "0:05"
+      ],
+      "arr": [
+       "16:25"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:54:54017",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [
+       "18:20"
+      ],
+      "dwell": [
+       "0:10"
+      ],
+      "arr": [
+       "18:10"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    },
+    {
+     "stop": "op:54:54098",
+     "region": "54",
+     "winter": {
+      "days": "ежедневно",
+      "dep": [],
+      "dwell": [
+       "0"
+      ],
+      "arr": [
+       "18:40"
+      ],
+      "period": "круглогодично"
+     },
+     "summer": {
+      "days": null,
+      "dep": [],
+      "dwell": [],
+      "arr": [],
+      "period": null
+     }
+    }
+   ]
+  }
+ ]
+}

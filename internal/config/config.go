@@ -180,6 +180,11 @@ type Pricing struct {
 	DefaultCurrency string `yaml:"default_currency"`
 }
 
+type Sync struct {
+	LogDir       string  `yaml:"log_dir"`
+	CoverageGate float64 `yaml:"coverage_gate"`
+}
+
 type Config struct {
 	HTTP          HTTP          `yaml:"http"`
 	Store         Store         `yaml:"store"`
@@ -201,6 +206,7 @@ type Config struct {
 	Deduplication Deduplication `yaml:"deduplication"`
 	Pricing       Pricing       `yaml:"pricing"`
 	GTFS          GTFS          `yaml:"gtfs"`
+	Sync          Sync          `yaml:"sync"`
 }
 
 func Defaults() *Config {
@@ -240,6 +246,7 @@ func Defaults() *Config {
 		Deduplication: Deduplication{DistanceM: 200},
 		Pricing:       Pricing{DefaultCurrency: "RUB"},
 		GTFS:          GTFS{TmpDir: "data/tmp/gtfs"},
+		Sync:          Sync{LogDir: "data/logs", CoverageGate: 0},
 	}
 }
 
@@ -340,6 +347,9 @@ func syncLegacy(cfg *Config) {
 	}
 	if cfg.GTFS.TmpDir == "" {
 		cfg.GTFS.TmpDir = "data/tmp/gtfs"
+	}
+	if cfg.Sync.LogDir == "" {
+		cfg.Sync.LogDir = "data/logs"
 	}
 	if cfg.Pricing.DefaultCurrency == "" {
 		cfg.Pricing.DefaultCurrency = "RUB"
@@ -497,6 +507,14 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("GTFS_TMP_DIR"); v != "" {
 		cfg.GTFS.TmpDir = v
 	}
+	if v := os.Getenv("SYNC_LOG_DIR"); v != "" {
+		cfg.Sync.LogDir = v
+	}
+	if v := os.Getenv("SYNC_COVERAGE_GATE"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			cfg.Sync.CoverageGate = f
+		}
+	}
 	if v := os.Getenv("PRICING_DEFAULT_CURRENCY"); v != "" {
 		cfg.Pricing.DefaultCurrency = v
 	}
@@ -628,6 +646,15 @@ func setByPath(cfg *Config, parts []string, v string) {
 	case "gtfs":
 		if len(parts) == 2 && parts[1] == "tmp_dir" {
 			cfg.GTFS.TmpDir = v
+		}
+	case "sync":
+		if len(parts) == 2 && parts[1] == "log_dir" {
+			cfg.Sync.LogDir = v
+		}
+		if len(parts) == 2 && parts[1] == "coverage_gate" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				cfg.Sync.CoverageGate = f
+			}
 		}
 	case "yandex":
 		if len(parts) == 2 && parts[1] == "rasp_key" {

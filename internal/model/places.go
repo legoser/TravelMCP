@@ -33,18 +33,17 @@ type PlaceName struct {
 }
 
 type Terminal struct {
-	ID                int64      `json:"id"`
-	PlaceID           *int64     `json:"place_id"`
-	Lat               float64    `json:"lat"`
-	Lon               float64    `json:"lon"`
-	Tz                string     `json:"tz"`
-	ValidityFrom      *time.Time `json:"validity_from,omitempty"`
-	ValidityTo        *time.Time `json:"validity_to,omitempty"`
-	OsmCompatibleName string     `json:"osm_compatible_name"`
-	ValidFrom         time.Time  `json:"valid_from"`
-	ValidTo           *time.Time `json:"valid_to,omitempty"`
-	IsCurrent         bool       `json:"is_current"`
-	LastVerifiedAt    *time.Time `json:"last_verified_at,omitempty"`
+	ID             int64      `json:"id"`
+	PlaceID        *int64     `json:"place_id"`
+	Lat            float64    `json:"lat"`
+	Lon            float64    `json:"lon"`
+	Tz             string     `json:"tz"`
+	ValidityFrom   *time.Time `json:"validity_from,omitempty"`
+	ValidityTo     *time.Time `json:"validity_to,omitempty"`
+	ValidFrom      time.Time  `json:"valid_from"`
+	ValidTo        *time.Time `json:"valid_to,omitempty"`
+	IsCurrent      bool       `json:"is_current"`
+	LastVerifiedAt *time.Time `json:"last_verified_at,omitempty"`
 }
 
 type TerminalName struct {

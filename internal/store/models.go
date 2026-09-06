@@ -226,7 +226,6 @@ type TerminalRow struct {
 	Tz             string
 	ValidityFrom   *string
 	ValidityTo     *string
-	OsmName        string
 	ValidFrom      string
 	ValidTo        *string
 	LastVerifiedAt *int64

@@ -306,12 +306,12 @@ func (p *PostgresStore) UpsertTerminal(ctx context.Context, r TerminalRow, names
 	}
 	var id int64
 	if r.ID != 0 {
-		err := p.pool.QueryRow(ctx, `INSERT INTO terminals(id, place_id, geom, tz, validity, osm_compatible_name, valid_from, valid_to, last_verified_at, is_locked) VALUES($1,$2,ST_SetSRID(ST_MakePoint($3,$4),4326)::geography,$5, daterange($6::date, $7::date, '[]'), $8, $9, $10, $11, $12) ON CONFLICT(id) DO UPDATE SET place_id=EXCLUDED.place_id, geom=EXCLUDED.geom, tz=EXCLUDED.tz, is_locked=terminals.is_locked RETURNING id`, r.ID, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.OsmName, r.ValidFrom, r.ValidTo, r.LastVerifiedAt, r.IsLocked).Scan(&id)
+		err := p.pool.QueryRow(ctx, `INSERT INTO terminals(id, place_id, geom, tz, validity, valid_from, valid_to, last_verified_at, is_locked) VALUES($1,$2,ST_SetSRID(ST_MakePoint($3,$4),4326)::geography,$5, daterange($6::date, $7::date, '[]'), $8, $9, $10, $11) ON CONFLICT(id) DO UPDATE SET place_id=EXCLUDED.place_id, geom=EXCLUDED.geom, tz=EXCLUDED.tz, is_locked=terminals.is_locked RETURNING id`, r.ID, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.ValidFrom, r.ValidTo, r.LastVerifiedAt, r.IsLocked).Scan(&id)
 		if err != nil {
 			return 0, err
 		}
 	} else {
-		err := p.pool.QueryRow(ctx, `INSERT INTO terminals(place_id, geom, tz, validity, osm_compatible_name, valid_from, valid_to, last_verified_at, is_locked) VALUES($1,ST_SetSRID(ST_MakePoint($2,$3),4326)::geography,$4, daterange($5::date, $6::date, '[]'), $7, $8, $9, $10, $11) RETURNING id`, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.OsmName, r.ValidFrom, r.ValidTo, r.LastVerifiedAt, r.IsLocked).Scan(&id)
+		err := p.pool.QueryRow(ctx, `INSERT INTO terminals(place_id, geom, tz, validity, valid_from, valid_to, last_verified_at, is_locked) VALUES($1,ST_SetSRID(ST_MakePoint($2,$3),4326)::geography,$4, daterange($5::date, $6::date, '[]'), $7, $8, $9, $10) RETURNING id`, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.ValidFrom, r.ValidTo, r.LastVerifiedAt, r.IsLocked).Scan(&id)
 		if err != nil {
 			return 0, err
 		}
@@ -1116,12 +1116,12 @@ func (t *pgTxStore) UpsertTerminal(ctx context.Context, r TerminalRow, names map
 	}
 	var id int64
 	if r.ID != 0 {
-		err := t.tx.QueryRow(ctx, `INSERT INTO terminals(id, place_id, geom, tz, validity, osm_compatible_name, valid_from, valid_to, last_verified_at, is_locked) VALUES($1,$2,ST_SetSRID(ST_MakePoint($3,$4),4326)::geography,$5, daterange($6::date, $7::date, '[]'), $8, $9, $10, $11, $12) ON CONFLICT(id) DO UPDATE SET place_id=EXCLUDED.place_id, geom=EXCLUDED.geom, tz=EXCLUDED.tz, is_locked=terminals.is_locked RETURNING id`, r.ID, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.OsmName, r.ValidFrom, r.ValidTo, r.LastVerifiedAt, r.IsLocked).Scan(&id)
+		err := t.tx.QueryRow(ctx, `INSERT INTO terminals(id, place_id, geom, tz, validity, valid_from, valid_to, last_verified_at, is_locked) VALUES($1,$2,ST_SetSRID(ST_MakePoint($3,$4),4326)::geography,$5, daterange($6::date, $7::date, '[]'), $8, $9, $10, $11) ON CONFLICT(id) DO UPDATE SET place_id=EXCLUDED.place_id, geom=EXCLUDED.geom, tz=EXCLUDED.tz, is_locked=terminals.is_locked RETURNING id`, r.ID, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.ValidFrom, r.ValidTo, r.LastVerifiedAt, r.IsLocked).Scan(&id)
 		if err != nil {
 			return 0, err
 		}
 	} else {
-		err := t.tx.QueryRow(ctx, `INSERT INTO terminals(place_id, geom, tz, validity, osm_compatible_name, valid_from, valid_to, last_verified_at, is_locked) VALUES($1,ST_SetSRID(ST_MakePoint($2,$3),4326)::geography,$4, daterange($5::date, $6::date, '[]'), $7, $8, $9, $10, $11) RETURNING id`, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.OsmName, r.ValidFrom, r.ValidTo, r.LastVerifiedAt, r.IsLocked).Scan(&id)
+		err := t.tx.QueryRow(ctx, `INSERT INTO terminals(place_id, geom, tz, validity, valid_from, valid_to, last_verified_at, is_locked) VALUES($1,ST_SetSRID(ST_MakePoint($2,$3),4326)::geography,$4, daterange($5::date, $6::date, '[]'), $7, $8, $9, $10) RETURNING id`, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.ValidFrom, r.ValidTo, r.LastVerifiedAt, r.IsLocked).Scan(&id)
 		if err != nil {
 			return 0, err
 		}
