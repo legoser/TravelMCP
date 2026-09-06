@@ -43,11 +43,12 @@ type TerminalStore interface {
 }
 
 type ReviewQueueRow struct {
-	EntityType string
-	EntityID   int64
-	Reason     string
-	Score      float64
-	CreatedAt  int64
+	EntityType  string
+	EntityID    int64
+	Reason      string
+	Score       float64
+	CreatedAt   int64
+	Fingerprint string
 }
 
 type ProvenanceStore interface {

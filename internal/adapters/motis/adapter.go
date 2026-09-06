@@ -15,9 +15,10 @@ func MatchToAdapted(m Match, source string) (model.AdaptedRecord, error) {
 	lat := m.Lat
 	lon := m.Lon
 	kind := model.AdaptedTerminal
-	if m.Type == "STOP" {
+	switch m.Type {
+	case "STOP":
 		kind = model.AdaptedStop
-	} else if m.Type == "PLACE" {
+	case "PLACE":
 		kind = model.AdaptedPlace
 	}
 	ident := model.AdaptedIdentifier{System: "motis", CodeType: "motis_id", Code: m.ID}

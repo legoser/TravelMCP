@@ -304,14 +304,18 @@ func (p *PostgresStore) UpsertTerminal(ctx context.Context, r TerminalRow, names
 			return r.ID, nil
 		}
 	}
+	status := r.EnrichmentStatus
+	if status == "" {
+		status = "identity_only"
+	}
 	var id int64
 	if r.ID != 0 {
-		err := p.pool.QueryRow(ctx, `INSERT INTO terminals(id, place_id, geom, tz, validity, valid_from, valid_to, last_verified_at, is_locked) VALUES($1,$2,ST_SetSRID(ST_MakePoint($3,$4),4326)::geography,$5, daterange($6::date, $7::date, '[]'), $8, $9, $10, $11) ON CONFLICT(id) DO UPDATE SET place_id=EXCLUDED.place_id, geom=EXCLUDED.geom, tz=EXCLUDED.tz, is_locked=terminals.is_locked RETURNING id`, r.ID, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.ValidFrom, r.ValidTo, r.LastVerifiedAt, r.IsLocked).Scan(&id)
+		err := p.pool.QueryRow(ctx, `INSERT INTO terminals(id, place_id, geom, tz, validity, valid_from, valid_to, last_verified_at, is_locked, address, transport_types, object_type, enrichment_status) VALUES($1,$2,ST_SetSRID(ST_MakePoint($3,$4),4326)::geography,$5, daterange($6::date, $7::date, '[]'), $8, $9, $10, $11, $12, $13, $14, $15) ON CONFLICT(id) DO UPDATE SET place_id=EXCLUDED.place_id, geom=EXCLUDED.geom, tz=EXCLUDED.tz, is_locked=terminals.is_locked, address=EXCLUDED.address, transport_types=EXCLUDED.transport_types, object_type=EXCLUDED.object_type, enrichment_status=EXCLUDED.enrichment_status RETURNING id`, r.ID, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.ValidFrom, r.ValidTo, r.LastVerifiedAt, r.IsLocked, nullIfEmpty(r.Address), transportTypesValue(r.TransportTypes), nullIfEmpty(r.ObjectType), status).Scan(&id)
 		if err != nil {
 			return 0, err
 		}
 	} else {
-		err := p.pool.QueryRow(ctx, `INSERT INTO terminals(place_id, geom, tz, validity, valid_from, valid_to, last_verified_at, is_locked) VALUES($1,ST_SetSRID(ST_MakePoint($2,$3),4326)::geography,$4, daterange($5::date, $6::date, '[]'), $7, $8, $9, $10) RETURNING id`, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.ValidFrom, r.ValidTo, r.LastVerifiedAt, r.IsLocked).Scan(&id)
+		err := p.pool.QueryRow(ctx, `INSERT INTO terminals(place_id, geom, tz, validity, valid_from, valid_to, last_verified_at, is_locked, address, transport_types, object_type, enrichment_status) VALUES($1,ST_SetSRID(ST_MakePoint($2,$3),4326)::geography,$4, daterange($5::date, $6::date, '[]'), $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.ValidFrom, r.ValidTo, r.LastVerifiedAt, r.IsLocked, nullIfEmpty(r.Address), transportTypesValue(r.TransportTypes), nullIfEmpty(r.ObjectType), status).Scan(&id)
 		if err != nil {
 			return 0, err
 		}
@@ -394,7 +398,7 @@ func (p *PostgresStore) SaveReviewQueue(ctx context.Context, e model.ReviewQueue
 	if p.pool == nil {
 		return nil
 	}
-	_, err := p.pool.Exec(ctx, `INSERT INTO review_queue(entity_type, entity_id, reason, score) VALUES($1,$2,$3,$4) ON CONFLICT(entity_type, entity_id, reason) DO UPDATE SET score=EXCLUDED.score`, e.EntityType, e.EntityID, e.Reason, e.Score)
+	_, err := p.pool.Exec(ctx, `INSERT INTO review_queue(entity_type, entity_id, reason, score, fingerprint) VALUES($1,$2,$3,$4,$5) ON CONFLICT(entity_type, entity_id, reason) DO UPDATE SET score=EXCLUDED.score, fingerprint=CASE WHEN EXCLUDED.fingerprint<>'' THEN EXCLUDED.fingerprint ELSE review_queue.fingerprint END`, e.EntityType, e.EntityID, e.Reason, e.Score, e.Fingerprint)
 	return err
 }
 func (p *PostgresStore) ListReviewQueue(ctx context.Context, limit int) ([]store.ReviewQueueRow, error) {
@@ -404,7 +408,7 @@ func (p *PostgresStore) ListReviewQueue(ctx context.Context, limit int) ([]store
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := p.pool.Query(ctx, `SELECT entity_type, entity_id, reason, score, extract(epoch from created_at)::bigint FROM review_queue ORDER BY created_at DESC LIMIT $1`, limit)
+	rows, err := p.pool.Query(ctx, `SELECT entity_type, entity_id, reason, score, extract(epoch from created_at)::bigint, coalesce(fingerprint,'') FROM review_queue ORDER BY created_at DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -412,7 +416,7 @@ func (p *PostgresStore) ListReviewQueue(ctx context.Context, limit int) ([]store
 	var out []store.ReviewQueueRow
 	for rows.Next() {
 		var r store.ReviewQueueRow
-		if err := rows.Scan(&r.EntityType, &r.EntityID, &r.Reason, &r.Score, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.EntityType, &r.EntityID, &r.Reason, &r.Score, &r.CreatedAt, &r.Fingerprint); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -1114,14 +1118,18 @@ func (t *pgTxStore) UpsertTerminal(ctx context.Context, r TerminalRow, names map
 			return r.ID, nil
 		}
 	}
+	status := r.EnrichmentStatus
+	if status == "" {
+		status = "identity_only"
+	}
 	var id int64
 	if r.ID != 0 {
-		err := t.tx.QueryRow(ctx, `INSERT INTO terminals(id, place_id, geom, tz, validity, valid_from, valid_to, last_verified_at, is_locked) VALUES($1,$2,ST_SetSRID(ST_MakePoint($3,$4),4326)::geography,$5, daterange($6::date, $7::date, '[]'), $8, $9, $10, $11) ON CONFLICT(id) DO UPDATE SET place_id=EXCLUDED.place_id, geom=EXCLUDED.geom, tz=EXCLUDED.tz, is_locked=terminals.is_locked RETURNING id`, r.ID, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.ValidFrom, r.ValidTo, r.LastVerifiedAt, r.IsLocked).Scan(&id)
+		err := t.tx.QueryRow(ctx, `INSERT INTO terminals(id, place_id, geom, tz, validity, valid_from, valid_to, last_verified_at, is_locked, address, transport_types, object_type, enrichment_status) VALUES($1,$2,ST_SetSRID(ST_MakePoint($3,$4),4326)::geography,$5, daterange($6::date, $7::date, '[]'), $8, $9, $10, $11, $12, $13, $14, $15) ON CONFLICT(id) DO UPDATE SET place_id=EXCLUDED.place_id, geom=EXCLUDED.geom, tz=EXCLUDED.tz, is_locked=terminals.is_locked, address=EXCLUDED.address, transport_types=EXCLUDED.transport_types, object_type=EXCLUDED.object_type, enrichment_status=EXCLUDED.enrichment_status RETURNING id`, r.ID, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.ValidFrom, r.ValidTo, r.LastVerifiedAt, r.IsLocked, nullIfEmpty(r.Address), transportTypesValue(r.TransportTypes), nullIfEmpty(r.ObjectType), status).Scan(&id)
 		if err != nil {
 			return 0, err
 		}
 	} else {
-		err := t.tx.QueryRow(ctx, `INSERT INTO terminals(place_id, geom, tz, validity, valid_from, valid_to, last_verified_at, is_locked) VALUES($1,ST_SetSRID(ST_MakePoint($2,$3),4326)::geography,$4, daterange($5::date, $6::date, '[]'), $7, $8, $9, $10) RETURNING id`, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.ValidFrom, r.ValidTo, r.LastVerifiedAt, r.IsLocked).Scan(&id)
+		err := t.tx.QueryRow(ctx, `INSERT INTO terminals(place_id, geom, tz, validity, valid_from, valid_to, last_verified_at, is_locked, address, transport_types, object_type, enrichment_status) VALUES($1,ST_SetSRID(ST_MakePoint($2,$3),4326)::geography,$4, daterange($5::date, $6::date, '[]'), $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.ValidFrom, r.ValidTo, r.LastVerifiedAt, r.IsLocked, nullIfEmpty(r.Address), transportTypesValue(r.TransportTypes), nullIfEmpty(r.ObjectType), status).Scan(&id)
 		if err != nil {
 			return 0, err
 		}
@@ -1147,7 +1155,7 @@ func (t *pgTxStore) SaveProvenance(ctx context.Context, p model.Provenance) erro
 	return err
 }
 func (t *pgTxStore) SaveReviewQueue(ctx context.Context, e model.ReviewQueueEntry) error {
-	_, err := t.tx.Exec(ctx, `INSERT INTO review_queue(entity_type, entity_id, reason, score) VALUES($1,$2,$3,$4) ON CONFLICT(entity_type, entity_id, reason) DO UPDATE SET score=EXCLUDED.score`, e.EntityType, e.EntityID, e.Reason, e.Score)
+	_, err := t.tx.Exec(ctx, `INSERT INTO review_queue(entity_type, entity_id, reason, score, fingerprint) VALUES($1,$2,$3,$4,$5) ON CONFLICT(entity_type, entity_id, reason) DO UPDATE SET score=EXCLUDED.score, fingerprint=CASE WHEN EXCLUDED.fingerprint<>'' THEN EXCLUDED.fingerprint ELSE review_queue.fingerprint END`, e.EntityType, e.EntityID, e.Reason, e.Score, e.Fingerprint)
 	return err
 }
 func (t *pgTxStore) ListReviewQueue(ctx context.Context, limit int) ([]store.ReviewQueueRow, error) {

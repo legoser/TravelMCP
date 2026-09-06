@@ -82,10 +82,11 @@ type Provenance struct {
 }
 
 type ReviewQueueEntry struct {
-	EntityType string  `json:"entity_type"`
-	EntityID   int64   `json:"entity_id"`
-	Reason     string  `json:"reason"`
-	Score      float64 `json:"score"`
+	EntityType  string  `json:"entity_type"`
+	EntityID    int64   `json:"entity_id"`
+	Reason      string  `json:"reason"`
+	Score       float64 `json:"score"`
+	Fingerprint string  `json:"fingerprint,omitempty"`
 }
 
 type DensityClass string

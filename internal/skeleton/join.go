@@ -161,6 +161,9 @@ func Join(osm, yandex []model.AdaptedRecord, cfg JoinConfig) JoinOutcome {
 
 func enrichFrom(o, y model.AdaptedRecord) model.AdaptedRecord {
 	merged := o
+	if y.NameRu != "" && y.NameRu != o.NameRu {
+		merged = withExtra(merged, "yandex_title", y.NameRu)
+	}
 	if extra(merged, "settlement") == "" {
 		merged = withExtra(merged, "settlement", extra(y, "settlement"))
 	}

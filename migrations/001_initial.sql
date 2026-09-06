@@ -704,4 +704,24 @@ CREATE OR REPLACE VIEW v_stale_attributes AS
 SELECT entity_type, entity_id, field, source, confidence, observed_at, origin, actor_id
 FROM attribute_state;
 
+-- === Фаза 3 (скелет, Postgres-часть): staging сырых записей скелета ===
+-- Workspace-уровень (§4.1 плана): частичные прогоны, помечены run_id, в канон
+-- не видны. Join OSM↔Yandex идёт через эту таблицу + ST_DWithin/GiST:
+-- кандидаты предфильтруются по гео, точный скоринг ScorePair — в Go.
+CREATE TABLE IF NOT EXISTS staging_terminals (
+  id bigserial PRIMARY KEY,
+  run_id bigint NOT NULL REFERENCES sync_runs(id) ON DELETE CASCADE,
+  source text NOT NULL REFERENCES providers(code),
+  source_code text NOT NULL,
+  name_ru text NOT NULL,
+  geom geography(Point,4326),
+  settlement text,
+  region text,
+  transport_type text,
+  raw jsonb NOT NULL DEFAULT '{}'::jsonb,
+  UNIQUE (run_id, source, source_code)
+);
+CREATE INDEX IF NOT EXISTS idx_staging_terminals_run ON staging_terminals(run_id, region);
+CREATE INDEX IF NOT EXISTS idx_staging_terminals_geom ON staging_terminals USING gist(geom);
+
 

@@ -181,8 +181,9 @@ type Pricing struct {
 }
 
 type Sync struct {
-	LogDir       string  `yaml:"log_dir"`
-	CoverageGate float64 `yaml:"coverage_gate"`
+	LogDir            string  `yaml:"log_dir"`
+	CoverageGate      float64 `yaml:"coverage_gate"`
+	SkeletonChunkSize int     `yaml:"skeleton_chunk_size"`
 }
 
 type Config struct {
@@ -246,7 +247,7 @@ func Defaults() *Config {
 		Deduplication: Deduplication{DistanceM: 200},
 		Pricing:       Pricing{DefaultCurrency: "RUB"},
 		GTFS:          GTFS{TmpDir: "data/tmp/gtfs"},
-		Sync:          Sync{LogDir: "data/logs", CoverageGate: 0},
+		Sync:          Sync{LogDir: "data/logs", CoverageGate: 0, SkeletonChunkSize: 100},
 	}
 }
 
@@ -350,6 +351,12 @@ func syncLegacy(cfg *Config) {
 	}
 	if cfg.Sync.LogDir == "" {
 		cfg.Sync.LogDir = "data/logs"
+	}
+	if cfg.Sync.SkeletonChunkSize <= 0 {
+		cfg.Sync.SkeletonChunkSize = 100
+	}
+	if cfg.Sync.SkeletonChunkSize > 100 {
+		cfg.Sync.SkeletonChunkSize = 100
 	}
 	if cfg.Pricing.DefaultCurrency == "" {
 		cfg.Pricing.DefaultCurrency = "RUB"
@@ -515,6 +522,14 @@ func applyEnv(cfg *Config) {
 			cfg.Sync.CoverageGate = f
 		}
 	}
+	if v := os.Getenv("SYNC_SKELETON_CHUNK_SIZE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.Sync.SkeletonChunkSize = n
+			if cfg.Sync.SkeletonChunkSize > 100 {
+				cfg.Sync.SkeletonChunkSize = 100
+			}
+		}
+	}
 	if v := os.Getenv("PRICING_DEFAULT_CURRENCY"); v != "" {
 		cfg.Pricing.DefaultCurrency = v
 	}
@@ -654,6 +669,14 @@ func setByPath(cfg *Config, parts []string, v string) {
 		if len(parts) == 2 && parts[1] == "coverage_gate" {
 			if f, err := strconv.ParseFloat(v, 64); err == nil {
 				cfg.Sync.CoverageGate = f
+			}
+		}
+		if len(parts) == 2 && parts[1] == "skeleton_chunk_size" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				cfg.Sync.SkeletonChunkSize = n
+				if cfg.Sync.SkeletonChunkSize > 100 {
+					cfg.Sync.SkeletonChunkSize = 100
+				}
 			}
 		}
 	case "yandex":

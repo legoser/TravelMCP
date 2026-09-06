@@ -67,6 +67,9 @@ type MemoryStore struct {
 	terminals     map[int64]TerminalRow
 	terminalNames map[int64]map[string]string
 	terminalTags  map[int64]map[string]string
+	aliases       map[int64]map[string]store.TerminalAliasRow
+	attrStates    map[string]store.AttributeStateRow
+	syncRuns      map[int64]store.SyncRunRow
 	reviewQueue   []store.ReviewQueueRow
 	nextID        int64
 }
@@ -89,6 +92,9 @@ func NewMemoryStore() *MemoryStore {
 		terminals:     make(map[int64]TerminalRow),
 		terminalNames: make(map[int64]map[string]string),
 		terminalTags:  make(map[int64]map[string]string),
+		aliases:       make(map[int64]map[string]store.TerminalAliasRow),
+		attrStates:    make(map[string]store.AttributeStateRow),
+		syncRuns:      make(map[int64]store.SyncRunRow),
 		nextID:        1,
 	}
 }
@@ -781,6 +787,9 @@ func (m *MemoryStore) UpsertTerminal(ctx context.Context, r TerminalRow, names m
 	if r.ID == 0 {
 		r.ID = m.allocID()
 	}
+	if r.EnrichmentStatus == "" {
+		r.EnrichmentStatus = "identity_only"
+	}
 	m.terminals[r.ID] = r
 	if m.terminalNames[r.ID] == nil {
 		m.terminalNames[r.ID] = map[string]string{}
@@ -834,6 +843,55 @@ func (m *MemoryStore) SetTerminalTag(ctx context.Context, id int64, key, value s
 	m.terminalTags[id][key] = value
 	return nil
 }
+func (m *MemoryStore) UpsertTerminalAlias(ctx context.Context, a store.TerminalAliasRow) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.terminals[a.TerminalID]; !ok {
+		return fmt.Errorf("terminal %d not found", a.TerminalID)
+	}
+	if m.aliases[a.TerminalID] == nil {
+		m.aliases[a.TerminalID] = map[string]store.TerminalAliasRow{}
+	}
+	m.aliases[a.TerminalID][a.Alias+"\x00"+a.Lang] = a
+	return nil
+}
+
+func (m *MemoryStore) UpsertAttributeState(ctx context.Context, a store.AttributeStateRow) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	origin := a.Origin
+	if origin == "" {
+		origin = "live"
+	}
+	a.Origin = origin
+	m.attrStates[a.EntityType+"\x00"+fmt.Sprint(a.EntityID)+"\x00"+a.Field+"\x00"+a.Source] = a
+	return nil
+}
+
+func (m *MemoryStore) CreateSyncRun(ctx context.Context, r store.SyncRunRow) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r.ID = m.allocID()
+	if r.State == "" {
+		r.State = "running"
+	}
+	m.syncRuns[r.ID] = r
+	return r.ID, nil
+}
+
+func (m *MemoryStore) FinishSyncRun(ctx context.Context, id int64, state, summary string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.syncRuns[id]
+	if !ok {
+		return fmt.Errorf("sync run %d not found", id)
+	}
+	r.State = state
+	r.Summary = summary
+	m.syncRuns[id] = r
+	return nil
+}
+
 func (m *MemoryStore) DeleteReviewQueue(ctx context.Context, entityType string, entityID int64, reason string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -854,10 +912,13 @@ func (m *MemoryStore) SaveReviewQueue(ctx context.Context, e model.ReviewQueueEn
 	for i, r := range m.reviewQueue {
 		if r.EntityType == e.EntityType && r.EntityID == e.EntityID && r.Reason == e.Reason {
 			m.reviewQueue[i].Score = e.Score
+			if e.Fingerprint != "" {
+				m.reviewQueue[i].Fingerprint = e.Fingerprint
+			}
 			return nil
 		}
 	}
-	m.reviewQueue = append(m.reviewQueue, store.ReviewQueueRow{EntityType: e.EntityType, EntityID: e.EntityID, Reason: e.Reason, Score: e.Score, CreatedAt: time.Now().Unix()})
+	m.reviewQueue = append(m.reviewQueue, store.ReviewQueueRow{EntityType: e.EntityType, EntityID: e.EntityID, Reason: e.Reason, Score: e.Score, CreatedAt: time.Now().Unix(), Fingerprint: e.Fingerprint})
 	return nil
 }
 func (m *MemoryStore) ListReviewQueue(ctx context.Context, limit int) ([]store.ReviewQueueRow, error) {

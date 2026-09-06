@@ -220,16 +220,49 @@ type PlaceRow struct {
 }
 
 type TerminalRow struct {
-	ID             int64
-	PlaceID        *int64
-	Lat, Lon       float64
-	Tz             string
-	ValidityFrom   *string
-	ValidityTo     *string
-	ValidFrom      string
-	ValidTo        *string
-	LastVerifiedAt *int64
-	IsLocked       bool
+	ID               int64
+	PlaceID          *int64
+	Lat, Lon         float64
+	Tz               string
+	ValidityFrom     *string
+	ValidityTo       *string
+	ValidFrom        string
+	ValidTo          *string
+	LastVerifiedAt   *int64
+	IsLocked         bool
+	Address          string
+	TransportTypes   []string
+	ObjectType       string
+	EnrichmentStatus string
+}
+
+type TerminalAliasRow struct {
+	TerminalID int64
+	Alias      string
+	Lang       string
+	Source     string
+}
+
+type AttributeStateRow struct {
+	EntityType string
+	EntityID   int64
+	Field      string
+	Value      string
+	Source     string
+	Confidence float64
+	Origin     string
+	ActorID    *int64
+	SyncRunID  *int64
+}
+
+type SyncRunRow struct {
+	ID       int64
+	PlanID   string
+	Kind     string
+	InputSHA string
+	Tag      string
+	State    string
+	Summary  string
 }
 
 type QuotaRow struct {
