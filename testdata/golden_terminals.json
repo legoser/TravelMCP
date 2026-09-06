@@ -1,0 +1,24 @@
+[
+  {
+    "id": "osm-yandex-pair",
+    "a": {"name": "Кемерово автовокзал", "lat": 55.3416, "lon": 86.061},
+    "b": {"name": "Кемерово автовокзал", "lat": 55.3417, "lon": 86.0612},
+    "task": "skeleton_osm",
+    "expect": "verified"
+  },
+  {
+    "id": "name-only-urban",
+    "a": {"name": "Остановка Центральная", "lat": 55.03, "lon": 82.92},
+    "b": {"name": "Остановка Центральная", "lat": null, "lon": null},
+    "task": "skeleton_osm",
+    "expect": "review",
+    "reason": "geom-null в urban по одному name — никогда verified"
+  },
+  {
+    "id": "distinct-terminals",
+    "a": {"name": "Новосибирск автовокзал", "lat": 55.0411, "lon": 83.0274},
+    "b": {"name": "Барнаул автовокзал", "lat": 53.3518, "lon": 83.7586},
+    "task": "merge",
+    "expect": "no_match"
+  }
+]

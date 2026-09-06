@@ -717,6 +717,13 @@ func (m *MemoryStore) UpsertCarrier(ctx context.Context, c CarrierRow) (int64, e
 func (m *MemoryStore) UpsertRoute(ctx context.Context, r RouteRow) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for id, e := range m.routes {
+		if e.ProviderID == r.ProviderID && e.ExternalRouteCode == r.ExternalRouteCode {
+			r.ID = id
+			m.routes[id] = r
+			return id, nil
+		}
+	}
 	if r.ID == 0 {
 		r.ID = m.allocID()
 	}
@@ -729,6 +736,13 @@ func (m *MemoryStore) UpsertRouteRegion(ctx context.Context, routeID int64, regi
 func (m *MemoryStore) UpsertTrip(ctx context.Context, t TripRow) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for id, e := range m.trips {
+		if e.RouteID == t.RouteID && e.ExternalTripCode == t.ExternalTripCode {
+			t.ID = id
+			m.trips[id] = t
+			return id, nil
+		}
+	}
 	if t.ID == 0 {
 		t.ID = m.allocID()
 	}
@@ -907,8 +921,8 @@ func (m *MemoryStore) LoadNetwork(ctx context.Context, providers []string, day t
 		if len(allow) > 0 && !allow[r.ProviderID] {
 			continue
 		}
-		mr := &model.Route{ID: r.ExternalCode, ProviderID: r.ProviderID, ShortName: r.ShortName, LongName: r.LongName, Mode: model.Mode(r.Mode)}
-		net.Routes[r.ExternalCode] = mr
+		mr := &model.Route{ID: r.ExternalRouteCode, ProviderID: r.ProviderID, ShortName: r.ShortName, LongName: r.LongName, Mode: model.Mode(r.Mode)}
+		net.Routes[r.ExternalRouteCode] = mr
 	}
 	for _, t := range m.trips {
 		if len(allow) > 0 && !allow[t.ProviderID] {
@@ -917,7 +931,7 @@ func (m *MemoryStore) LoadNetwork(ctx context.Context, providers []string, day t
 		route, ok := m.routes[t.RouteID]
 		routeID := ""
 		if ok {
-			routeID = route.ExternalCode
+			routeID = route.ExternalRouteCode
 		}
 		times := []model.StopTime{}
 		for _, st := range m.stopTimes {
@@ -966,7 +980,7 @@ func (m *MemoryStore) LoadNetwork(ctx context.Context, providers []string, day t
 	}
 	routeCodeByID := map[int64]string{}
 	for _, rr := range m.routes {
-		routeCodeByID[rr.ID] = rr.ExternalCode
+		routeCodeByID[rr.ID] = rr.ExternalRouteCode
 	}
 	for _, r := range globalFareMem.rules {
 		var oz, dz *string

@@ -27,16 +27,16 @@
 
 ### Внешний API
 `POST /api/v1/admin/external-call {"provider":"yandex","query":"Кемерово автовокзал","lat":55.35,"lon":86.08}`  
-Шаги: `TryConsumeQuota(provider, limit) WHERE used<limit RETURNING` (атомарно, 429 если 0 строк), `RecordApiCall`, валидация (`query≥2`, `lat/lon` в границах РФ), ответ `validated:true`. При успехе: `audit_log(action=external_call)` + `provenance(source=provider, actor_id)` — `source ≠ actor identity` (провайдер vs оператор). Ошибки мапятся в `400`/`429`.
+Шаги: `TryConsumeQuota(provider, quota_limit) WHERE used<quota_limit RETURNING` (атомарно, 429 если 0 строк), `RecordApiCall`, валидация (`query≥2`, `lat/lon` в границах РФ), ответ `validated:true`. При успехе: `audit_log(action=external_call)` + `provenance(source=provider, actor_id)` — `source ≠ actor identity` (провайдер vs оператор). Ошибки мапятся в `400`/`429`.
 
 ### Квоты / Аудит
-`GET /api/v1/quotas` — `api_quotas(provider,day,used,limit,reset_at)` (`PK provider,day`, `reset_at=00:00 MSK` следующего дня). Инкремент только `INSERT ... ON CONFLICT DO UPDATE SET used=used+1 WHERE used<limit`. Строка на день — источник истины, `ListQuotas` сортирует `day DESC`.  
+`GET /api/v1/quotas` — `api_quotas(provider,day,used,quota_limit,reset_at)` (`PK provider,day`, `reset_at=00:00 MSK` следующего дня). Инкремент только `INSERT ... ON CONFLICT DO UPDATE SET used=used+1 WHERE used<quota_limit`. Строка на день — источник истины, `ListQuotas` сортирует `day DESC`.  
 `GET /api/v1/admin/audit?limit=50` — `audit_log(user_id, action, entity_type, entity_id, at, details jsonb)` — все действия админки (`update_terminal`, `external_call`).
 
 ## Типовой сценарий оператора (пилот 42/54/70)
 1. `ADMIN_TOKEN` → Импорты → Обновить автобусы → наблюдать `jobs`/`logs`.
 2. Ревью → фильтр `low_confidence` → открыть `terminals/{id}` → править → Сохранить (is_locked).
 3. Внешний API → `yandex` `Кемерово автовокзал` → Валидация → Сохранить (проверяется quota).
-4. Квоты → проверить `used/limit`, Аудит → кто правил.
+4. Квоты → проверить `used/quota_limit`, Аудит → кто правил.
 
 GTFS per-region (`GET /api/v1/gtfs?region=42` → `gtfs_42_all.zip`, `feed_id=f-ru-42-all`) компилируется воркером в одной `REPEATABLE READ` пачке.

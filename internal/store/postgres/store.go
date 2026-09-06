@@ -181,7 +181,7 @@ func (p *PostgresStore) UpsertRoute(ctx context.Context, r RouteRow) (int64, err
 	if src == "" {
 		src = "mintrans"
 	}
-	err := p.pool.QueryRow(ctx, `INSERT INTO routes(carrier_id, external_code, short_name, long_name, mode, external_uid, ord, source_provider) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(source_provider, external_code) DO UPDATE SET long_name=EXCLUDED.long_name, short_name=EXCLUDED.short_name, carrier_id=EXCLUDED.carrier_id RETURNING id`, r.CarrierID, r.ExternalCode, r.ShortName, r.LongName, r.Mode, r.ExternalUID, r.Ord, src).Scan(&id)
+	err := p.pool.QueryRow(ctx, `INSERT INTO routes(carrier_id, external_route_code, short_name, long_name, mode, external_uid, ord, source_provider) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(source_provider, external_route_code) DO UPDATE SET long_name=EXCLUDED.long_name, short_name=EXCLUDED.short_name, carrier_id=EXCLUDED.carrier_id RETURNING id`, r.CarrierID, r.ExternalRouteCode, r.ShortName, r.LongName, r.Mode, r.ExternalUID, r.Ord, src).Scan(&id)
 	return id, err
 }
 func (p *PostgresStore) UpsertRouteRegion(ctx context.Context, routeID int64, region string) error {
@@ -196,7 +196,7 @@ func (p *PostgresStore) UpsertTrip(ctx context.Context, t TripRow) (int64, error
 		return 0, errNotImplemented
 	}
 	var id int64
-	err := p.pool.QueryRow(ctx, `INSERT INTO trips(route_id, provider_id, direction, service_days, frequency_flag, period, service_id) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id`, t.RouteID, t.ProviderID, t.Direction, t.ServiceDays, t.FrequencyFlag, t.Period, t.ServiceID).Scan(&id)
+	err := p.pool.QueryRow(ctx, `INSERT INTO trips(route_id, provider_id, external_trip_code, direction, service_days, frequency_flag, period, service_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(route_id, external_trip_code) DO UPDATE SET direction=EXCLUDED.direction, service_days=EXCLUDED.service_days, frequency_flag=EXCLUDED.frequency_flag, period=EXCLUDED.period, service_id=EXCLUDED.service_id RETURNING id`, t.RouteID, t.ProviderID, t.ExternalTripCode, t.Direction, t.ServiceDays, t.FrequencyFlag, t.Period, t.ServiceID).Scan(&id)
 	return id, err
 }
 func (p *PostgresStore) UpsertFrequency(ctx context.Context, f FrequencyRow) error {
@@ -530,7 +530,7 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 		net.Stops[code] = &model.Stop{ID: code, ProviderID: "mintrans", Name: name.String, Lat: la, Lon: lo, Type: model.StopType(stopType.String)}
 		stopIDMap[id] = code
 	}
-	routeRows, err := p.pool.Query(ctx, `SELECT id, source_provider, carrier_id, external_code, short_name, long_name, mode FROM routes`)
+	routeRows, err := p.pool.Query(ctx, `SELECT id, source_provider, carrier_id, external_route_code, short_name, long_name, mode FROM routes`)
 	if err != nil {
 		return nil, err
 	}
@@ -539,13 +539,13 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 	routeIDToMode := map[int64]string{}
 	for routeRows.Next() {
 		var r RouteRow
-		_ = routeRows.Scan(&r.ID, &r.ProviderID, &r.CarrierID, &r.ExternalCode, &r.ShortName, &r.LongName, &r.Mode)
+		_ = routeRows.Scan(&r.ID, &r.ProviderID, &r.CarrierID, &r.ExternalRouteCode, &r.ShortName, &r.LongName, &r.Mode)
 		if len(allow) > 0 && !allow[r.ProviderID] {
 			continue
 		}
-		routeIDToCode[r.ID] = r.ExternalCode
+		routeIDToCode[r.ID] = r.ExternalRouteCode
 		routeIDToMode[r.ID] = r.Mode
-		net.Routes[r.ExternalCode] = &model.Route{ID: r.ExternalCode, ProviderID: r.ProviderID, ShortName: r.ShortName, LongName: r.LongName, Mode: model.Mode(r.Mode)}
+		net.Routes[r.ExternalRouteCode] = &model.Route{ID: r.ExternalRouteCode, ProviderID: r.ProviderID, ShortName: r.ShortName, LongName: r.LongName, Mode: model.Mode(r.Mode)}
 	}
 	tRows, err := p.pool.Query(ctx, `SELECT id, route_id, provider_id, direction, service_id FROM trips`)
 	if err != nil {
@@ -733,7 +733,7 @@ func (p *PostgresStore) TryConsumeQuota(ctx context.Context, provider string, li
 		return true, 1, nil
 	}
 	var used int
-	err := p.pool.QueryRow(ctx, `INSERT INTO api_quotas(provider, day, used, limit, reset_at) VALUES($1, CURRENT_DATE, 1, $2, (CURRENT_DATE + INTERVAL '1 day')::timestamptz AT TIME ZONE 'Europe/Moscow') ON CONFLICT (provider, day) DO UPDATE SET used = api_quotas.used + 1 WHERE api_quotas.used < api_quotas.limit RETURNING used`, provider, limit).Scan(&used)
+	err := p.pool.QueryRow(ctx, `INSERT INTO api_quotas(provider, day, used, quota_limit, reset_at) VALUES($1, CURRENT_DATE, 1, $2, (CURRENT_DATE + INTERVAL '1 day')::timestamptz AT TIME ZONE 'Europe/Moscow') ON CONFLICT (provider, day) DO UPDATE SET used = api_quotas.used + 1 WHERE api_quotas.used < api_quotas.quota_limit RETURNING used`, provider, limit).Scan(&used)
 	if err != nil {
 		return false, 0, nil
 	}
@@ -751,7 +751,7 @@ func (p *PostgresStore) GetQuota(ctx context.Context, provider string, day time.
 	}
 	var r store.QuotaRow
 	var resetAt *string
-	err := p.pool.QueryRow(ctx, `SELECT provider, day::text, used, limit, reset_at::text FROM api_quotas WHERE provider=$1 AND day=$2::date`, provider, d.Format("2006-01-02")).Scan(&r.Provider, &r.Day, &r.Used, &r.Limit, &resetAt)
+	err := p.pool.QueryRow(ctx, `SELECT provider, day::text, used, quota_limit, reset_at::text FROM api_quotas WHERE provider=$1 AND day=$2::date`, provider, d.Format("2006-01-02")).Scan(&r.Provider, &r.Day, &r.Used, &r.Limit, &resetAt)
 	if err != nil {
 		return store.QuotaRow{}, false
 	}
@@ -763,7 +763,7 @@ func (p *PostgresStore) SetQuotaLimit(ctx context.Context, provider string, limi
 	if p.pool == nil {
 		return nil
 	}
-	_, err := p.pool.Exec(ctx, `INSERT INTO api_quotas(provider, day, used, limit, reset_at) VALUES($1, CURRENT_DATE, 0, $2, (CURRENT_DATE + INTERVAL '1 day')::timestamptz AT TIME ZONE 'Europe/Moscow') ON CONFLICT (provider, day) DO UPDATE SET limit=EXCLUDED.limit`, provider, limit)
+	_, err := p.pool.Exec(ctx, `INSERT INTO api_quotas(provider, day, used, quota_limit, reset_at) VALUES($1, CURRENT_DATE, 0, $2, (CURRENT_DATE + INTERVAL '1 day')::timestamptz AT TIME ZONE 'Europe/Moscow') ON CONFLICT (provider, day) DO UPDATE SET quota_limit=EXCLUDED.quota_limit`, provider, limit)
 	return err
 }
 
@@ -779,7 +779,7 @@ func (p *PostgresStore) ListQuotas(ctx context.Context) ([]store.QuotaRow, error
 	if p.pool == nil {
 		return nil, nil
 	}
-	rows, err := p.pool.Query(ctx, `SELECT provider, day::text, used, limit, reset_at::text FROM api_quotas ORDER BY day DESC, provider`)
+	rows, err := p.pool.Query(ctx, `SELECT provider, day::text, used, quota_limit, reset_at::text FROM api_quotas ORDER BY day DESC, provider`)
 	if err != nil {
 		return nil, err
 	}
@@ -1031,7 +1031,7 @@ func (t *pgTxStore) UpsertRoute(ctx context.Context, r RouteRow) (int64, error) 
 	if src == "" {
 		src = "mintrans"
 	}
-	err := t.tx.QueryRow(ctx, `INSERT INTO routes(carrier_id, external_code, short_name, long_name, mode, external_uid, ord, source_provider) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(source_provider, external_code) DO UPDATE SET long_name=EXCLUDED.long_name, short_name=EXCLUDED.short_name, carrier_id=EXCLUDED.carrier_id RETURNING id`, r.CarrierID, r.ExternalCode, r.ShortName, r.LongName, r.Mode, r.ExternalUID, r.Ord, src).Scan(&id)
+	err := t.tx.QueryRow(ctx, `INSERT INTO routes(carrier_id, external_route_code, short_name, long_name, mode, external_uid, ord, source_provider) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(source_provider, external_route_code) DO UPDATE SET long_name=EXCLUDED.long_name, short_name=EXCLUDED.short_name, carrier_id=EXCLUDED.carrier_id RETURNING id`, r.CarrierID, r.ExternalRouteCode, r.ShortName, r.LongName, r.Mode, r.ExternalUID, r.Ord, src).Scan(&id)
 	return id, err
 }
 func (t *pgTxStore) UpsertRouteRegion(ctx context.Context, routeID int64, region string) error {
@@ -1040,7 +1040,7 @@ func (t *pgTxStore) UpsertRouteRegion(ctx context.Context, routeID int64, region
 }
 func (t *pgTxStore) UpsertTrip(ctx context.Context, r TripRow) (int64, error) {
 	var id int64
-	err := t.tx.QueryRow(ctx, `INSERT INTO trips(route_id, provider_id, direction, service_days, frequency_flag, period, service_id) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id`, r.RouteID, r.ProviderID, r.Direction, r.ServiceDays, r.FrequencyFlag, r.Period, r.ServiceID).Scan(&id)
+	err := t.tx.QueryRow(ctx, `INSERT INTO trips(route_id, provider_id, external_trip_code, direction, service_days, frequency_flag, period, service_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(route_id, external_trip_code) DO UPDATE SET direction=EXCLUDED.direction, service_days=EXCLUDED.service_days, frequency_flag=EXCLUDED.frequency_flag, period=EXCLUDED.period, service_id=EXCLUDED.service_id RETURNING id`, r.RouteID, r.ProviderID, r.ExternalTripCode, r.Direction, r.ServiceDays, r.FrequencyFlag, r.Period, r.ServiceID).Scan(&id)
 	return id, err
 }
 func (t *pgTxStore) UpsertFrequency(ctx context.Context, f FrequencyRow) error {
@@ -1283,7 +1283,7 @@ func (t *pgTxStore) TouchApiKey(ctx context.Context, key string) error { return 
 
 func (t *pgTxStore) TryConsumeQuota(ctx context.Context, provider string, limit int) (bool, int, error) {
 	var used int
-	err := t.tx.QueryRow(ctx, `INSERT INTO api_quotas(provider, day, used, limit, reset_at) VALUES($1, CURRENT_DATE, 1, $2, (CURRENT_DATE + INTERVAL '1 day')::timestamptz AT TIME ZONE 'Europe/Moscow') ON CONFLICT (provider, day) DO UPDATE SET used = api_quotas.used + 1 WHERE api_quotas.used < api_quotas.limit RETURNING used`, provider, limit).Scan(&used)
+	err := t.tx.QueryRow(ctx, `INSERT INTO api_quotas(provider, day, used, quota_limit, reset_at) VALUES($1, CURRENT_DATE, 1, $2, (CURRENT_DATE + INTERVAL '1 day')::timestamptz AT TIME ZONE 'Europe/Moscow') ON CONFLICT (provider, day) DO UPDATE SET used = api_quotas.used + 1 WHERE api_quotas.used < api_quotas.quota_limit RETURNING used`, provider, limit).Scan(&used)
 	if err != nil {
 		return false, 0, nil
 	}
@@ -1298,7 +1298,7 @@ func (t *pgTxStore) GetQuota(ctx context.Context, provider string, day time.Time
 	}
 	var r store.QuotaRow
 	var resetAt *string
-	err := t.tx.QueryRow(ctx, `SELECT provider, day::text, used, limit, reset_at::text FROM api_quotas WHERE provider=$1 AND day=$2::date`, provider, d.Format("2006-01-02")).Scan(&r.Provider, &r.Day, &r.Used, &r.Limit, &resetAt)
+	err := t.tx.QueryRow(ctx, `SELECT provider, day::text, used, quota_limit, reset_at::text FROM api_quotas WHERE provider=$1 AND day=$2::date`, provider, d.Format("2006-01-02")).Scan(&r.Provider, &r.Day, &r.Used, &r.Limit, &resetAt)
 	if err != nil {
 		return store.QuotaRow{}, false
 	}
@@ -1307,7 +1307,7 @@ func (t *pgTxStore) GetQuota(ctx context.Context, provider string, day time.Time
 }
 
 func (t *pgTxStore) SetQuotaLimit(ctx context.Context, provider string, limit int) error {
-	_, err := t.tx.Exec(ctx, `INSERT INTO api_quotas(provider, day, used, limit, reset_at) VALUES($1, CURRENT_DATE, 0, $2, (CURRENT_DATE + INTERVAL '1 day')::timestamptz AT TIME ZONE 'Europe/Moscow') ON CONFLICT (provider, day) DO UPDATE SET limit=EXCLUDED.limit`, provider, limit)
+	_, err := t.tx.Exec(ctx, `INSERT INTO api_quotas(provider, day, used, quota_limit, reset_at) VALUES($1, CURRENT_DATE, 0, $2, (CURRENT_DATE + INTERVAL '1 day')::timestamptz AT TIME ZONE 'Europe/Moscow') ON CONFLICT (provider, day) DO UPDATE SET quota_limit=EXCLUDED.quota_limit`, provider, limit)
 	return err
 }
 
@@ -1317,7 +1317,7 @@ func (t *pgTxStore) RecordApiCall(ctx context.Context, provider, endpoint string
 }
 
 func (t *pgTxStore) ListQuotas(ctx context.Context) ([]store.QuotaRow, error) {
-	rows, err := t.tx.Query(ctx, `SELECT provider, day::text, used, limit, reset_at::text FROM api_quotas ORDER BY day DESC, provider`)
+	rows, err := t.tx.Query(ctx, `SELECT provider, day::text, used, quota_limit, reset_at::text FROM api_quotas ORDER BY day DESC, provider`)
 	if err != nil {
 		return nil, err
 	}

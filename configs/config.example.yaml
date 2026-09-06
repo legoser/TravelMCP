@@ -82,6 +82,15 @@ geocoder:
 nominatim:
   url: "https://nominatim.openstreetmap.org"
 
+geocode:
+  ttl_verified: "2160h" # 90д — подтверждённые (Фаза 2, GEOCODE_TTL_VERIFIED)
+  ttl_disputed: "168h" # 7д — спорные/seed (Фаза 2, GEOCODE_TTL_DISPUTED)
+  # max_calls — deprecated, замена: квота БД api_quotas + TTL geocode_cache
+
+sync:
+  log_dir: "${SYNC_LOG_DIR:-data/logs}" # файлы операций sync_<run>.log.jsonl (Фаза 1)
+  coverage_gate: 0 # N% coverage-gate скелета, стартовый N — по Фазе 3 на Кузбассе (Фаза 4)
+
 verification:
   confidence_threshold: 0.6
   distance_m: 500

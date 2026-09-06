@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS providers (
   name text NOT NULL
 );
 INSERT INTO providers(code, name) VALUES
-  ('motis','MOTIS/OSM'), ('mintrans','Минтранс'), ('yandex','Яндекс'), ('osm','OSM'), ('gtfs','GTFS'), ('nominatim','Nominatim')
+  ('motis','MOTIS/OSM'), ('mintrans','Минтранс'), ('yandex','Яндекс'), ('osm','OSM'), ('gtfs','GTFS'), ('nominatim','Nominatim'), ('manual','Ручная правка оператора')
 ON CONFLICT DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS carriers (
@@ -100,7 +100,12 @@ CREATE TABLE IF NOT EXISTS terminals (
   valid_to date,
   is_current bool GENERATED ALWAYS AS (valid_to IS NULL) STORED,
   last_verified_at timestamptz,
-  is_locked bool NOT NULL DEFAULT false
+  is_locked bool NOT NULL DEFAULT false,
+  address text,
+  address_parts jsonb NOT NULL DEFAULT '{}'::jsonb,
+  transport_types text[] NOT NULL DEFAULT '{}',
+  object_type text,
+  enrichment_status text NOT NULL DEFAULT 'identity_only' CHECK (enrichment_status IN ('identity_only','enriched'))
 );
 CREATE INDEX IF NOT EXISTS idx_terminals_place ON terminals(place_id);
 CREATE INDEX IF NOT EXISTS idx_terminals_geom ON terminals USING gist(geom);
@@ -135,7 +140,7 @@ CREATE TABLE IF NOT EXISTS stop_names (
 CREATE TABLE IF NOT EXISTS terminal_identifiers (
   terminal_id bigint NOT NULL REFERENCES terminals(id) ON DELETE CASCADE,
   system text NOT NULL CHECK (system IN ('mintrans','yandex','osm','gtfs','motis','nominatim')),
-  code_type text NOT NULL CHECK (code_type IN ('op_reg','station_code','osm_id','gtfs_stop_id','motis_id','motis_stop_id','area','yandex_code')),
+  code_type text NOT NULL CHECK (code_type IN ('op_reg','station_code','osm_id','gtfs_stop_id','motis_id','motis_stop_id','area','yandex_code','esr_code')),
   code text NOT NULL,
   is_primary bool NOT NULL DEFAULT false,
   PRIMARY KEY (terminal_id, system, code_type),
@@ -166,9 +171,11 @@ CREATE TABLE IF NOT EXISTS provenance_history (
   confidence real NOT NULL CHECK (confidence >=0 AND confidence <=1),
   observed_at timestamptz NOT NULL DEFAULT now(),
   raw jsonb,
-  actor_id bigint REFERENCES users(id) ON DELETE SET NULL
+  actor_id bigint REFERENCES users(id) ON DELETE SET NULL,
+  sync_run_id bigint
 );
 CREATE INDEX IF NOT EXISTS idx_prov_hist_entity ON provenance_history(entity_type, entity_id, observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_prov_hist_sync_run ON provenance_history(sync_run_id);
 CREATE OR REPLACE FUNCTION trg_provenance_history() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN INSERT INTO provenance_history(entity_type, entity_id, source, confidence, observed_at, raw, actor_id) VALUES (NEW.entity_type, NEW.entity_id, NEW.source, NEW.confidence, NEW.observed_at, NEW.raw, NEW.actor_id); RETURN NEW; END; $$;
 DROP TRIGGER IF EXISTS trg_prov_history ON provenance;
@@ -177,35 +184,46 @@ CREATE TRIGGER trg_prov_history AFTER INSERT OR UPDATE ON provenance FOR EACH RO
 CREATE TABLE IF NOT EXISTS review_queue (
   entity_type text NOT NULL CHECK (entity_type IN ('place','terminal','stop','route','trip')),
   entity_id bigint NOT NULL,
-  reason text NOT NULL CHECK (reason IN ('low_confidence','missing_coords','duplicate_ambiguous','speed_implausible','seasonal_conflict','carrier_inn_null','conflicts_with_confirmed','legacy_missing_coords')),
+  reason text NOT NULL CHECK (reason IN (
+    'legacy_unmatched','skeleton_unverified','incomplete_trip','possible_merge','low_confidence','duplicate_ambiguous',
+    'missing_coords','speed_implausible','seasonal_conflict','carrier_inn_null','conflicts_with_confirmed','legacy_missing_coords')),
   score real,
   created_at timestamptz NOT NULL DEFAULT now(),
+  state text NOT NULL DEFAULT 'open' CHECK (state IN ('open','resolved','rejected')),
+  fingerprint text,
+  count int NOT NULL DEFAULT 1,
+  observed_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (entity_type, entity_id, reason)
 );
 
 -- legacy таблицы cities/stations/stops/station_codes удалены: импорт теперь пишет сразу в канон terminals/stops_canonical (см. docs/14-plan.md §3.3)
 
 -- 3.4 расписания
+-- routes.external_route_code — ЕДИНСТВЕННЫЙ natural key маршрута от источника
+-- (UNIQUE(source_provider, external_route_code), NOT NULL: коннектор обязан
+-- подставить реальный код либо синтезированный synthetic-ключ, §3.4 плана).
 CREATE TABLE IF NOT EXISTS routes (
   id bigserial PRIMARY KEY,
   carrier_id bigint REFERENCES carriers(id) ON DELETE SET NULL,
-  external_code text NOT NULL,
+  external_route_code text NOT NULL,
   short_name text,
   long_name text,
   mode text REFERENCES transport_modes(mode),
   external_uid text,
   ord int,
-  source_provider text REFERENCES providers(code),
+  -- Вторая половина составного NK: NOT NULL, иначе UNIQUE(source_provider,
+  -- external_route_code) не ловит дубли (NULL != NULL в Postgres).
+  source_provider text NOT NULL REFERENCES providers(code),
   valid_from date NOT NULL DEFAULT CURRENT_DATE,
   valid_to date,
   last_verified_at timestamptz,
-  UNIQUE(source_provider, external_code)
+  UNIQUE(source_provider, external_route_code)
 );
-CREATE INDEX IF NOT EXISTS idx_routes_external ON routes(external_code);
+CREATE INDEX IF NOT EXISTS idx_routes_external ON routes(external_route_code);
 CREATE INDEX IF NOT EXISTS idx_routes_carrier ON routes(carrier_id);
 
 CREATE TABLE IF NOT EXISTS services (
-  id int PRIMARY KEY,
+  id bigserial PRIMARY KEY,
   provider_id text NOT NULL REFERENCES providers(code),
   name text,
   start_date date,
@@ -214,13 +232,13 @@ CREATE TABLE IF NOT EXISTS services (
 CREATE INDEX IF NOT EXISTS idx_services_provider ON services(provider_id);
 
 CREATE TABLE IF NOT EXISTS service_days (
-  service_id int NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  service_id bigint NOT NULL REFERENCES services(id) ON DELETE CASCADE,
   weekday int CHECK(weekday >=0 AND weekday <=6),
   PRIMARY KEY(service_id, weekday)
 );
 
 CREATE TABLE IF NOT EXISTS service_exceptions (
-  service_id int NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  service_id bigint NOT NULL REFERENCES services(id) ON DELETE CASCADE,
   date date,
   exception_type text CHECK(exception_type IN ('added','removed')),
   PRIMARY KEY(service_id, date)
@@ -230,13 +248,26 @@ CREATE TABLE IF NOT EXISTS trips (
   id bigserial PRIMARY KEY,
   route_id bigint NOT NULL REFERENCES routes(id) ON DELETE CASCADE,
   provider_id text NOT NULL REFERENCES providers(code),
+  -- Канонический NK трипа: NOT NULL, идемпотентный ресинк через
+  -- UNIQUE(route_id, external_trip_code). NULL запрещён: коннектор ставит
+  -- реальный код либо детерминированный synthetic-код (§3.4 плана);
+  -- иначе UNIQUE не ловит дубли (NULL != NULL).
+  external_trip_code text NOT NULL,
   direction text,
+  direction_id int,
   service_days text,
   frequency_flag int,
   period text,
-  service_id int REFERENCES services(id) ON DELETE SET NULL,
+  service_id bigint REFERENCES services(id) ON DELETE SET NULL,
   headsign_ru text,
-  headsign_en text
+  headsign_en text,
+  duration_s int,
+  distance_m int,
+  method text CHECK (method IS NULL OR method IN ('sum_stop_times','haversine_detour')),
+  -- tombstone с точностью до момента синка (timestamptz), а не суток (date),
+  -- как у places/terminals/routes: трипы исчезают/воскресают внутри дня.
+  valid_to timestamptz,
+  UNIQUE(route_id, external_trip_code)
 );
 CREATE INDEX IF NOT EXISTS idx_trips_route ON trips(route_id);
 CREATE INDEX IF NOT EXISTS idx_trips_service ON trips(service_id);
@@ -322,12 +353,14 @@ CREATE TABLE IF NOT EXISTS api_keys (
 );
 CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
 
--- 3.7 квоты (§3.7) — пилот 42/54/70, строка на день PK(provider,day), атомарный ON CONFLICT
+-- 3.7 квоты (§3.7) — пилот 42/54/70, строка на день PK(provider,day), атомарный ON CONFLICT.
+-- Колонка лимита названа quota_limit, а не limit: limit — зарезервированное
+-- слово Postgres (SELECT ... LIMIT), требует кавычек в каждом запросе.
 CREATE TABLE IF NOT EXISTS api_quotas (
   provider text NOT NULL REFERENCES providers(code),
   day date NOT NULL,
   used int NOT NULL DEFAULT 0 CHECK (used >= 0),
-  limit int NOT NULL CHECK (limit > 0),
+  quota_limit int NOT NULL CHECK (quota_limit > 0),
   reset_at timestamptz,
   PRIMARY KEY(provider, day)
 );
@@ -510,7 +543,9 @@ CREATE INDEX IF NOT EXISTS idx_terminals_locked ON terminals(is_locked) WHERE is
 -- jobs queue (переиспользуемая) (§3.10) — создаётся до import_logs из-за FK
 CREATE TABLE IF NOT EXISTS jobs (
   id bigserial PRIMARY KEY,
-  type text NOT NULL CHECK (type IN ('import_gtfs','sync_mintrans','sync_rail','notify','cleanup')),
+  type text NOT NULL CHECK (type IN (
+    'import_gtfs','sync_mintrans','sync_rail','notify','cleanup',
+    'sync_stations','sync_refresh','sync_terminals_chunk','sync_trips_attach')),
   payload jsonb NOT NULL DEFAULT '{}'::jsonb,
   region text,
   state text NOT NULL CHECK (state IN ('pending','running','retry','done','dead')) DEFAULT 'pending',
@@ -579,4 +614,118 @@ LEFT JOIN terminal_identifiers ti ON ti.terminal_id = t.id AND ti.is_primary = t
 -- карантин legacy-дефектов (§7 ревью): lat=0 или дубли 0м — сразу в review_queue (разовый скрипт, не триггер)
 -- INSERT INTO review_queue(entity_type, entity_id, reason, score)
 -- SELECT 'terminal', id, 'legacy_missing_coords', 0 FROM terminals WHERE ST_Y(geom::geometry)=0 AND ST_X(geom::geometry)=0 ON CONFLICT DO NOTHING;
+
+-- === Фаза 1 (docs/14-plan.md §2): терминалы-первыми, всё в одном 001_initial.sql ===
+CREATE TABLE IF NOT EXISTS terminal_aliases (
+  terminal_id bigint NOT NULL REFERENCES terminals(id) ON DELETE CASCADE,
+  alias text NOT NULL,
+  lang text NOT NULL CHECK (lang IN ('ru','en')),
+  source text REFERENCES providers(code),
+  observed_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (terminal_id, alias, lang)
+);
+
+-- old_id намеренно С FK: старая строка terminals не удаляется физически,
+-- а тумстоунится через SCD2 valid_to (аудит слияний); карта redirect плоская.
+-- Обе ссылки — RESTRICT (без ON DELETE CASCADE): жёсткое удаление любого конца
+-- не должно тихо стирать историю слияний.
+CREATE TABLE IF NOT EXISTS terminal_merges (
+  old_id bigint UNIQUE NOT NULL REFERENCES terminals(id),
+  new_id bigint NOT NULL REFERENCES terminals(id),
+  reason text,
+  at timestamptz NOT NULL DEFAULT now(),
+  actor_id bigint REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS staging_trips (
+  id bigserial PRIMARY KEY,
+  source text NOT NULL REFERENCES providers(code),
+  external_route_code text NOT NULL,
+  external_trip_code text NOT NULL,
+  -- TRUE, если NK синтезирован коннектором (нестабильный код источника, §3.4):
+  -- только такие строки участвуют в churn-мониторинге synthetic-ключей.
+  is_synthetic_key bool NOT NULL DEFAULT false,
+  route_raw jsonb NOT NULL DEFAULT '{}'::jsonb,
+  region text,
+  transport_type text,
+  state text NOT NULL DEFAULT 'pending',
+  matched_stop_times jsonb NOT NULL DEFAULT '[]'::jsonb,
+  unmatched_stops jsonb NOT NULL DEFAULT '[]'::jsonb,
+  retry_count int NOT NULL DEFAULT 0,
+  last_attempt_at timestamptz,
+  UNIQUE (source, external_route_code, external_trip_code)
+);
+
+CREATE TABLE IF NOT EXISTS trip_sources (
+  trip_id bigint NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+  source text NOT NULL REFERENCES providers(code),
+  observed_at timestamptz NOT NULL DEFAULT now(),
+  price numeric,
+  price_currency text,
+  schedule_url text,
+  duration_s int,
+  distance_m int,
+  method text CHECK (method IS NULL OR method IN ('sum_stop_times','haversine_detour')),
+  PRIMARY KEY (trip_id, source)
+);
+
+CREATE TABLE IF NOT EXISTS attribute_state (
+  entity_type text NOT NULL,
+  entity_id bigint NOT NULL,
+  field text NOT NULL,
+  value jsonb NOT NULL,
+  -- при ручной правке (actor_id заполнен) source='manual' (строка в providers).
+  source text NOT NULL REFERENCES providers(code),
+  confidence real NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+  observed_at timestamptz NOT NULL DEFAULT now(),
+  actor_id bigint REFERENCES users(id) ON DELETE SET NULL,
+  origin text NOT NULL DEFAULT 'live' CHECK (origin IN ('live','seed')),
+  sync_run_id bigint,
+  PRIMARY KEY (entity_type, entity_id, field, source)
+);
+CREATE INDEX IF NOT EXISTS idx_attribute_state_entity_field ON attribute_state(entity_type, entity_id, field);
+CREATE INDEX IF NOT EXISTS idx_attribute_state_sync_run ON attribute_state(sync_run_id);
+
+CREATE TABLE IF NOT EXISTS geocode_cache (
+  query_norm text NOT NULL,
+  provider text NOT NULL REFERENCES providers(code),
+  response jsonb NOT NULL DEFAULT '{}'::jsonb,
+  observed_at timestamptz NOT NULL DEFAULT now(),
+  origin text NOT NULL DEFAULT 'live' CHECK (origin IN ('live','seed')),
+  -- Класс TTL проставляет верификатор после confirmed-матча (§3.11):
+  -- verified — 90д, disputed — 7д. Политику запрещено выводить из возраста
+  -- записи без привязки к исходу верификации.
+  ttl_class text NOT NULL DEFAULT 'disputed' CHECK (ttl_class IN ('verified','disputed')),
+  PRIMARY KEY (query_norm, provider)
+);
+
+CREATE TABLE IF NOT EXISTS sync_runs (
+  id bigserial PRIMARY KEY,
+  plan_id text NOT NULL,
+  kind text NOT NULL,
+  input_sha text,
+  tag text,
+  state text NOT NULL DEFAULT 'running' CHECK (state IN ('running','done','dead')),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  finished_at timestamptz,
+  summary jsonb NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE TABLE IF NOT EXISTS sync_chunks (
+  id bigserial PRIMARY KEY,
+  run_id bigint NOT NULL REFERENCES sync_runs(id) ON DELETE CASCADE,
+  entity text NOT NULL,
+  chunk_key text NOT NULL,
+  state text NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','running','done','dead')),
+  plan_id_done text,
+  lease_at timestamptz,
+  attempts int NOT NULL DEFAULT 0,
+  last_error text,
+  UNIQUE (run_id, entity, chunk_key)
+);
+
+CREATE OR REPLACE VIEW v_stale_attributes AS
+SELECT entity_type, entity_id, field, source, confidence, observed_at, origin, actor_id
+FROM attribute_state;
+
 

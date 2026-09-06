@@ -308,7 +308,7 @@ func ImportIntercityWithResolver(ctx context.Context, s store.Store, path string
 		for _, r := range ds.Routes {
 			carrierKey := r.Carrier + "|" + r.CarrierINN
 			cid := carrierMap[carrierKey]
-			rr := store.RouteRow{ProviderID: "intercity", CarrierID: cid, ExternalCode: r.Reg, ShortName: r.Reg, LongName: r.Name, Mode: string(model.ModeBus)}
+			rr := store.RouteRow{ProviderID: "intercity", CarrierID: cid, ExternalRouteCode: r.Reg, ShortName: r.Reg, LongName: r.Name, Mode: string(model.ModeBus)}
 			id, _ := tx.UpsertRoute(ctx, rr)
 			routeIDMap[r.Reg] = id
 			primaryRegion := ""
@@ -409,7 +409,10 @@ func ImportIntercityWithResolver(ctx context.Context, s store.Store, path string
 						return
 					}
 					mu.Lock()
-					pending = append(pending, pendingTrip{row: store.TripRow{RouteID: routeID, ProviderID: "intercity", Direction: sched.Direction, ServiceID: sched.ServiceID}, times: times})
+					// У реестра нет кода трипа: детерминированный synthetic NK
+					// (направление + service + прогон), NOT NULL по схеме.
+					code := fmt.Sprintf("synthetic:%s:%d:%d", sched.Direction, sched.ServiceID, run)
+					pending = append(pending, pendingTrip{row: store.TripRow{RouteID: routeID, ProviderID: "intercity", ExternalTripCode: code, Direction: sched.Direction, ServiceID: sched.ServiceID}, times: times})
 					mu.Unlock()
 				}(sc, routeID, period, run)
 			}

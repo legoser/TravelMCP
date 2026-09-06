@@ -49,10 +49,11 @@ type GeoResolver struct {
 	multi     geocoder.Geocoder
 	limit     int
 	threshold float64
-	maxCalls  int
-	mu        sync.Mutex
-	apiCalls  int
-	cache     map[string]resolveResult
+	// Deprecated: заменён квотой БД (api_quotas) + TTL geocode_cache (Фаза 2).
+	maxCalls int
+	mu       sync.Mutex
+	apiCalls int
+	cache    map[string]resolveResult
 }
 
 type resolveResult struct {

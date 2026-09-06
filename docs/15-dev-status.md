@@ -54,7 +54,9 @@
 
 ```
 internal/providers/     Provider-интерфейс, Registry, synth (мок), intercity (JSON, legacy)
-internal/geo/           гаверсин, ближайшие остановки, время пешего доступа
+internal/geo/           гаверсин, ближайшие остановки, время пешего доступа (`GeoResolver.maxCalls` — Deprecated, замена: квота БД + TTL)
+internal/sync/          Фазы 0–1: `planid` (plan_id + ChunkFresh), `replay` (каноническая проекция + diff), `overrides` (экспорт/импорт решений оператора), `elect` (per-field конкурс + legacy-матчинг)
+internal/geocoder/      fallback + `cached.go` (lookup `geocode_cache`, TTL 90д/7д, stale-while-revalidate, квота БД) + `seed.go` (загрузка `{yandex,nominatim}_geo.json` с `origin='seed'`)
 internal/planner/       CSA-поиск + сборка Journey (работает поверх Provider, не Store)
 internal/store/         Store/PlaceStore и т.п. интерфейсы; postgres/, sqlite/ (legacy, к удалению), memory/ (тесты)
 internal/model/adapted.go   AdaptedRecord — единый промежуточный формат коннекторов
@@ -96,6 +98,14 @@ scripts/extract-minstran.py  XLSX-реестр Минтранса → JSON да�
 список только в коде/`configs/`.
 
 ## 5. Референс тестовых данных
+
+### 5.0 Фазы 0–2 (выполнено)
+
+- **Фаза 1:** `migrations/001_initial.sql` — единая миграция: `terminals.address/address_parts/transport_types/object_type/enrichment_status`, `terminal_aliases`, `terminal_merges`, `routes.external_route_code` + `UNIQUE(source_provider, external_route_code)`, `trips.external_trip_code/direction_id/duration_s/distance_m/method/valid_to` + `UNIQUE(route_id, external_trip_code)`, `staging_trips`, `trip_sources`, `attribute_state` (+`value`,`origin`,`sync_run_id`), `geocode_cache` (+`origin`), `review_queue` (+`state`,`fingerprint`,`count`,`observed_at`, enum-канон §3.10), `provenance_history.sync_run_id` + индекс, `sync_runs` (+`summary`)/`sync_chunks`, типы джоб `sync_*` в `jobs`, `v_stale_attributes`. Без `ALTER` — всё в исходных `CREATE TABLE`. Инфраструктура: `internal/sync` (plan_id, replay-diff, overrides), `scripts/doc-lint.sh`, `testdata/golden_*.json`.
+- **Фаза 2:** `CachedGeocoder` (hit без квоты, stale-while-revalidate, singleflight на ключ), TTL из конфига `geocode.ttl_verified/ttl_disputed` (90д/7д, env `GEOCODE_TTL_*`), seed `origin='seed'` из `data/reestr/{yandex,nominatim}_geo.json` (не голос за finalize), квота БД через инжектируемый `QuotaFunc`, `GEOCODE_MAX_CALLS`/`GeoResolver.maxCalls` — Deprecated.
+- **Фаза 0:** per-field конкурс `ElectField` (`geom` — повышенный вес скелета OSM/MOTIS, остальное `confidence → observed_at`, `actor_id` — sticky-барьер поля, `seed` — только fallback), без пары — `MatchLegacy` → `review_queue{legacy_unmatched}`. Исполняется внутри Фазы 3 после построения скелета.
+- Предсуществующая проблема (не моя регрессия): `testdata/test.json` не закоммичена — падают `internal/planner`, `internal/providers` (проверено на чистом дереве через `git stash`).
+- Ревю схемы (все 11 пунктов закрыты в `001_initial.sql` без `ALTER`): NK `external_route_code`/`external_trip_code` — `NOT NULL`, дубль `routes.external_code` удалён, `source/provider` новых таблиц — `REFERENCES providers(code)` (+seed `manual`), `geocode_cache.ttl_class` (`verified`/`disputed`), `terminal_merges.old_id` — FK (старые строки тумстоунятся, не удаляются), `esr_code` в `code_type`, `method` — CHECK по закрытому списку, `api_quotas.quota_limit` (не `limit`), `services.id` — `bigserial` (+`bigint` FK), `trips.valid_to` — `timestamptz` с комментарием, `staging_trips.is_synthetic_key`. Go-код синхронизирован (апсерты по NK, synthetic-код трипа в импортёре, идемпотентность memory-store + тесты).
 
 ### 5.1 synth (мок-сеть, только тесты/демо)
 

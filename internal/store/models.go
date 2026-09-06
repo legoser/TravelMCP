@@ -60,26 +60,27 @@ type CarrierRow struct {
 }
 
 type RouteRow struct {
-	ID           int64
-	ProviderID   string
-	CarrierID    int64
-	ExternalCode string
-	ShortName    string
-	LongName     string
-	Mode         string
-	ExternalUID  string
-	Ord          int
+	ID                int64
+	ProviderID        string
+	CarrierID         int64
+	ExternalRouteCode string
+	ShortName         string
+	LongName          string
+	Mode              string
+	ExternalUID       string
+	Ord               int
 }
 
 type TripRow struct {
-	ID            int64
-	RouteID       int64
-	ProviderID    string
-	Direction     string
-	ServiceDays   string
-	FrequencyFlag int
-	Period        string
-	ServiceID     int
+	ID               int64
+	RouteID          int64
+	ProviderID       string
+	ExternalTripCode string
+	Direction        string
+	ServiceDays      string
+	FrequencyFlag    int
+	Period           string
+	ServiceID        int
 }
 
 type FrequencyRow struct {

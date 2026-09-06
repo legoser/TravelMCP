@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -56,8 +57,11 @@ type GTFS struct {
 }
 
 type Geocode struct {
-	Enabled  *bool `yaml:"enabled"`
-	MaxCalls int   `yaml:"max_calls"`
+	Enabled *bool `yaml:"enabled"`
+	// Deprecated: in-process лимит вызовов заменён квотой БД (api_quotas) + TTL geocode_cache (Фаза 2).
+	MaxCalls    int    `yaml:"max_calls"`
+	TTLVerified string `yaml:"ttl_verified"`
+	TTLDisputed string `yaml:"ttl_disputed"`
 }
 
 type Cities struct {
@@ -219,7 +223,7 @@ func Defaults() *Config {
 		},
 		Cities:    Cities{Path: "configs/cities.yaml"},
 		Geocoder:  Geocoder{Kind: "", URL: "", Key: "", Attempts: 3, Limit: 5},
-		Geocode:   Geocode{Enabled: boolPtr(true), MaxCalls: 0},
+		Geocode:   Geocode{Enabled: boolPtr(true), MaxCalls: 0, TTLVerified: "2160h", TTLDisputed: "168h"},
 		Yandex:    Yandex{GeocodeURL: "https://geocode-maps.yandex.ru/1.x", GeocodeKind: ""},
 		Nominatim: Nominatim{URL: "https://nominatim.openstreetmap.org"},
 		Motis:     Motis{URL: "http://192.168.57.14:8077"},
@@ -327,6 +331,12 @@ func syncLegacy(cfg *Config) {
 	}
 	if cfg.Geocode.Enabled == nil {
 		cfg.Geocode.Enabled = boolPtr(true)
+	}
+	if cfg.Geocode.TTLVerified == "" {
+		cfg.Geocode.TTLVerified = "2160h"
+	}
+	if cfg.Geocode.TTLDisputed == "" {
+		cfg.Geocode.TTLDisputed = "168h"
 	}
 	if cfg.GTFS.TmpDir == "" {
 		cfg.GTFS.TmpDir = "data/tmp/gtfs"
@@ -478,6 +488,12 @@ func applyEnv(cfg *Config) {
 			cfg.Geocode.MaxCalls = n
 		}
 	}
+	if v := os.Getenv("GEOCODE_TTL_VERIFIED"); v != "" {
+		cfg.Geocode.TTLVerified = v
+	}
+	if v := os.Getenv("GEOCODE_TTL_DISPUTED"); v != "" {
+		cfg.Geocode.TTLDisputed = v
+	}
 	if v := os.Getenv("GTFS_TMP_DIR"); v != "" {
 		cfg.GTFS.TmpDir = v
 	}
@@ -598,6 +614,12 @@ func setByPath(cfg *Config, parts []string, v string) {
 			b := v == "1" || v == "true"
 			cfg.Geocode.Enabled = &b
 		}
+		if len(parts) == 2 && parts[1] == "ttl_verified" {
+			cfg.Geocode.TTLVerified = v
+		}
+		if len(parts) == 2 && parts[1] == "ttl_disputed" {
+			cfg.Geocode.TTLDisputed = v
+		}
 		if len(parts) == 2 && parts[1] == "max_calls" {
 			if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 				cfg.Geocode.MaxCalls = n
@@ -666,6 +688,18 @@ func setByPath(cfg *Config, parts []string, v string) {
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+func (g Geocode) TTL() (verified, disputed time.Duration, err error) {
+	verified, err = time.ParseDuration(g.TTLVerified)
+	if err != nil {
+		return 0, 0, fmt.Errorf("config: geocode.ttl_verified: %w", err)
+	}
+	disputed, err = time.ParseDuration(g.TTLDisputed)
+	if err != nil {
+		return 0, 0, fmt.Errorf("config: geocode.ttl_disputed: %w", err)
+	}
+	return verified, disputed, nil
+}
 
 func splitCsv(v string) []string {
 	parts := strings.Split(v, ",")

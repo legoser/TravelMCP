@@ -65,6 +65,9 @@ func main() {
 			logger.Info("geocode disabled by config")
 		} else {
 			maxCalls := cfg.Geocode.MaxCalls
+			if maxCalls > 0 {
+				logger.Warn("geocode.max_calls deprecated: используйте квоту БД api_quotas + TTL geocode_cache (Фаза 2)")
+			}
 			if maxCalls <= 0 {
 				maxCalls = 500
 			}
