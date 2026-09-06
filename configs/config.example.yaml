@@ -96,6 +96,7 @@ sync:
   legacy_threshold: 0.6 # порог legacy_match Фазы 0
   coverage_soft_score: 0.4 # мягкий порог ScorePair для coverage-gate (§5.4)
   trips_churn_threshold: 0.2 # churn-alert attach трипов: доля added+removed+changed за прогон, стоп при превышении (Фаза 4)
+  trips_max_speed_kmh: 200 # физический предел скорости автобуса для hard-валидатора (Фаза 4.2)
 
 verification:
   confidence_threshold: 0.6

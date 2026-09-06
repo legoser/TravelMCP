@@ -57,8 +57,12 @@ func TestScorepairDefaults(t *testing.T) {
 	if cfg.Verification.ScoreAmbiguity != 0.05 {
 		t.Fatalf("score_ambiguity = %v, want 0.05", cfg.Verification.ScoreAmbiguity)
 	}
+	if cfg.Sync.TripsMaxSpeedKmh != 200 {
+		t.Fatalf("trips_max_speed_kmh = %v, want 200", cfg.Sync.TripsMaxSpeedKmh)
+	}
 	t.Setenv("VERIFICATION_SCORE_MARGIN", "0.2")
 	t.Setenv("VERIFICATION_SCORE_AMBIGUITY", "0.07")
+	t.Setenv("SYNC_TRIPS_MAX_SPEED_KMH", "250")
 	cfg, err = Load("")
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -68,6 +72,9 @@ func TestScorepairDefaults(t *testing.T) {
 	}
 	if cfg.Verification.ScoreAmbiguity != 0.07 {
 		t.Fatalf("score_ambiguity = %v, want 0.07", cfg.Verification.ScoreAmbiguity)
+	}
+	if cfg.Sync.TripsMaxSpeedKmh != 250 {
+		t.Fatalf("trips_max_speed_kmh = %v, want 250", cfg.Sync.TripsMaxSpeedKmh)
 	}
 }
 

@@ -1,10 +1,15 @@
 [
   {
     "id": "stop-matches-terminal",
-    "stop": {"name": "Кемерово автовокзал", "seq": 1},
-    "terminal": {"name": "Кемерово автовокзал", "lat": 55.3416, "lon": 86.061},
     "task": "stop_terminal",
-    "expect": "verified"
+    "matcher": "scorepair",
+    "class": "urban",
+    "stop": {"name": "Кемерово автовокзал", "lat": 55.3416, "lon": 86.061, "source": "mintrans", "settlement": "кемерово"},
+    "terminals": [
+      {"name": "Кемерово автовокзал", "lat": 55.3417, "lon": 86.0612, "source": "osm", "settlement": "кемерово", "transport": "bus"}
+    ],
+    "expect": "verified",
+    "expect_best": 0
   },
   {
     "id": "sequence-monotonic",
