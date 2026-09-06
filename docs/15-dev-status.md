@@ -86,6 +86,10 @@ scripts/extract-minstran.py  XLSX-реестр Минтранса → JSON да�
 | `PROVIDERS_ENABLED` | список активных `Provider` (пусто по умолчанию; `synth` — тесты/демо; `intercity` — реальный реестр) |
 | `INTERCITY_REESTR_PATH` | путь к `data/reestr/regions.json` для `intercity` |
 | `ADMIN_TOKEN` | токен админки текущей фазы (до внедрения полноценного JWT/ролей по плану Фазы 5) |
+| `SYNC_LOG_DIR` | каталог файлов операций `sync_<run>.log.jsonl` (план, Фаза 1; конфиг `sync.log_dir`) |
+| `SYNC_COVERAGE_GATE` | порог N% coverage-gate скелета (план, Фаза 4; конфиг `sync.coverage_gate`) |
+| `GEOCODE_TTL_VERIFIED` / `GEOCODE_TTL_DISPUTED` | 90д / 7д для `geocode_cache` (план, Фаза 2; конфиг `geocode.ttl_*`) |
+| *(конфиг-файл, не env)* | `density_thresholds` + `trust[pair]` ScorePair — путь в `configs/`, не env (план §3.8) |
 
 Новые переменные (квоты Яндекса, пороги verification, JWT-секрет для
 Фазы 5 и т.п.) — добавлять в эту таблицу по мере появления, не хранить
