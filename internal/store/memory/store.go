@@ -43,59 +43,65 @@ type PlaceRow = store.PlaceRow
 type TerminalRow = store.TerminalRow
 
 type MemoryStore struct {
-	mu            sync.RWMutex
-	cities        map[int64]CityRow
-	stations      map[int64]StationRow
-	stops         map[int64]StopRow
-	stationCodes  []StationCodeRow
-	carriers      map[int64]CarrierRow
-	routes        map[int64]RouteRow
-	trips         map[int64]TripRow
-	frequencies   []FrequencyRow
-	stopTimes     []StopTimeRow
-	transfers     []TransferRow
-	quality       []QualityRow
-	imports       map[string]time.Time
-	users         map[int64]UserRow
-	usersByEmail  map[string]int64
-	apiKeys       map[int64]ApiKeyRow
-	apiKeysByKey  map[string]int64
-	quotas        map[string]store.QuotaRow
-	apiCalls      []store.ApiCallRow
-	jobs          map[int64]store.JobRow
-	auditLogs     []store.AuditLogRow
-	terminals     map[int64]TerminalRow
-	terminalNames map[int64]map[string]string
-	terminalTags  map[int64]map[string]string
-	aliases       map[int64]map[string]store.TerminalAliasRow
-	attrStates    map[string]store.AttributeStateRow
-	syncRuns      map[int64]store.SyncRunRow
-	reviewQueue   []store.ReviewQueueRow
-	nextID        int64
+	mu             sync.RWMutex
+	cities         map[int64]CityRow
+	stations       map[int64]StationRow
+	stops          map[int64]StopRow
+	stationCodes   []StationCodeRow
+	carriers       map[int64]CarrierRow
+	routes         map[int64]RouteRow
+	trips          map[int64]TripRow
+	frequencies    []FrequencyRow
+	stopTimes      []StopTimeRow
+	transfers      []TransferRow
+	quality        []QualityRow
+	imports        map[string]time.Time
+	users          map[int64]UserRow
+	usersByEmail   map[string]int64
+	apiKeys        map[int64]ApiKeyRow
+	apiKeysByKey   map[string]int64
+	quotas         map[string]store.QuotaRow
+	apiCalls       []store.ApiCallRow
+	jobs           map[int64]store.JobRow
+	auditLogs      []store.AuditLogRow
+	terminals      map[int64]TerminalRow
+	terminalNames  map[int64]map[string]string
+	terminalTags   map[int64]map[string]string
+	aliases        map[int64]map[string]store.TerminalAliasRow
+	attrStates     map[string]store.AttributeStateRow
+	syncRuns       map[int64]store.SyncRunRow
+	syncChunks     map[int64]store.SyncChunkRow
+	terminalIdents map[int64][]model.AdaptedIdentifier
+	provenance     map[string]store.ProvenanceVote
+	reviewQueue    []store.ReviewQueueRow
+	nextID         int64
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		cities:        make(map[int64]CityRow),
-		stations:      make(map[int64]StationRow),
-		stops:         make(map[int64]StopRow),
-		carriers:      make(map[int64]CarrierRow),
-		routes:        make(map[int64]RouteRow),
-		trips:         make(map[int64]TripRow),
-		imports:       make(map[string]time.Time),
-		users:         make(map[int64]UserRow),
-		usersByEmail:  make(map[string]int64),
-		apiKeys:       make(map[int64]ApiKeyRow),
-		apiKeysByKey:  make(map[string]int64),
-		quotas:        make(map[string]store.QuotaRow),
-		jobs:          make(map[int64]store.JobRow),
-		terminals:     make(map[int64]TerminalRow),
-		terminalNames: make(map[int64]map[string]string),
-		terminalTags:  make(map[int64]map[string]string),
-		aliases:       make(map[int64]map[string]store.TerminalAliasRow),
-		attrStates:    make(map[string]store.AttributeStateRow),
-		syncRuns:      make(map[int64]store.SyncRunRow),
-		nextID:        1,
+		cities:         make(map[int64]CityRow),
+		stations:       make(map[int64]StationRow),
+		stops:          make(map[int64]StopRow),
+		carriers:       make(map[int64]CarrierRow),
+		routes:         make(map[int64]RouteRow),
+		trips:          make(map[int64]TripRow),
+		imports:        make(map[string]time.Time),
+		users:          make(map[int64]UserRow),
+		usersByEmail:   make(map[string]int64),
+		apiKeys:        make(map[int64]ApiKeyRow),
+		apiKeysByKey:   make(map[string]int64),
+		quotas:         make(map[string]store.QuotaRow),
+		jobs:           make(map[int64]store.JobRow),
+		terminals:      make(map[int64]TerminalRow),
+		terminalNames:  make(map[int64]map[string]string),
+		terminalTags:   make(map[int64]map[string]string),
+		aliases:        make(map[int64]map[string]store.TerminalAliasRow),
+		attrStates:     make(map[string]store.AttributeStateRow),
+		syncRuns:       make(map[int64]store.SyncRunRow),
+		syncChunks:     make(map[int64]store.SyncChunkRow),
+		terminalIdents: make(map[int64][]model.AdaptedIdentifier),
+		provenance:     make(map[string]store.ProvenanceVote),
+		nextID:         1,
 	}
 }
 
@@ -791,6 +797,9 @@ func (m *MemoryStore) UpsertTerminal(ctx context.Context, r TerminalRow, names m
 		r.EnrichmentStatus = "identity_only"
 	}
 	m.terminals[r.ID] = r
+	if len(identifiers) > 0 {
+		m.terminalIdents[r.ID] = append([]model.AdaptedIdentifier{}, identifiers...)
+	}
 	if m.terminalNames[r.ID] == nil {
 		m.terminalNames[r.ID] = map[string]string{}
 	}
@@ -892,6 +901,133 @@ func (m *MemoryStore) FinishSyncRun(ctx context.Context, id int64, state, summar
 	return nil
 }
 
+func (m *MemoryStore) EnsureSyncChunk(ctx context.Context, runID int64, entity, chunkKey string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, c := range m.syncChunks {
+		if c.RunID == runID && c.Entity == entity && c.ChunkKey == chunkKey {
+			return id, nil
+		}
+	}
+	id := m.allocID()
+	m.syncChunks[id] = store.SyncChunkRow{ID: id, RunID: runID, Entity: entity, ChunkKey: chunkKey, State: "pending"}
+	return id, nil
+}
+
+func (m *MemoryStore) GetSyncChunk(ctx context.Context, runID int64, entity, chunkKey string) (store.SyncChunkRow, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, c := range m.syncChunks {
+		if c.RunID == runID && c.Entity == entity && c.ChunkKey == chunkKey {
+			return c, true
+		}
+	}
+	return store.SyncChunkRow{}, false
+}
+
+func (m *MemoryStore) CompleteSyncChunk(ctx context.Context, id int64, planIDDone, state, lastError string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.syncChunks[id]
+	if !ok {
+		return fmt.Errorf("sync chunk %d not found", id)
+	}
+	c.State = state
+	c.PlanIDDone = planIDDone
+	c.LastError = lastError
+	c.Attempts++
+	m.syncChunks[id] = c
+	return nil
+}
+
+func (m *MemoryStore) ListAttributeStates(ctx context.Context, entityType string, entityID int64) ([]store.AttributeStateRow, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []store.AttributeStateRow
+	for _, a := range m.attrStates {
+		if a.EntityType == entityType && a.EntityID == entityID {
+			out = append(out, a)
+		}
+	}
+	sortSlice(out, func(a, b store.AttributeStateRow) bool {
+		if a.Field != b.Field {
+			return a.Field < b.Field
+		}
+		return a.Source < b.Source
+	})
+	return out, nil
+}
+
+func (m *MemoryStore) skeletonRunIDs() map[int64]bool {
+	out := map[int64]bool{}
+	for id, r := range m.syncRuns {
+		if r.Kind == "skeleton" {
+			out[id] = true
+		}
+	}
+	return out
+}
+
+func (m *MemoryStore) hasSkeletonState(id int64, skelRuns map[int64]bool) bool {
+	for _, a := range m.attrStates {
+		if a.EntityType == "terminal" && a.EntityID == id && a.SyncRunID != nil && skelRuns[*a.SyncRunID] {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *MemoryStore) ListLegacyTerminals(ctx context.Context) ([]store.LegacyTerminalRow, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	skel := m.skeletonRunIDs()
+	var out []store.LegacyTerminalRow
+	for id, tr := range m.terminals {
+		if m.hasSkeletonState(id, skel) {
+			continue
+		}
+		name := ""
+		enName := ""
+		if m.terminalNames[id] != nil {
+			name = m.terminalNames[id]["ru"]
+			enName = m.terminalNames[id]["en"]
+		}
+		r := store.LegacyTerminalRow{ID: id, NameRu: name, NameEn: enName, Lat: tr.Lat, Lon: tr.Lon, Tz: tr.Tz, Identifiers: append([]model.AdaptedIdentifier{}, m.terminalIdents[id]...)}
+		prefix := "terminal\x00" + fmt.Sprint(id) + "\x00"
+		for key, v := range m.provenance {
+			if strings.HasPrefix(key, prefix) {
+				r.Votes = append(r.Votes, v)
+			}
+		}
+		out = append(out, r)
+	}
+	sortSlice(out, func(a, b store.LegacyTerminalRow) bool { return a.ID < b.ID })
+	return out, nil
+}
+
+func (m *MemoryStore) ListSkeletonTerminals(ctx context.Context) ([]store.SkeletonTerminalRow, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	skel := m.skeletonRunIDs()
+	var out []store.SkeletonTerminalRow
+	for id, tr := range m.terminals {
+		if !m.hasSkeletonState(id, skel) {
+			continue
+		}
+		name := ""
+		if m.terminalNames[id] != nil {
+			name = m.terminalNames[id]["ru"]
+		}
+		settlement := ""
+		if m.terminalTags[id] != nil {
+			settlement = m.terminalTags[id]["settlement"]
+		}
+		out = append(out, store.SkeletonTerminalRow{ID: id, NameRu: name, Lat: tr.Lat, Lon: tr.Lon, Settlement: settlement, Identifiers: append([]model.AdaptedIdentifier{}, m.terminalIdents[id]...), EnrichmentStatus: tr.EnrichmentStatus})
+	}
+	sortSlice(out, func(a, b store.SkeletonTerminalRow) bool { return a.ID < b.ID })
+	return out, nil
+}
+
 func (m *MemoryStore) DeleteReviewQueue(ctx context.Context, entityType string, entityID int64, reason string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -905,7 +1041,16 @@ func (m *MemoryStore) DeleteReviewQueue(ctx context.Context, entityType string, 
 	m.reviewQueue = kept
 	return nil
 }
-func (m *MemoryStore) SaveProvenance(ctx context.Context, p model.Provenance) error { return nil }
+func (m *MemoryStore) SaveProvenance(ctx context.Context, p model.Provenance) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	at := p.ObservedAt.Unix()
+	if at == 0 {
+		at = time.Now().Unix()
+	}
+	m.provenance[p.EntityType+"\x00"+fmt.Sprint(p.EntityID)+"\x00"+p.Source] = store.ProvenanceVote{Source: p.Source, Confidence: p.Confidence, ObservedAt: at}
+	return nil
+}
 func (m *MemoryStore) SaveReviewQueue(ctx context.Context, e model.ReviewQueueEntry) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

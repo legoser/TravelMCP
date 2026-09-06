@@ -29,6 +29,29 @@ INSERT INTO providers(code, name) VALUES
   ('motis','MOTIS/OSM'), ('mintrans','Минтранс'), ('yandex','Яндекс'), ('osm','OSM'), ('gtfs','GTFS'), ('nominatim','Nominatim'), ('manual','Ручная правка оператора')
 ON CONFLICT DO NOTHING;
 
+-- users/api_keys — раньше остальных сущностей: provenance/attribute_state/
+-- terminal_merges/audit_log ссылаются на users(id), а файл применяется сверху
+-- вниз одним проходом (иначе на чистой БД цепочка provenance не создаётся).
+CREATE TABLE IF NOT EXISTS users (
+  id bigserial PRIMARY KEY,
+  email text UNIQUE,
+  pass_hash text,
+  status text,
+  role text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  config text
+);
+
+CREATE TABLE IF NOT EXISTS api_keys (
+  id bigserial PRIMARY KEY,
+  user_id bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  key text UNIQUE,
+  scopes text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  last_used timestamptz
+);
+CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
+
 CREATE TABLE IF NOT EXISTS carriers (
   id bigserial PRIMARY KEY,
   inn text,
@@ -135,13 +158,17 @@ CREATE TABLE IF NOT EXISTS stop_names (
   PRIMARY KEY (stop_id, lang)
 );
 
+-- PK включает code: схлопнутый терминал хранит НЕСКОЛЬКО внешних кодов одной
+-- системы (два osm_id остановок с двух сторон дороги); старый ключ
+-- (terminal_id, system, code_type) тихо затирал все коды кроме последнего.
+-- Глобальная уникальность кода — по-прежнему UNIQUE(system, code).
 CREATE TABLE IF NOT EXISTS terminal_identifiers (
   terminal_id bigint NOT NULL REFERENCES terminals(id) ON DELETE CASCADE,
   system text NOT NULL CHECK (system IN ('mintrans','yandex','osm','gtfs','motis','nominatim')),
   code_type text NOT NULL CHECK (code_type IN ('op_reg','station_code','osm_id','gtfs_stop_id','motis_id','motis_stop_id','area','yandex_code','esr_code')),
   code text NOT NULL,
   is_primary bool NOT NULL DEFAULT false,
-  PRIMARY KEY (terminal_id, system, code_type),
+  PRIMARY KEY (terminal_id, system, code_type, code),
   UNIQUE (system, code)
 );
 
@@ -330,26 +357,6 @@ CREATE TABLE IF NOT EXISTS imports (
   UNIQUE(provider_id, checksum)
 );
 CREATE INDEX IF NOT EXISTS idx_imports_provider_at ON imports(provider_id, at DESC);
-
-CREATE TABLE IF NOT EXISTS users (
-  id bigserial PRIMARY KEY,
-  email text UNIQUE,
-  pass_hash text,
-  status text,
-  role text,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  config text
-);
-
-CREATE TABLE IF NOT EXISTS api_keys (
-  id bigserial PRIMARY KEY,
-  user_id bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  key text UNIQUE,
-  scopes text,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  last_used timestamptz
-);
-CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
 
 -- 3.7 квоты (§3.7) — пилот 42/54/70, строка на день PK(provider,day), атомарный ON CONFLICT.
 -- Колонка лимита названа quota_limit, а не limit: limit — зарезервированное

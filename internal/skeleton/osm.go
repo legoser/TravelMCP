@@ -70,6 +70,9 @@ func osmTransportType(tags map[string]string) string {
 	if v, ok := tags["railway"]; ok && (v == "station" || v == "halt") {
 		return "rail"
 	}
+	if v, ok := tags["building"]; ok && v == "train_station" {
+		return "rail"
+	}
 	return "bus"
 }
 
@@ -83,25 +86,21 @@ func osmObjectType(tags map[string]string) string {
 	return "stop"
 }
 
+const collapseMaxM = 300
+
 func CollapseStopArea(records []model.AdaptedRecord) []model.AdaptedRecord {
-	groups := map[string][]int{}
+	byName := map[string][]int{}
 	order := []string{}
 	for i, r := range records {
-		key := stopAreaKey(r)
-		if _, ok := groups[key]; !ok {
+		key := namesim.Core(r.NameRu)
+		if _, ok := byName[key]; !ok {
 			order = append(order, key)
 		}
-		groups[key] = append(groups[key], i)
+		byName[key] = append(byName[key], i)
 	}
-	out := make([]model.AdaptedRecord, 0, len(groups))
+	out := make([]model.AdaptedRecord, 0, len(byName))
 	for _, key := range order {
-		idx := groups[key]
-		base := records[idx[0]]
-		for _, j := range idx[1:] {
-			other := records[j]
-			base = mergeInto(base, other)
-		}
-		out = append(out, base)
+		out = append(out, collapseNameGroup(records, byName[key])...)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].NameRu != out[j].NameRu {
@@ -112,13 +111,89 @@ func CollapseStopArea(records []model.AdaptedRecord) []model.AdaptedRecord {
 	return out
 }
 
+func collapseNameGroup(records []model.AdaptedRecord, idx []int) []model.AdaptedRecord {
+	var geo, nogeom []int
+	for _, i := range idx {
+		if records[i].HasCoords() {
+			geo = append(geo, i)
+		} else {
+			nogeom = append(nogeom, i)
+		}
+	}
+	var out []model.AdaptedRecord
+	for _, cluster := range clusterByDistance(records, geo, collapseMaxM) {
+		base := records[cluster[0]]
+		for _, j := range cluster[1:] {
+			base = mergeInto(base, records[j])
+		}
+		out = append(out, base)
+	}
+	if len(nogeom) > 0 {
+		base := records[nogeom[0]]
+		for _, j := range nogeom[1:] {
+			base = mergeInto(base, records[j])
+		}
+		out = append(out, base)
+	}
+	return out
+}
+
+func clusterByDistance(records []model.AdaptedRecord, idx []int, maxM float64) [][]int {
+	parent := map[int]int{}
+	for _, i := range idx {
+		parent[i] = i
+	}
+	var find func(int) int
+	find = func(x int) int {
+		for parent[x] != x {
+			parent[x] = parent[parent[x]]
+			x = parent[x]
+		}
+		return x
+	}
+	for a := 0; a < len(idx); a++ {
+		for b := a + 1; b < len(idx); b++ {
+			i, j := idx[a], idx[b]
+			d := haversineM(*records[i].Lat, *records[i].Lon, *records[j].Lat, *records[j].Lon)
+			if d <= maxM {
+				ri, rj := find(i), find(j)
+				if ri != rj {
+					if ri < rj {
+						parent[rj] = ri
+					} else {
+						parent[ri] = rj
+					}
+				}
+			}
+		}
+	}
+	byRoot := map[int][]int{}
+	roots := []int{}
+	for _, i := range idx {
+		r := find(i)
+		if _, ok := byRoot[r]; !ok {
+			roots = append(roots, r)
+		}
+		byRoot[r] = append(byRoot[r], i)
+	}
+	sort.Ints(roots)
+	clusters := make([][]int, 0, len(roots))
+	for _, r := range roots {
+		members := byRoot[r]
+		sort.Ints(members)
+		clusters = append(clusters, members)
+	}
+	sort.Slice(clusters, func(i, j int) bool { return clusters[i][0] < clusters[j][0] })
+	return clusters
+}
+
 func mergeInto(base, other model.AdaptedRecord) model.AdaptedRecord {
 	bt, ot := extra(base, "transport_type"), extra(other, "transport_type")
 	if ot != "" && !transportContains(bt, ot) {
 		if bt == "" {
 			base = withExtra(base, "transport_type", ot)
 		} else {
-			base = withExtra(base, "transport_type", bt+"+"+ot)
+			base = withExtra(base, "transport_type", normalizeTransport(bt+"+"+ot))
 		}
 	}
 	seen := map[string]bool{}
@@ -148,18 +223,6 @@ func transportContains(combined, single string) bool {
 		}
 	}
 	return false
-}
-
-func stopAreaKey(r model.AdaptedRecord) string {
-	core := namesim.Core(r.NameRu)
-	if r.HasCoords() {
-		return core + "|" + geoCell(*r.Lat, *r.Lon)
-	}
-	return core + "|nogeom"
-}
-
-func geoCell(lat, lon float64) string {
-	return fmt.Sprintf("%d:%d", int(lat*100), int(lon*100))
 }
 
 func haversineM(aLat, aLon, bLat, bLon float64) float64 {

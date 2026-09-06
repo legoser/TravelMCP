@@ -29,9 +29,10 @@ func tagFilter(tags map[string]string) bool {
 		return true
 	}
 	if v, ok := tags["public_transport"]; ok && v == "station" {
-		if _, hasRail := tags["railway"]; !hasRail {
-			return true
-		}
+		return true
+	}
+	if v, ok := tags["railway"]; ok && (v == "station" || v == "halt") {
+		return true
 	}
 	if v, ok := tags["public_transport"]; ok && v == "platform" {
 		return tags["bus"] == "yes" || tags["highway"] == "bus_stop"

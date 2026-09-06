@@ -308,6 +308,9 @@ func (p *PostgresStore) UpsertTerminal(ctx context.Context, r TerminalRow, names
 	if status == "" {
 		status = "identity_only"
 	}
+	if r.ValidFrom == "" {
+		r.ValidFrom = time.Now().UTC().Format("2006-01-02")
+	}
 	var id int64
 	if r.ID != 0 {
 		err := p.pool.QueryRow(ctx, `INSERT INTO terminals(id, place_id, geom, tz, validity, valid_from, valid_to, last_verified_at, is_locked, address, transport_types, object_type, enrichment_status) VALUES($1,$2,ST_SetSRID(ST_MakePoint($3,$4),4326)::geography,$5, daterange($6::date, $7::date, '[]'), $8, $9, $10, $11, $12, $13, $14, $15) ON CONFLICT(id) DO UPDATE SET place_id=EXCLUDED.place_id, geom=EXCLUDED.geom, tz=EXCLUDED.tz, is_locked=terminals.is_locked, address=EXCLUDED.address, transport_types=EXCLUDED.transport_types, object_type=EXCLUDED.object_type, enrichment_status=EXCLUDED.enrichment_status RETURNING id`, r.ID, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.ValidFrom, r.ValidTo, r.LastVerifiedAt, r.IsLocked, nullIfEmpty(r.Address), transportTypesValue(r.TransportTypes), nullIfEmpty(r.ObjectType), status).Scan(&id)
@@ -326,7 +329,7 @@ func (p *PostgresStore) UpsertTerminal(ctx context.Context, r TerminalRow, names
 		}
 	}
 	for _, ident := range identifiers {
-		if _, err := p.pool.Exec(ctx, `INSERT INTO terminal_identifiers(terminal_id, system, code_type, code, is_primary) VALUES($1,$2,$3,$4,false) ON CONFLICT(terminal_id, system, code_type) DO UPDATE SET code=EXCLUDED.code`, id, ident.System, ident.CodeType, ident.Code); err != nil {
+		if _, err := p.pool.Exec(ctx, `INSERT INTO terminal_identifiers(terminal_id, system, code_type, code, is_primary) VALUES($1,$2,$3,$4,false) ON CONFLICT(terminal_id, system, code_type, code) DO NOTHING`, id, ident.System, ident.CodeType, ident.Code); err != nil {
 			return 0, err
 		}
 	}
@@ -387,7 +390,7 @@ func (p *PostgresStore) SaveProvenance(ctx context.Context, pr model.Provenance)
 	if p.pool == nil {
 		return nil
 	}
-	raw := ""
+	var raw any
 	if len(pr.Raw) > 0 {
 		raw = string(pr.Raw)
 	}
@@ -1122,6 +1125,9 @@ func (t *pgTxStore) UpsertTerminal(ctx context.Context, r TerminalRow, names map
 	if status == "" {
 		status = "identity_only"
 	}
+	if r.ValidFrom == "" {
+		r.ValidFrom = time.Now().UTC().Format("2006-01-02")
+	}
 	var id int64
 	if r.ID != 0 {
 		err := t.tx.QueryRow(ctx, `INSERT INTO terminals(id, place_id, geom, tz, validity, valid_from, valid_to, last_verified_at, is_locked, address, transport_types, object_type, enrichment_status) VALUES($1,$2,ST_SetSRID(ST_MakePoint($3,$4),4326)::geography,$5, daterange($6::date, $7::date, '[]'), $8, $9, $10, $11, $12, $13, $14, $15) ON CONFLICT(id) DO UPDATE SET place_id=EXCLUDED.place_id, geom=EXCLUDED.geom, tz=EXCLUDED.tz, is_locked=terminals.is_locked, address=EXCLUDED.address, transport_types=EXCLUDED.transport_types, object_type=EXCLUDED.object_type, enrichment_status=EXCLUDED.enrichment_status RETURNING id`, r.ID, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.ValidFrom, r.ValidTo, r.LastVerifiedAt, r.IsLocked, nullIfEmpty(r.Address), transportTypesValue(r.TransportTypes), nullIfEmpty(r.ObjectType), status).Scan(&id)
@@ -1140,14 +1146,14 @@ func (t *pgTxStore) UpsertTerminal(ctx context.Context, r TerminalRow, names map
 		}
 	}
 	for _, ident := range identifiers {
-		if _, err := t.tx.Exec(ctx, `INSERT INTO terminal_identifiers(terminal_id, system, code_type, code, is_primary) VALUES($1,$2,$3,$4,false) ON CONFLICT(terminal_id, system, code_type) DO UPDATE SET code=EXCLUDED.code`, id, ident.System, ident.CodeType, ident.Code); err != nil {
+		if _, err := t.tx.Exec(ctx, `INSERT INTO terminal_identifiers(terminal_id, system, code_type, code, is_primary) VALUES($1,$2,$3,$4,false) ON CONFLICT(terminal_id, system, code_type, code) DO NOTHING`, id, ident.System, ident.CodeType, ident.Code); err != nil {
 			return 0, err
 		}
 	}
 	return id, nil
 }
 func (t *pgTxStore) SaveProvenance(ctx context.Context, p model.Provenance) error {
-	raw := ""
+	var raw any
 	if len(p.Raw) > 0 {
 		raw = string(p.Raw)
 	}

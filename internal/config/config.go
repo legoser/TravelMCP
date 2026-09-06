@@ -64,10 +64,6 @@ type Geocode struct {
 	TTLDisputed string `yaml:"ttl_disputed"`
 }
 
-type Cities struct {
-	Path string `yaml:"path"`
-}
-
 type Motis struct {
 	URL string `yaml:"url"`
 }
@@ -184,6 +180,13 @@ type Sync struct {
 	LogDir            string  `yaml:"log_dir"`
 	CoverageGate      float64 `yaml:"coverage_gate"`
 	SkeletonChunkSize int     `yaml:"skeleton_chunk_size"`
+	OsmPath           string  `yaml:"osm_path"`
+	YandexDumpPath    string  `yaml:"yandex_dump_path"`
+	SkeletonRegion    string  `yaml:"skeleton_region"`
+	Bbox              string  `yaml:"bbox"`
+	ReestrPath        string  `yaml:"reestr_path"`
+	LegacyThreshold   float64 `yaml:"legacy_threshold"`
+	CoverageSoftScore float64 `yaml:"coverage_soft_score"`
 }
 
 type Config struct {
@@ -193,7 +196,6 @@ type Config struct {
 	Queue         Queue         `yaml:"queue"`
 	Database      Database      `yaml:"database"`
 	Providers     Providers     `yaml:"providers"`
-	Cities        Cities        `yaml:"cities"`
 	Auth          Auth          `yaml:"auth"`
 	Geocoder      Geocoder      `yaml:"geocoder"`
 	Geocode       Geocode       `yaml:"geocode"`
@@ -228,7 +230,6 @@ func Defaults() *Config {
 				ReestrPath: "data/reestr/regions.json",
 			},
 		},
-		Cities:    Cities{Path: "configs/cities.yaml"},
 		Geocoder:  Geocoder{Kind: "", URL: "", Key: "", Attempts: 3, Limit: 5},
 		Geocode:   Geocode{Enabled: boolPtr(true), MaxCalls: 0, TTLVerified: "2160h", TTLDisputed: "168h"},
 		Yandex:    Yandex{GeocodeURL: "https://geocode-maps.yandex.ru/1.x", GeocodeKind: ""},
@@ -247,7 +248,7 @@ func Defaults() *Config {
 		Deduplication: Deduplication{DistanceM: 200},
 		Pricing:       Pricing{DefaultCurrency: "RUB"},
 		GTFS:          GTFS{TmpDir: "data/tmp/gtfs"},
-		Sync:          Sync{LogDir: "data/logs", CoverageGate: 0, SkeletonChunkSize: 100},
+		Sync:          Sync{LogDir: "data/logs", CoverageGate: 0, SkeletonChunkSize: 100, OsmPath: "data/osm/stations.json", YandexDumpPath: "data/yandex/cache/global_stations_list.json", SkeletonRegion: "Кемеровская область - Кузбасс", Bbox: "53.5,84.0,57.0,88.5", LegacyThreshold: 0.6, CoverageSoftScore: 0.4},
 	}
 }
 
@@ -307,9 +308,6 @@ func syncLegacy(cfg *Config) {
 	if cfg.Geocoder.Attempts <= 0 {
 		cfg.Geocoder.Attempts = 3
 	}
-	if cfg.Cities.Path == "" {
-		cfg.Cities.Path = "configs/cities.yaml"
-	}
 	if cfg.Deduplication.DistanceM == 0 {
 		cfg.Deduplication.DistanceM = 200
 	}
@@ -357,6 +355,24 @@ func syncLegacy(cfg *Config) {
 	}
 	if cfg.Sync.SkeletonChunkSize > 100 {
 		cfg.Sync.SkeletonChunkSize = 100
+	}
+	if cfg.Sync.OsmPath == "" {
+		cfg.Sync.OsmPath = "data/osm/stations.json"
+	}
+	if cfg.Sync.YandexDumpPath == "" {
+		cfg.Sync.YandexDumpPath = "data/yandex/cache/global_stations_list.json"
+	}
+	if cfg.Sync.SkeletonRegion == "" {
+		cfg.Sync.SkeletonRegion = "Кемеровская область - Кузбасс"
+	}
+	if cfg.Sync.Bbox == "" {
+		cfg.Sync.Bbox = "53.5,84.0,57.0,88.5"
+	}
+	if cfg.Sync.LegacyThreshold == 0 {
+		cfg.Sync.LegacyThreshold = 0.6
+	}
+	if cfg.Sync.CoverageSoftScore == 0 {
+		cfg.Sync.CoverageSoftScore = 0.4
 	}
 	if cfg.Pricing.DefaultCurrency == "" {
 		cfg.Pricing.DefaultCurrency = "RUB"
@@ -454,12 +470,6 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("LOG_ADD_SOURCE"); v != "" {
 		cfg.Log.AddSource = v == "1" || v == "true"
 	}
-	if v := os.Getenv("CITIES_PATH"); v != "" {
-		cfg.Cities.Path = v
-	}
-	if v := os.Getenv("CITIES_DATA_PATH"); v != "" {
-		cfg.Cities.Path = v
-	}
 	if v := os.Getenv("MOTIS_URL"); v != "" {
 		cfg.Motis.URL = v
 	}
@@ -520,6 +530,31 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SYNC_COVERAGE_GATE"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			cfg.Sync.CoverageGate = f
+		}
+	}
+	if v := os.Getenv("SYNC_OSM_PATH"); v != "" {
+		cfg.Sync.OsmPath = v
+	}
+	if v := os.Getenv("SYNC_YANDEX_DUMP_PATH"); v != "" {
+		cfg.Sync.YandexDumpPath = v
+	}
+	if v := os.Getenv("SYNC_SKELETON_REGION"); v != "" {
+		cfg.Sync.SkeletonRegion = v
+	}
+	if v := os.Getenv("SYNC_BBOX"); v != "" {
+		cfg.Sync.Bbox = v
+	}
+	if v := os.Getenv("SYNC_REESTR_PATH"); v != "" {
+		cfg.Sync.ReestrPath = v
+	}
+	if v := os.Getenv("SYNC_LEGACY_THRESHOLD"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			cfg.Sync.LegacyThreshold = f
+		}
+	}
+	if v := os.Getenv("SYNC_COVERAGE_SOFT_SCORE"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			cfg.Sync.CoverageSoftScore = f
 		}
 	}
 	if v := os.Getenv("SYNC_SKELETON_CHUNK_SIZE"); v != "" {
@@ -671,6 +706,31 @@ func setByPath(cfg *Config, parts []string, v string) {
 				cfg.Sync.CoverageGate = f
 			}
 		}
+		if len(parts) == 2 && parts[1] == "osm_path" {
+			cfg.Sync.OsmPath = v
+		}
+		if len(parts) == 2 && parts[1] == "yandex_dump_path" {
+			cfg.Sync.YandexDumpPath = v
+		}
+		if len(parts) == 2 && parts[1] == "skeleton_region" {
+			cfg.Sync.SkeletonRegion = v
+		}
+		if len(parts) == 2 && parts[1] == "bbox" {
+			cfg.Sync.Bbox = v
+		}
+		if len(parts) == 2 && parts[1] == "reestr_path" {
+			cfg.Sync.ReestrPath = v
+		}
+		if len(parts) == 2 && parts[1] == "legacy_threshold" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				cfg.Sync.LegacyThreshold = f
+			}
+		}
+		if len(parts) == 2 && parts[1] == "coverage_soft_score" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				cfg.Sync.CoverageSoftScore = f
+			}
+		}
 		if len(parts) == 2 && parts[1] == "skeleton_chunk_size" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
 				cfg.Sync.SkeletonChunkSize = n
@@ -695,10 +755,6 @@ func setByPath(cfg *Config, parts []string, v string) {
 	case "nominatim":
 		if len(parts) == 2 && (parts[1] == "url" || parts[1] == "base_url") {
 			cfg.Nominatim.URL = v
-		}
-	case "cities":
-		if len(parts) == 2 && parts[1] == "path" {
-			cfg.Cities.Path = v
 		}
 	case "motis":
 		if len(parts) == 2 && (parts[1] == "url" || parts[1] == "base_url") {

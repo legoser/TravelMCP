@@ -18,6 +18,7 @@ import (
 
 type SkeletonStore interface {
 	UpsertTerminal(ctx context.Context, r store.TerminalRow, names map[string]string, identifiers []model.AdaptedIdentifier) (int64, error)
+	SetTerminalTag(ctx context.Context, id int64, key, value string) error
 	UpsertTerminalAlias(ctx context.Context, a store.TerminalAliasRow) error
 	UpsertAttributeState(ctx context.Context, a store.AttributeStateRow) error
 	SaveProvenance(ctx context.Context, p model.Provenance) error
@@ -235,6 +236,11 @@ func promoteJoined(ctx context.Context, st SkeletonStore, runID int64, j skeleto
 	}
 	if v := recordExtra(r, "yandex_title"); v != "" {
 		if err := st.UpsertTerminalAlias(ctx, store.TerminalAliasRow{TerminalID: id, Alias: v, Lang: "ru", Source: "yandex"}); err != nil {
+			return false, err
+		}
+	}
+	if v := recordExtra(r, "settlement"); v != "" {
+		if err := st.SetTerminalTag(ctx, id, "settlement", v); err != nil {
 			return false, err
 		}
 	}

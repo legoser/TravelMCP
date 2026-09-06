@@ -65,9 +65,6 @@ log:
 telemetry:
   prometheus_addr: ":9090"
 
-cities:
-  path: "configs/cities.yaml" # справочник городов для ImportIntercity; переопределение: CITIES_PATH / TRAVELMCP__CITIES__PATH
-
 geocoder:
   # Приоритет по умолчанию: nominatim (OSM, бесплатно) -> yandex (требует ключ).
   # Провайдеры регистрируются, kind — опциональный приоритет (пусто = nominatim first).
@@ -91,6 +88,13 @@ sync:
   log_dir: "${SYNC_LOG_DIR:-data/logs}" # файлы операций sync_<run>.log.jsonl (Фаза 1)
   coverage_gate: 0 # N% coverage-gate скелета, стартовый N — по Фазе 3 на Кузбассе (Фаза 4)
   skeleton_chunk_size: 100 # терминалов на чанк промоушена скелета, потолок 100 (§4.2)
+  osm_path: "${SYNC_OSM_PATH:-data/osm/stations.json}"
+  yandex_dump_path: "${SYNC_YANDEX_DUMP_PATH:-data/yandex/cache/global_stations_list.json}"
+  skeleton_region: "${SYNC_SKELETON_REGION:-Кемеровская область - Кузбасс}" # пилотный регион скелета
+  bbox: "${SYNC_BBOX:-53.5,84.0,57.0,88.5}" # minLat,minLon,maxLat,maxLon пилота
+  reestr_path: "${SYNC_REESTR_PATH:-}" # JSON-срез реестра для coverage-замера
+  legacy_threshold: 0.6 # порог legacy_match Фазы 0
+  coverage_soft_score: 0.4 # мягкий порог ScorePair для coverage-gate (§5.4)
 
 verification:
   confidence_threshold: 0.6

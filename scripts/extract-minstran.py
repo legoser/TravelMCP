@@ -335,7 +335,7 @@ def _load_city_override():
     "волгодонск": ("osm", 47.5167, 42.1570),
     "череповец": ("osm", 59.1343, 37.9014),
     }
-    for _p in [os.environ.get("CITIES_PATH"), os.environ.get("CITIES_DATA_PATH"), os.environ.get("TRAVELMCP__CITIES__PATH"), "configs/cities.yaml", "internal/store/cities.yaml"]:
+    for _p in [os.environ.get("CITIES_PATH"), os.environ.get("CITIES_DATA_PATH"), os.environ.get("TRAVELMCP__CITIES__PATH")]:
         if _p and os.path.exists(_p):
             try:
                 import yaml as _y

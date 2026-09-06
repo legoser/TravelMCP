@@ -1,6 +1,9 @@
 package skeleton
 
 import (
+	"sort"
+	"strings"
+
 	"travelmcp/internal/model"
 	"travelmcp/internal/support/namesim"
 )
@@ -115,6 +118,20 @@ func splitPlus(s string) []string {
 		cur += string(r)
 	}
 	return append(out, cur)
+}
+
+func normalizeTransport(combined string) string {
+	seen := map[string]bool{}
+	var parts []string
+	for _, p := range splitPlus(combined) {
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		parts = append(parts, p)
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "+")
 }
 
 func Join(osm, yandex []model.AdaptedRecord, cfg JoinConfig) JoinOutcome {

@@ -1,5 +1,7 @@
 package store
 
+import "travelmcp/internal/model"
+
 // Deprecated: CityRow/StationRow/StationCodeRow — legacy, удалить вместе с MemoryStore legacy методами (UpsertCity/Station/StationCode, FindStation).
 type CityRow struct {
 	ID         int64
@@ -263,6 +265,42 @@ type SyncRunRow struct {
 	Tag      string
 	State    string
 	Summary  string
+}
+
+type SyncChunkRow struct {
+	ID         int64
+	RunID      int64
+	Entity     string
+	ChunkKey   string
+	State      string
+	PlanIDDone string
+	Attempts   int
+	LastError  string
+}
+
+type ProvenanceVote struct {
+	Source     string
+	Confidence float64
+	ObservedAt int64
+}
+
+type LegacyTerminalRow struct {
+	ID          int64
+	NameRu      string
+	NameEn      string
+	Lat, Lon    float64
+	Tz          string
+	Identifiers []model.AdaptedIdentifier
+	Votes       []ProvenanceVote
+}
+
+type SkeletonTerminalRow struct {
+	ID               int64
+	NameRu           string
+	Lat, Lon         float64
+	Settlement       string
+	Identifiers      []model.AdaptedIdentifier
+	EnrichmentStatus string
 }
 
 type QuotaRow struct {

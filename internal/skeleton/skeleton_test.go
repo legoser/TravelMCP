@@ -41,6 +41,51 @@ func TestCollapseStopArea(t *testing.T) {
 	}
 }
 
+func TestCollapseAcrossCellBoundary(t *testing.T) {
+	in := []model.AdaptedRecord{
+		rec("Собор", 53.8799287, 86.6199482, map[string]string{"transport_type": "bus", "settlement": "Кемерово"},
+			model.AdaptedIdentifier{System: "osm", CodeType: "osm_id", Code: "10002208626"}),
+		rec("Собор", 53.8794164, 86.6203076, map[string]string{"transport_type": "bus", "settlement": "Кемерово"},
+			model.AdaptedIdentifier{System: "osm", CodeType: "osm_id", Code: "10002208627"}),
+	}
+	out := CollapseStopArea(in)
+	if len(out) != 1 {
+		t.Fatalf("остановки через границу геоклетки (61м) обязаны схлопываться, получено %d", len(out))
+	}
+	if len(out[0].Identifiers) != 2 {
+		t.Fatalf("идентификаторы обязаны объединяться: %+v", out[0].Identifiers)
+	}
+}
+
+func TestCollapseFarSameNameKeptSeparate(t *testing.T) {
+	in := []model.AdaptedRecord{
+		rec("Вокзал", 55.0, 86.0, map[string]string{"transport_type": "bus"},
+			model.AdaptedIdentifier{System: "osm", CodeType: "osm_id", Code: "1"}),
+		rec("Вокзал", 55.02, 86.0, map[string]string{"transport_type": "bus"},
+			model.AdaptedIdentifier{System: "osm", CodeType: "osm_id", Code: "2"}),
+	}
+	out := CollapseStopArea(in)
+	if len(out) != 2 {
+		t.Fatalf("одноимённые точки в 2км обязаны оставаться разными, получено %d", len(out))
+	}
+}
+
+func TestCollapseBuildingTrainStationIsRail(t *testing.T) {
+	in := []model.AdaptedRecord{
+		rec("Городская", 55.36308, 86.15763, map[string]string{"transport_type": "rail"},
+			model.AdaptedIdentifier{System: "osm", CodeType: "osm_id", Code: "1"}),
+		rec("Городская", 55.36329, 86.15742, map[string]string{"transport_type": "rail"},
+			model.AdaptedIdentifier{System: "osm", CodeType: "osm_id", Code: "2"}),
+	}
+	out := CollapseStopArea(in)
+	if len(out) != 1 {
+		t.Fatalf("здание вокзала + узел обязаны схлопываться, получено %d", len(out))
+	}
+	if got := out[0].Extra["transport_type"]; got != "rail" {
+		t.Fatalf("агрегат обязан быть rail без фантомного bus, получено %q", got)
+	}
+}
+
 func TestJoinEnrichedAndUnverified(t *testing.T) {
 	cfg := DefaultJoinConfig()
 	osm := []model.AdaptedRecord{
@@ -168,6 +213,26 @@ func TestCoverageGate(t *testing.T) {
 	}
 	if ok, blocked := GatePass(cov, 0.8); ok || len(blocked) != 1 {
 		t.Fatal("gate 0.8 при ratio 0.5 должен блокировать регион")
+	}
+}
+
+func TestOSMSourceBuildingTrainStation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "stations.json")
+	data := `[{"id":1,"kind":"way","name":"Городская","tags":{"building":"train_station","public_transport":"station"},"lat":55.36329,"lon":86.15742},
+{"id":2,"kind":"node","name":"Городская","tags":{"public_transport":"station","railway":"station"},"lat":55.36308,"lon":86.15763}]`
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := OSMSource{Path: path}.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("здание + узел одной станции — один терминал, получено %d", len(got))
+	}
+	if got[0].Extra["transport_type"] != "rail" {
+		t.Fatalf("тип обязан быть rail, получено %q", got[0].Extra["transport_type"])
 	}
 }
 
