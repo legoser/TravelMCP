@@ -62,7 +62,14 @@
 
 ### 1.2 Скелет терминалов
 
-- **Каноническая идентичность — OSM** (`data/osm/stations.json`, добор Overpass).
+- **Каноническая идентичность — OSM** (`data/osm/stations.json`, онлайн-добор
+  Overpass). **Overpass — второй сборщик маршрутов в паре с Яндекс Расписанием:**
+  Яндекс даёт станции + времена отправлений (*когда*), Overpass — `route_master`/
+  `route` relations (`ref`, `operator`, `network`, упорядоченные члены-остановки,
+  геометрия: *что и в каком порядке*). Времена остаются монополией Яндекса (в OSM
+  расписаний практически нет). Identity-доказательство (этот ли маршрут: `ref`+
+  `operator` из Overpass) и geometry/время (Яндекс) живут раздельно, не схлопываются
+  в один флаг. Детали — §10.
 - **Офлайн-обогащение — существующий дамп Yandex**
   `data/yandex/cache/global_stations_list.json` (159 167 станций, все виды
   транспорта: `transport_type`, `station_type`, координаты,
@@ -244,10 +251,20 @@ CI-gate сканирует provenance собранного zip на полнот
 БД + TTL `geocode_cache`). **Против бана жёстких rate-limiter'ов** (у Nominatim —
 1 rps) — глобальный windowed-токен в той же `api_quotas` (атомарно, как
 `TryConsumeQuota`); verify-стадия остаётся синхронной. Отдельный geocode
-writer-job — опционально, только если понадобится очередь (тогда singleflight
-становится тривиальным); вшивать оба сразу не требуется. При масштабе —
-локальный Nominatim/Photon. Приоритет геокодинга — nominatim → yandex
-(`fallback`): полный разбор в `02-glossary.md:G`.
+  writer-job — опционально, только если понадобится очередь (тогда singleflight
+  становится тривиальным); вшивать оба сразу не требуется. При масштабе —
+  локальный Nominatim/Photon. Приоритет геокодинга — nominatim → yandex
+  (`fallback`): полный разбор в `02-glossary.md:G`.
+- **Overpass идёт тем же путём `cache+quota`, нового пути нет** (§10):
+  пространство ключей `geocode_cache` с префиксом `overpass:`, квота
+  `api_quotas` на коде `osm` (данных OSM; отдельных кодов под Overpass в
+  `providers` нет и не нужно — FK целы, миграций ноль), пейсер ≥1.2с между
+  запросами, лимит точек на прогон `--overpass-max` (дефолт **200**).
+  Инстансы: основной `https://overpass-api.de/api/interpreter`, зеркало —
+  `https://overpass.openstreetmap.fr/api/interpreter` (kumi.systems исключён —
+  проблемы с доступом; остальные зеркала — только строками конфига
+  `overpass.url`). Живой сети в CI нет — только фикстуры `testdata/overpass/`
+  и ручной скраппинг скриптом.
 
 ### 3.8 Верификация — единый `ScorePair`
 
@@ -646,3 +663,83 @@ availability-метриках здоровья коннектора.
   `task`'ам (terminals + trips), FP-рейт по аудиту в норме.
 - F6: `make check-deprecated` чисто; депрекация по §6 выполнена; GTFS-продукт
   проходит provenance-фильтр и GTFS Validator.
+
+## 10. Overpass + settlement-backfill + two-tier (мини-блоки, текущий фокус)
+
+Решения, зафиксированные здесь (источник истины, не чат): Overpass — сборщик
+маршрутов в паре с Яндекс Расписанием (§1.2); коннектор реализует
+`geocoder.MultiGeocoder` и висит на том же `cache+quota`, что Nominatim/Yandex
+(§3.7); `--overpass-max` по умолчанию **200**; зеркала — main + openstreetmap.fr,
+kumi исключён. **Лицензионный waiver:** данные OSM/Overpass потребляются только
+внутри сервиса (планировщик), распространение датасетов не предусматривается —
+строка риска не ведётся, решение зафиксировано этим абзацем. Порядок: сначала
+O-блоки (коннектор), затем S-блоки (settlement), затем C-блоки (two-tier);
+каждый блок — независимо проверяемый дифф (`gofmt` + `go vet` + `make test`).
+
+### O. Коннектор Overpass (по лекалу `adapters/yandex`, переиспользование)
+
+- **O-1. Каркас пакета.** `internal/adapters/overpass/overpass.go`: структура
+  `{cfg, client, baseURLs}`, `New(cfg, httpx)`, конфиг `overpass.url`, QL-билдер
+  bbox-запроса. Готово: компилируется, юнит на текст QL. Без сети.
+- **O-2. Регистрация в `geocoder`.** `init()` → `geocoder.Register("overpass")`;
+  `GeocodeCandidates` (поиск остановок по имени в bbox), `Geocode` = top1
+  кандидатов, `Reverse` — явная ошибка «не поддерживается» (reverse остаётся за
+  Nominatim). Готово: юнит через `httptest`-сервер.
+- **O-3. Парсер ответа.** Overpass JSON (`elements`: node/way/relation, теги,
+  `members` с ролями) → `model.AdaptedRecord` (Kind=terminal, идентификаторы
+  `{osm, osm_id}`, `Extra`: settlement/transport_type, `Source: "osm"`).
+  Фикстуры `testdata/overpass/stations.json` + пустой ответ. Готово: юнит без сети.
+- **O-4. `StationsAround` + путь `cache+quota`.** Точечный добор
+  `node(around:R,lat,lon)`; ключи кэша `overpass:`, квота `api_quotas` на `osm`,
+  пейсер ≥1.2с (переиспользование `cached.go`/пейсера, не новьё). Готово: юнит с
+  фейк-кэшем/квотой, повторный вызов — hit без квоты.
+- **O-5. `FetchRouteRelations`.** QL `relation["route"~"bus|trolleybus"]["ref"~...]`
+  + рекурсия `>>` за членами; парсер строит скелет `AdaptedTrip`: упорядоченный
+  список стопов с OSM-ID + `ref`/`operator` как identity-доказательство. Фикстура
+  relation в `testdata/overpass/`. Готово: юнит, порядок членов сохранён.
+- **O-6. Ручной скраппинг.** `scripts/overpass-collect.sh` по образцу
+  `yandex-collect.sh`: вход — unmatched-список attach, сырьё —
+  `data/overpass/raw/` (не коммитится), сводный офлайн-дамп
+  `data/overpass/stations.json`. Готово: одна пачка собрана руками.
+- **O-7. Gap-fill в `skeleton-sync`.** После join: непарные Yandex + unmatched
+  стопы реестра → `StationsAround` по их координатам → кандидаты в пул
+  верификации `ScorePair` (первый verified побеждает). Флаги `--overpass-max`
+  (дефолт 200) и `--no-overpass`. Готово: dry-run показывает число добора.
+- **O-8. Hub-цепочка.** Fallback привязки: локально → Yandex-дамп → Nominatim →
+  Overpass (структурный поиск `highway=bus_station` + имя); разовая проверка
+  Кемерово/Новокузнецк/Томск/Толмачёво с сохранением в объекте (OVERRIDES
+  заменяются цепочкой); bbox на запад ~82.0 (конфиг `sync.bbox`). Готово: хабы
+  привязаны, цепочка задокументирована.
+- **O-9. Вторая пара глаз.** Кандидат из Overpass — в пул `duplicate_ambiguous`
+  вместо третьего перебора тех же дампов. Готово: golden-тест.
+- **O-10. Yandex-only с координатами — в канон.** Правило существования §1.2
+  смягчается: Yandex-only с координатами принимается с низким confidence +
+  provenance (раньше — только review). Готово: дифф §1.2 + тест промоушена.
+
+### S. Settlement-backfill (Yandex-first: сначала бесплатно, потом квота)
+
+- **S-1. Офлайн-матч (0 квоты).** Сопоставление 1982 терминалов с поселениями
+  Yandex-дампа по имени → `terminal_tags['settlement']` только где пусто.
+  Готово: метрика `tags->>'settlement' <> ''`: 205 → **>1500**.
+- **S-2. Остаток — Nominatim.** `ReverseSettlement` по остатку (квота+кэш,
+  пейсинг). Готово: dry-run attach, settlement-матчи кратно выросли от базы 7.
+- **S-3. Rural-класс.** Переключатель rural-класса для минтранса только после
+  S-1–S-2 (без backfill даёт +7 стопов — замерено, вхолостую не тратить).
+  Готово: dry-run verified-rate до/после.
+- **S-4. Метод gate.** Решение verified-rate vs soft — замером новой осью на
+  пилоте после S-3, не раньше.
+
+### C. Two-tier attach (после O+S)
+
+- **C-1. Флаг `is_provisional`.** `stop_times.is_provisional bool DEFAULT false`;
+  6 точек: DDL, `StopTimeRow`, pool/tx `UpsertStopTime`, memory, движок attach,
+  `LoadNetwork` + CSA-ветка (provisional видны: посадка/высадка да, пересадки
+  нет). `pickup_type/drop_off_type` не трогать (чужая GTFS-семантика).
+  Готово: golden-тесты + миграция с 0 ошибок.
+- **C-2. Валидаторы на склейке.** Монотонность/скорость проверяются на новой
+  форме входа (порядок стопов из Overpass × времена из Яндекса) — явный тест,
+  что hard-валидаторы корректны именно на ней (писались под другую структуру).
+  `rejected`-промежуток → промоут рейса без этого стопа (решение). Готово: тест
+  склейки зелёный.
+- **C-3. Реран attach.** Полный цикл до первых promoted + конвергенция ресинка.
+  Готово: promoted > 0, ресинк без dupes.

@@ -50,8 +50,6 @@
 
 ## 3. Дерево пакетов (текущее, полное)
 
-В дополнение к стабильному ядру из `AGENTS.md`:
-
 ```
 cmd/trips-sync/        раннер массового attach Фазы 4.4 (конфиг → контракт → план → coverage/gate → attach → персист → sync_runs + ops-лог; флаги --regions/--wait/--force/--dry-run/--trust-nk)
 internal/providers/     Provider-интерфейс, Registry, synth (мок), intercity (JSON, legacy)
@@ -77,9 +75,6 @@ scripts/mcp-route.sh         шаблоны запросов MCP
 scripts/yandex-collect.sh    точечный сбор фикстур Яндекса
 scripts/extract-minstran.py  XLSX-реестр Минтранса → JSON датасет (legacy-путь, до полного переноса в internal/adapters/mintrans)
 ```
-
-`internal/store/sqlite` — помечен legacy, план удаления привязан к миграции
-002 (см. §1) и переносу оставшихся ссылок на legacy-таблицы.
 
 ## 4. Env-переменные (текущий полный список)
 
