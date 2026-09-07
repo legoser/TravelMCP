@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 
+	"travelmcp/internal/model"
 	store "travelmcp/internal/store"
 )
 
@@ -173,6 +174,49 @@ func (p *PostgresStore) ListCanonTrips(ctx context.Context, source string) (map[
 	return out, rs.Err()
 }
 
+func (p *PostgresStore) AttachTerminalIdentifier(ctx context.Context, terminalID int64, id model.AdaptedIdentifier) (int64, error) {
+	if p.pool == nil {
+		return 0, errNotImplemented
+	}
+	var owner int64
+	err := p.pool.QueryRow(ctx, `SELECT terminal_id FROM terminal_identifiers WHERE system=$1 AND code=$2`, id.System, id.Code).Scan(&owner)
+	if err == nil {
+		if owner == terminalID {
+			return 0, nil
+		}
+		return owner, nil
+	}
+	_, err = p.pool.Exec(ctx, `INSERT INTO terminal_identifiers(terminal_id, system, code_type, code, is_primary) VALUES($1,$2,$3,$4,false) ON CONFLICT(terminal_id, system, code_type, code) DO NOTHING`, terminalID, id.System, id.CodeType, id.Code)
+	if err != nil {
+		var other int64
+		if qerr := p.pool.QueryRow(ctx, `SELECT terminal_id FROM terminal_identifiers WHERE system=$1 AND code=$2`, id.System, id.Code).Scan(&other); qerr == nil && other != terminalID {
+			return other, nil
+		}
+		return 0, err
+	}
+	return 0, nil
+}
+
+func (p *PostgresStore) ListTerminalCodes(ctx context.Context, terminalID int64, system string) ([]model.AdaptedIdentifier, error) {
+	if p.pool == nil {
+		return nil, errNotImplemented
+	}
+	rs, err := p.pool.Query(ctx, `SELECT system, code_type, code FROM terminal_identifiers WHERE terminal_id=$1 AND ($2='' OR system=$2) ORDER BY system, code_type, code`, terminalID, system)
+	if err != nil {
+		return nil, err
+	}
+	defer rs.Close()
+	var out []model.AdaptedIdentifier
+	for rs.Next() {
+		var id model.AdaptedIdentifier
+		if err := rs.Scan(&id.System, &id.CodeType, &id.Code); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rs.Err()
+}
+
 func (p *PostgresStore) DeleteStagingTrip(ctx context.Context, source, routeCode, tripCode string) error {
 	if p.pool == nil {
 		return errNotImplemented
@@ -319,6 +363,43 @@ func (t *pgTxStore) ListStagingTrips(ctx context.Context, region string, limit i
 
 func (t *pgTxStore) ListCanonTrips(ctx context.Context, source string) (map[string][]string, error) {
 	return t.parent.ListCanonTrips(ctx, source)
+}
+
+func (t *pgTxStore) ListTerminalCodes(ctx context.Context, terminalID int64, system string) ([]model.AdaptedIdentifier, error) {
+	rs, err := t.tx.Query(ctx, `SELECT system, code_type, code FROM terminal_identifiers WHERE terminal_id=$1 AND ($2='' OR system=$2) ORDER BY system, code_type, code`, terminalID, system)
+	if err != nil {
+		return nil, err
+	}
+	defer rs.Close()
+	var out []model.AdaptedIdentifier
+	for rs.Next() {
+		var id model.AdaptedIdentifier
+		if err := rs.Scan(&id.System, &id.CodeType, &id.Code); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rs.Err()
+}
+
+func (t *pgTxStore) AttachTerminalIdentifier(ctx context.Context, terminalID int64, id model.AdaptedIdentifier) (int64, error) {
+	var owner int64
+	err := t.tx.QueryRow(ctx, `SELECT terminal_id FROM terminal_identifiers WHERE system=$1 AND code=$2`, id.System, id.Code).Scan(&owner)
+	if err == nil {
+		if owner == terminalID {
+			return 0, nil
+		}
+		return owner, nil
+	}
+	_, err = t.tx.Exec(ctx, `INSERT INTO terminal_identifiers(terminal_id, system, code_type, code, is_primary) VALUES($1,$2,$3,$4,false) ON CONFLICT(terminal_id, system, code_type, code) DO NOTHING`, terminalID, id.System, id.CodeType, id.Code)
+	if err != nil {
+		var other int64
+		if qerr := t.tx.QueryRow(ctx, `SELECT terminal_id FROM terminal_identifiers WHERE system=$1 AND code=$2`, id.System, id.Code).Scan(&other); qerr == nil && other != terminalID {
+			return other, nil
+		}
+		return 0, err
+	}
+	return 0, nil
 }
 
 func (t *pgTxStore) DeleteStagingTrip(ctx context.Context, source, routeCode, tripCode string) error {

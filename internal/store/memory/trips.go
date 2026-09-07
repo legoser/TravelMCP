@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"travelmcp/internal/model"
 	store "travelmcp/internal/store"
 )
 
@@ -156,6 +157,35 @@ func (m *MemoryStore) ListCanonTrips(ctx context.Context, source string) (map[st
 			continue
 		}
 		out[r.ExternalRouteCode] = append(out[r.ExternalRouteCode], r.ExternalRouteCode+"|"+t.ExternalTripCode)
+	}
+	return out, nil
+}
+
+func (m *MemoryStore) AttachTerminalIdentifier(ctx context.Context, terminalID int64, id model.AdaptedIdentifier) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for tid, ids := range m.terminalIdents {
+		for _, ex := range ids {
+			if ex.System == id.System && ex.Code == id.Code {
+				if tid == terminalID {
+					return 0, nil
+				}
+				return tid, nil
+			}
+		}
+	}
+	m.terminalIdents[terminalID] = append(m.terminalIdents[terminalID], id)
+	return 0, nil
+}
+
+func (m *MemoryStore) ListTerminalCodes(ctx context.Context, terminalID int64, system string) ([]model.AdaptedIdentifier, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []model.AdaptedIdentifier
+	for _, id := range m.terminalIdents[terminalID] {
+		if system == "" || id.System == system {
+			out = append(out, id)
+		}
 	}
 	return out, nil
 }

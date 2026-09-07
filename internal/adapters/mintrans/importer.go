@@ -562,3 +562,18 @@ func timeAt(list []string, run int) (int, bool) {
 	}
 	return parseTimeMinutes(list[run])
 }
+
+func cellAt(list []string, run int) (mins int, days []int, hasDays bool, ok bool) {
+	if run >= len(list) {
+		return 0, nil, false, false
+	}
+	raw := strings.TrimSpace(list[run])
+	if raw == "" || IsNoServiceCell(raw) {
+		return 0, nil, false, false
+	}
+	mins, days, hasDays, err := ParseCellTime(raw)
+	if err != nil {
+		return 0, nil, false, false
+	}
+	return mins, days, hasDays, true
+}

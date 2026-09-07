@@ -28,7 +28,8 @@ func loadFlatTrips(t *testing.T) []model.FlatTrip {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	return mintrans.FlattenTrips(ds)
+	trips, _ := mintrans.FlattenTrips(ds)
+	return trips
 }
 
 func indexFromFixture(t *testing.T, trips []model.FlatTrip) []AttachTerminal {

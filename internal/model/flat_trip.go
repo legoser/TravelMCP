@@ -4,6 +4,7 @@ type FlatStop struct {
 	StopID string   `json:"stop_id"`
 	Name   string   `json:"name"`
 	Region string   `json:"region"`
+	OpCode string   `json:"op_code,omitempty"`
 	Lat    *float64 `json:"lat,omitempty"`
 	Lon    *float64 `json:"lon,omitempty"`
 	ArrMin *int     `json:"arr_min,omitempty"`
@@ -23,4 +24,5 @@ type FlatTrip struct {
 	Stops         []FlatStop `json:"stops"`
 	Untimed       []string   `json:"untimed,omitempty"`
 	FrequencyOnly bool       `json:"frequency_only"`
+	Weekdays      []int      `json:"weekdays,omitempty"`
 }

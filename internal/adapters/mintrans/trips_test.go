@@ -3,6 +3,7 @@ package mintrans
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -35,7 +36,7 @@ func TestFlattenTripsFixture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	trips := FlattenTrips(ds)
+	trips, _ := FlattenTrips(ds)
 	if len(trips) != 8 {
 		t.Fatalf("trips = %d, want 8", len(trips))
 	}
@@ -57,6 +58,73 @@ func TestFlattenTripsFixture(t *testing.T) {
 	}
 	if got := untimedByTrip["54.22.049|forward"]; len(got) != 1 || got[0] != "op:54:54106" {
 		t.Fatalf("54.22.049 forward untimed = %v", got)
+	}
+}
+
+func TestFlattenWeekdayRestriction(t *testing.T) {
+	mkStop := func(id string) reestrStop {
+		return reestrStop{ID: id, Name: "Стоп " + id, Region: "42", OpReg: id}
+	}
+	ds := reestrDataset{
+		Source:   "minstran_reestr",
+		Snapshot: "2026-05-10",
+		Routes:   []reestrRoute{{Reg: "42.22.001", Name: "X", Carrier: "Y"}},
+		Stops:    []reestrStop{mkStop("a"), mkStop("b")},
+		Services: []struct {
+			ID        int    `json:"id"`
+			Name      string `json:"name"`
+			StartDate string `json:"start_date"`
+			EndDate   string `json:"end_date"`
+		}{{ID: 1, Name: "ежедневно", StartDate: "2026-01-01", EndDate: "2026-12-31"}},
+		Schedules: []reestrSched{{
+			Route: "42.22.001", Direction: "forward", ServiceID: 1,
+			Stops: []reestrSchedStop{
+				{Stop: "a", Region: "42", Winter: &reestrBlock{Days: "ежедневно", Dep: []string{"06:00", "13:35 (пт,вс)"}, Arr: []string{"06:00", "13:35 (пт,вс)"}}},
+				{Stop: "b", Region: "42", Winter: &reestrBlock{Days: "ежедневно", Dep: []string{"07:00", "14:35 (пт,вс)"}, Arr: []string{"07:00", "14:35 (пт,вс)"}}},
+			},
+		}},
+	}
+	trips, stats := FlattenTrips(ds)
+	if len(trips) != 2 {
+		t.Fatalf("trips = %d, want 2", len(trips))
+	}
+	if trips[0].Weekdays != nil {
+		t.Fatalf("run0 обязан быть без ограничений: %v", trips[0].Weekdays)
+	}
+	if !reflect.DeepEqual(trips[1].Weekdays, []int{0, 5}) {
+		t.Fatalf("run1 обязан быть пт+вс: %v", trips[1].Weekdays)
+	}
+	if stats.RestrictedTrips != 1 {
+		t.Fatalf("stats = %+v", stats)
+	}
+}
+
+func TestFlattenContradictoryWeekdaysDropped(t *testing.T) {
+	mkStop := func(id string) reestrStop {
+		return reestrStop{ID: id, Name: "Стоп " + id, Region: "42", OpReg: id}
+	}
+	ds := reestrDataset{
+		Source:   "minstran_reestr",
+		Snapshot: "2026-05-10",
+		Routes:   []reestrRoute{{Reg: "42.22.001", Name: "X", Carrier: "Y"}},
+		Stops:    []reestrStop{mkStop("a"), mkStop("b")},
+		Services: []struct {
+			ID        int    `json:"id"`
+			Name      string `json:"name"`
+			StartDate string `json:"start_date"`
+			EndDate   string `json:"end_date"`
+		}{{ID: 1, Name: "ежедневно", StartDate: "2026-01-01", EndDate: "2026-12-31"}},
+		Schedules: []reestrSched{{
+			Route: "42.22.001", Direction: "forward", ServiceID: 1,
+			Stops: []reestrSchedStop{
+				{Stop: "a", Region: "42", Winter: &reestrBlock{Days: "ежедневно", Dep: []string{"06:00 (пн)"}, Arr: []string{"06:00 (пн)"}}},
+				{Stop: "b", Region: "42", Winter: &reestrBlock{Days: "ежедневно", Dep: []string{"07:00 (вт)"}, Arr: []string{"07:00 (вт)"}}},
+			},
+		}},
+	}
+	trips, stats := FlattenTrips(ds)
+	if len(trips) != 0 || stats.DroppedEmptyWeekdays != 1 {
+		t.Fatalf("противоречивый прогон обязан дропнуться: trips=%d stats=%+v", len(trips), stats)
 	}
 }
 
@@ -83,7 +151,7 @@ func TestFlattenFrequencyOnly(t *testing.T) {
 			},
 		}},
 	}
-	trips := FlattenTrips(ds)
+	trips, _ := FlattenTrips(ds)
 	if len(trips) != 1 || !trips[0].FrequencyOnly {
 		t.Fatalf("want single frequency-only trip, got %+v", trips)
 	}

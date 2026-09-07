@@ -94,6 +94,43 @@ func TestValidateContractDrift(t *testing.T) {
 	}
 }
 
+func TestValidateContractRealWorldFormats(t *testing.T) {
+	raw := loadFixture(t)
+	ok := mutateRaw(t, raw, func(m map[string]any) {
+		rs := m["routes"].([]any)
+		old := rs[0].(map[string]any)["reg"]
+		rs[0].(map[string]any)["reg"] = "42.22.002/2"
+		for _, sc := range m["schedules"].([]any) {
+			if sc.(map[string]any)["route"] == old {
+				sc.(map[string]any)["route"] = "42.22.002/2"
+			}
+		}
+		svcs := m["services"].([]any)
+		svcs[0].(map[string]any)["start_date"] = "2026-09-01"
+		svcs[0].(map[string]any)["end_date"] = "2026-05-31"
+		stops := m["schedules"].([]any)[0].(map[string]any)["stops"].([]any)
+		stops[0].(map[string]any)["winter"].(map[string]any)["dep"] = []any{"13:35 (пт,вс)"}
+	})
+	if err := ValidateDatasetContract(ok); err != nil {
+		t.Fatalf("реальные форматы обязаны проходить контракт: %v", err)
+	}
+	badWrap := mutateRaw(t, raw, func(m map[string]any) {
+		svcs := m["services"].([]any)
+		svcs[0].(map[string]any)["start_date"] = "2026-03-01"
+		svcs[0].(map[string]any)["end_date"] = "2026-01-01"
+	})
+	if err := ValidateDatasetContract(badWrap); err == nil {
+		t.Fatal("несезонный wrap обязан фейлить контракт")
+	}
+	badDays := mutateRaw(t, raw, func(m map[string]any) {
+		stops := m["schedules"].([]any)[0].(map[string]any)["stops"].([]any)
+		stops[0].(map[string]any)["winter"].(map[string]any)["dep"] = []any{"13:35 (xx)"}
+	})
+	if err := ValidateDatasetContract(badDays); err == nil {
+		t.Fatal("неизвестные дни обязаны фейлить контракт")
+	}
+}
+
 func TestBootstrapStable(t *testing.T) {
 	raw := loadFixture(t)
 	rep, err := CompareDatasets(raw, raw, 0.2)

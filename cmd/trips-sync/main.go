@@ -65,11 +65,13 @@ func main() {
 		slog.Error("reestr contract failed", "error", err)
 		os.Exit(1)
 	}
-	trips := mintrans.FlattenTrips(ds)
+	trips, fstats := mintrans.FlattenTrips(ds)
 	sum := sha256.Sum256(raw)
 	inputSHA := hex.EncodeToString(sum[:])
 	planID := sync.ComputePlanID(appVersion, syncConfigHash(sc, trustNK, force), []string{inputSHA})
-	slog.Info("plan", "plan_id", planID, "input_sha", inputSHA, "trips", len(trips))
+	slog.Info("plan", "plan_id", planID, "input_sha", inputSHA, "trips", len(trips),
+		"restricted_weekdays", fstats.RestrictedTrips, "parity", fstats.ParityTrips,
+		"dropped_empty_weekdays", fstats.DroppedEmptyWeekdays)
 
 	st, err := store.New(ctx, cfg.Store.DSN)
 	if err != nil {
@@ -98,7 +100,8 @@ func main() {
 		CoverageGate: sc.CoverageGate, SoftScore: sc.CoverageSoftScore,
 		Margin:      cfg.Verification.ScoreMargin,
 		WaitForGate: wait, Force: force, DryRun: dryRun, Regions: splitRegions(regionsOverride),
-		PlanID: planID, InputSHA: inputSHA, Tag: tag,
+		Flatten: fstats,
+		PlanID:  planID, InputSHA: inputSHA, Tag: tag,
 		ParamsFor: sync.DefaultStopTerminalParamsFor(cfg.Verification),
 		ClassFor:  sync.UrbanClassFor,
 	}

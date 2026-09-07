@@ -44,7 +44,7 @@ func bestAttachScores(
 	}
 	best := make([]float64, 0, len(stops))
 	for _, stop := range stops {
-		item := PairItemFromStop(stop.Name, stop.Lat, stop.Lon, stop.Settlement, source)
+		item := PairItemFromStop(stop.Name, stop.Lat, stop.Lon, stop.Settlement, source, StopCodes(source, stop.OpCode))
 		class := classFor(stop.Region)
 		top := 0.0
 		for _, cand := range cands {

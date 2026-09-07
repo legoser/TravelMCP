@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	reestrRegRe   = regexp.MustCompile(`^\d{2}\.\d{2}\.\d+$`)
+	reestrRegRe   = regexp.MustCompile(`^\d{2}\.\d{2}\.\d+(?:/\d+)?$`)
 	reestrTimeRe  = regexp.MustCompile(`^\d{1,2}:\d{2}$`)
 	reestrDwellRe = regexp.MustCompile(`^\d{1,3}(:\d{2})?$`)
 	reestrDateRe  = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
@@ -65,7 +65,9 @@ func ValidateDatasetContract(raw []byte) error {
 			}
 		}
 		if svc.StartDate > svc.EndDate {
-			return fmt.Errorf("reestr: services[%d]: start %q после end %q", i, svc.StartDate, svc.EndDate)
+			if !wrapsYear(svc.StartDate, svc.EndDate) {
+				return fmt.Errorf("reestr: services[%d]: start %q после end %q", i, svc.StartDate, svc.EndDate)
+			}
 		}
 	}
 	for i, sd := range ds.ServiceDays {
@@ -95,11 +97,23 @@ func ValidateDatasetContract(raw []byte) error {
 	return nil
 }
 
+func wrapsYear(start, end string) bool {
+	s, err := time.Parse("2006-01-02", start)
+	if err != nil {
+		return false
+	}
+	e, err := time.Parse("2006-01-02", end)
+	if err != nil {
+		return false
+	}
+	return s.Month() >= time.July && e.Month() <= time.July
+}
+
 func checkRoutes(routes []reestrRoute) error {
 	seen := map[string]bool{}
 	for i, r := range routes {
 		if !reestrRegRe.MatchString(r.Reg) {
-			return fmt.Errorf("reestr: routes[%d].reg = %q, want NN.NN.NNN", i, r.Reg)
+			return fmt.Errorf("reestr: routes[%d].reg = %q, want NN.NN.NNN с опциональным суффиксом /N", i, r.Reg)
 		}
 		if seen[r.Reg] {
 			return fmt.Errorf("reestr: routes: дубль reg %q", r.Reg)
@@ -146,6 +160,13 @@ func checkStops(stops []reestrStop) error {
 	return nil
 }
 
+func blockDaysOf(b *reestrBlock) string {
+	if b == nil {
+		return ""
+	}
+	return b.Days
+}
+
 func checkSchedules(scheds []reestrSched, routeSet, stopSet map[string]bool, services map[int]bool) error {
 	seenDir := map[string]bool{}
 	for i, sc := range scheds {
@@ -189,20 +210,23 @@ func checkSchedules(scheds []reestrSched, routeSet, stopSet map[string]bool, ser
 				if bb.b == nil {
 					continue
 				}
+				if _, err := ParseBlockDays(blockDaysOf(bb.b)); err != nil {
+					return fmt.Errorf("reestr: schedules[%d] (%s): stops[%d].%s.days: %w", i, sc.Route, j, bb.name, err)
+				}
 				for _, t := range bb.b.Dep {
-					if t == "" {
+					if t == "" || IsNoServiceCell(t) {
 						continue
 					}
-					if !reestrTimeRe.MatchString(t) {
-						return fmt.Errorf("reestr: schedules[%d] (%s): stops[%d].%s.dep = %q, want HH:MM", i, sc.Route, j, bb.name, t)
+					if _, _, _, err := ParseCellTime(t); err != nil {
+						return fmt.Errorf("reestr: schedules[%d] (%s): stops[%d].%s.dep = %q: %w", i, sc.Route, j, bb.name, t, err)
 					}
 				}
 				for _, t := range bb.b.Arr {
-					if t == "" {
+					if t == "" || IsNoServiceCell(t) {
 						continue
 					}
-					if !reestrTimeRe.MatchString(t) {
-						return fmt.Errorf("reestr: schedules[%d] (%s): stops[%d].%s.arr = %q, want HH:MM", i, sc.Route, j, bb.name, t)
+					if _, _, _, err := ParseCellTime(t); err != nil {
+						return fmt.Errorf("reestr: schedules[%d] (%s): stops[%d].%s.arr = %q: %w", i, sc.Route, j, bb.name, t, err)
 					}
 				}
 				for _, t := range bb.b.Dwell {
@@ -210,7 +234,9 @@ func checkSchedules(scheds []reestrSched, routeSet, stopSet map[string]bool, ser
 						continue
 					}
 					if !reestrDwellRe.MatchString(t) {
-						return fmt.Errorf("reestr: schedules[%d] (%s): stops[%d].%s.dwell = %q, want M или H:MM", i, sc.Route, j, bb.name, t)
+						if _, _, _, err := ParseCellTime(t); err != nil {
+							return fmt.Errorf("reestr: schedules[%d] (%s): stops[%d].%s.dwell = %q, want M или H:MM: %w", i, sc.Route, j, bb.name, t, err)
+						}
 					}
 				}
 			}

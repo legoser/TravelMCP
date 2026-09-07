@@ -35,7 +35,7 @@ func MeasureAttachCoverage(
 			order = append(order, stop.Region)
 		}
 		c.Total++
-		item := PairItemFromStop(stop.Name, stop.Lat, stop.Lon, stop.Settlement, source)
+		item := PairItemFromStop(stop.Name, stop.Lat, stop.Lon, stop.Settlement, source, StopCodes(source, stop.OpCode))
 		class := classFor(stop.Region)
 		best := 0.0
 		for _, cand := range cands {

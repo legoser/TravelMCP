@@ -12,6 +12,7 @@ type RegistryStop struct {
 	Name       string
 	Region     string
 	Settlement string
+	OpCode     string
 	Lat, Lon   *float64
 }
 

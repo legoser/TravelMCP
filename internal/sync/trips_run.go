@@ -8,6 +8,7 @@ import (
 	"sort"
 	"time"
 
+	"travelmcp/internal/adapters/mintrans"
 	"travelmcp/internal/config"
 	"travelmcp/internal/model"
 	store "travelmcp/internal/store"
@@ -35,6 +36,7 @@ type TripsRunConfig struct {
 	Force          bool
 	DryRun         bool
 	Regions        []string
+	Flatten        mintrans.FlattenStats
 	PlanID         string
 	InputSHA       string
 	Tag            string
@@ -50,16 +52,17 @@ type RouteOps struct {
 }
 
 type TripsRunSummary struct {
-	Coverage     []RegionCoverage    `json:"coverage"`
-	GatePass     bool                `json:"gate_pass"`
-	Blocked      []string            `json:"blocked"`
-	Forced       bool                `json:"forced"`
-	Routes       int                 `json:"routes"`
-	Skipped      []string            `json:"skipped_routes"`
-	ByRoute      map[string]RouteOps `json:"by_route"`
-	Waited       bool                `json:"waited"`
-	Persist      PersistSummary      `json:"persist"`
-	FullTripRate float64             `json:"full_trip_rate"`
+	Flatten      mintrans.FlattenStats `json:"flatten"`
+	Coverage     []RegionCoverage      `json:"coverage"`
+	GatePass     bool                  `json:"gate_pass"`
+	Blocked      []string              `json:"blocked"`
+	Forced       bool                  `json:"forced"`
+	Routes       int                   `json:"routes"`
+	Skipped      []string              `json:"skipped_routes"`
+	ByRoute      map[string]RouteOps   `json:"by_route"`
+	Waited       bool                  `json:"waited"`
+	Persist      PersistSummary        `json:"persist"`
+	FullTripRate float64               `json:"full_trip_rate"`
 }
 
 func SummarizeByRoute(rep AttachReport) map[string]RouteOps {
@@ -133,6 +136,7 @@ func RegistryStopsFromFlatTrips(trips []model.FlatTrip) []RegistryStop {
 			out = append(out, RegistryStop{
 				Name: s.Name, Region: s.Region,
 				Settlement: namesim.ExtractSettlement(s.Name),
+				OpCode:     s.OpCode,
 				Lat:        s.Lat, Lon: s.Lon,
 			})
 		}
@@ -176,6 +180,7 @@ func FinishTripsRun(ctx context.Context, st TripsRunnerStore, runID int64, state
 
 func RunTripsSync(ctx context.Context, db store.Store, st TripsRunnerStore, trips []model.FlatTrip, cfg TripsRunConfig) (TripsRunSummary, error) {
 	var sum TripsRunSummary
+	sum.Flatten = cfg.Flatten
 	if cfg.Source == "" {
 		cfg.Source = "mintrans"
 	}

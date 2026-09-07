@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"travelmcp/internal/adapters/mintrans"
 	"travelmcp/internal/model"
 	store "travelmcp/internal/store"
 )
@@ -26,6 +27,8 @@ type TripsStore interface {
 	DeleteStopTimes(ctx context.Context, tripID int64) error
 	UpsertStop(ctx context.Context, s store.StopRow) (int64, error)
 	EnsureStopForTerminal(ctx context.Context, terminalID int64, lat, lon float64, name string) (int64, error)
+	AttachTerminalIdentifier(ctx context.Context, terminalID int64, id model.AdaptedIdentifier) (conflictWith int64, err error)
+	ListTerminalCodes(ctx context.Context, terminalID int64, system string) ([]model.AdaptedIdentifier, error)
 	SetTerminalTag(ctx context.Context, id int64, key, value string) error
 	ListCanonTrips(ctx context.Context, source string) (map[string][]string, error)
 	UpsertStopTime(ctx context.Context, st store.StopTimeRow) error
@@ -47,6 +50,9 @@ type PersistSummary struct {
 	Tombstoned int `json:"tombstoned"`
 	Reviews    int `json:"reviews"`
 	Dead       int `json:"dead"`
+	Restricted int `json:"restricted"`
+	Codes      int `json:"codes_attached"`
+	CodeClash  int `json:"code_conflicts"`
 }
 
 func SplitTripNK(tripNK string) string {
@@ -96,6 +102,9 @@ func regionOfRouteReg(routeReg string) string {
 
 func PersistAttachReport(ctx context.Context, db store.Store, rep AttachReport, source string) (PersistSummary, error) {
 	var sum PersistSummary
+	if rep.Alert {
+		return sum, fmt.Errorf("sync trips: churn-alert: накопление идентификаторов заморожено, персист запрещён")
+	}
 	ts, ok := db.(TripsStore)
 	if !ok {
 		return sum, fmt.Errorf("sync trips: стор не умеет персист трипов (нет staging/outbox)")
@@ -104,17 +113,33 @@ func PersistAttachReport(ctx context.Context, db store.Store, rep AttachReport, 
 		source = "mintrans"
 	}
 	sum.Dead = len(rep.Dead)
+	runCodes := map[int64]map[string]bool{}
+	for _, p := range rep.Promoted {
+		for _, m := range p.StopTimes {
+			for _, code := range m.Codes {
+				if runCodes[m.TerminalID] == nil {
+					runCodes[m.TerminalID] = map[string]bool{}
+				}
+				runCodes[m.TerminalID][code.System+"\x00"+code.CodeType+"\x00"+code.Code] = true
+			}
+		}
+	}
 	for _, p := range rep.Promoted {
 		if err := ctx.Err(); err != nil {
 			return sum, err
 		}
-		n, err := persistPromotedTrip(ctx, db, ts, p, source)
+		n, err := persistPromotedTrip(ctx, db, ts, p, source, runCodes)
 		if err != nil {
 			return sum, err
 		}
 		sum.Routes += n.routes
 		sum.Trips++
 		sum.StopTimes += n.stopTimes
+		if n.restricted {
+			sum.Restricted++
+		}
+		sum.Codes += n.codesAttached
+		sum.CodeClash += n.codeClash
 	}
 	for _, s := range rep.Staged {
 		if err := ctx.Err(); err != nil {
@@ -158,11 +183,14 @@ func PersistAttachReport(ctx context.Context, db store.Store, rep AttachReport, 
 }
 
 type promotedCounts struct {
-	routes    int
-	stopTimes int
+	routes        int
+	stopTimes     int
+	restricted    bool
+	codesAttached int
+	codeClash     int
 }
 
-func persistPromotedTrip(ctx context.Context, db store.Store, ts TripsStore, p PromotableTrip, source string) (promotedCounts, error) {
+func persistPromotedTrip(ctx context.Context, db store.Store, ts TripsStore, p PromotableTrip, source string, runCodes map[int64]map[string]bool) (promotedCounts, error) {
 	var out promotedCounts
 	err := db.WithTx(ctx, func(tx store.Store) error {
 		tts, ok := tx.(TripsStore)
@@ -196,10 +224,11 @@ func persistPromotedTrip(ctx context.Context, db store.Store, ts TripsStore, p P
 			}
 		}
 		tripCode := SplitTripNK(p.TripNK)
+		serviceDays := mintrans.FormatWeekdays(p.Weekdays)
 		tripID, err := tts.UpsertTrip(ctx, store.TripRow{
 			RouteID: routeID, ProviderID: source, ExternalTripCode: tripCode,
 			Direction: p.Direction, DirectionID: DirectionIDOf(p.Direction),
-			ServiceID: p.ServiceID, Period: p.WinnerPeriod,
+			ServiceID: p.ServiceID, ServiceDays: serviceDays, Period: p.WinnerPeriod,
 			DurationS: tripDurationS(p.StopTimes),
 		})
 		if err != nil {
@@ -230,10 +259,53 @@ func persistPromotedTrip(ctx context.Context, db store.Store, ts TripsStore, p P
 			if err := tts.SetTerminalTag(ctx, m.TerminalID, "intercity", "1"); err != nil {
 				return err
 			}
+			attached := map[string]bool{}
+			for _, code := range m.Codes {
+				clash, err := tts.AttachTerminalIdentifier(ctx, m.TerminalID, code)
+				if err != nil {
+					return err
+				}
+				if clash != 0 {
+					out.codeClash++
+					if err := tts.SaveReviewQueue(ctx, model.ReviewQueueEntry{
+						EntityType:  "terminal",
+						EntityID:    m.TerminalID,
+						Reason:      "possible_merge",
+						Fingerprint: code.System + ":" + code.CodeType + ":" + code.Code,
+					}); err != nil {
+						return err
+					}
+					continue
+				}
+				out.codesAttached++
+				attached[code.System+"\x00"+code.CodeType+"\x00"+code.Code] = true
+			}
+			if len(m.Codes) > 0 {
+				existing, err := tts.ListTerminalCodes(ctx, m.TerminalID, m.Codes[0].System)
+				if err != nil {
+					return err
+				}
+				for _, ex := range existing {
+					key := ex.System + "\x00" + ex.CodeType + "\x00" + ex.Code
+					if attached[key] || runCodes[m.TerminalID][key] {
+						continue
+					}
+					out.codeClash++
+					if err := tts.SaveReviewQueue(ctx, model.ReviewQueueEntry{
+						EntityType:  "terminal",
+						EntityID:    m.TerminalID,
+						Reason:      "possible_merge",
+						Fingerprint: ex.System + ":" + ex.CodeType + ":" + ex.Code,
+					}); err != nil {
+						return err
+					}
+				}
+			}
 		}
 		if err := tts.DeleteStagingTrip(ctx, source, p.RouteNK, tripCode); err != nil {
 			return err
 		}
+		out.restricted = serviceDays != ""
 		return nil
 	})
 	return out, err
@@ -252,7 +324,7 @@ func persistStagedTrip(ctx context.Context, ts TripsStore, s StagedTrip, source 
 		"route_reg": s.RouteReg, "direction": s.Direction,
 		"service_id": s.ServiceID, "run": s.Run,
 		"carrier": s.Carrier, "carrier_inn": s.CarrierINN,
-		"reason": s.Reason,
+		"weekdays": s.Weekdays, "reason": s.Reason,
 	})
 	region := regionOfRouteReg(s.RouteReg)
 	if region == "" {

@@ -20,7 +20,17 @@ func ParseDataset(raw []byte) (Dataset, error) {
 	return ds, nil
 }
 
-func FlattenTrips(ds Dataset) []model.FlatTrip {
+type FlattenStats struct {
+	Schedules            int `json:"schedules"`
+	Runs                 int `json:"runs"`
+	Trips                int `json:"trips"`
+	FrequencyOnly        int `json:"frequency_only"`
+	DroppedEmptyWeekdays int `json:"dropped_empty_weekdays"`
+	RestrictedTrips      int `json:"restricted_trips"`
+	ParityTrips          int `json:"parity_trips"`
+}
+
+func FlattenTrips(ds Dataset) ([]model.FlatTrip, FlattenStats) {
 	stops := map[string]reestrStop{}
 	for _, st := range ds.Stops {
 		stops[st.ID] = st
@@ -47,7 +57,9 @@ func FlattenTrips(ds Dataset) []model.FlatTrip {
 		}
 	}
 	var out []model.FlatTrip
+	var stats FlattenStats
 	for _, sc := range ds.Schedules {
+		stats.Schedules++
 		period := pickPeriod(sc)
 		r := carrier[sc.Route]
 		ep := endpoints[sc.Route]
@@ -62,14 +74,18 @@ func FlattenTrips(ds Dataset) []model.FlatTrip {
 		}
 		if period == "" {
 			base.FrequencyOnly = true
+			stats.FrequencyOnly++
 			out = append(out, base)
 			continue
 		}
 		base.Period = period
 		runs := runsCount(sc, period)
 		for run := 0; run < runs; run++ {
+			stats.Runs++
 			ft := base
 			ft.Run = run
+			weekdays := allWeek()
+			parity := false
 			prevEff := -1
 			for _, s := range sc.Stops {
 				b := blockOf(s, period)
@@ -77,8 +93,16 @@ func FlattenTrips(ds Dataset) []model.FlatTrip {
 					ft.Untimed = append(ft.Untimed, s.Stop)
 					continue
 				}
-				arrMin, hasArr := timeAt(b.Arr, run)
-				depMin, hasDep := timeAt(b.Dep, run)
+				bd, _ := ParseBlockDays(blockDaysOf(b))
+				if bd.None {
+					ft.Untimed = append(ft.Untimed, s.Stop)
+					continue
+				}
+				if bd.Parity {
+					parity = true
+				}
+				arrMin, arrDays, arrHasDays, hasArr := cellAt(b.Arr, run)
+				depMin, depDays, depHasDays, hasDep := cellAt(b.Dep, run)
 				if !hasArr && !hasDep {
 					ft.Untimed = append(ft.Untimed, s.Stop)
 					continue
@@ -89,6 +113,14 @@ func FlattenTrips(ds Dataset) []model.FlatTrip {
 				if !hasDep {
 					depMin = arrMin
 				}
+				stopDays := blockDaysSet(bd)
+				if arrHasDays {
+					stopDays = intersectDays(stopDays, arrDays)
+				}
+				if depHasDays {
+					stopDays = intersectDays(stopDays, depDays)
+				}
+				weekdays = intersectDays(weekdays, stopDays)
 				arrOff := 0
 				for arrMin+arrOff*1440 < prevEff {
 					arrOff++
@@ -106,14 +138,29 @@ func FlattenTrips(ds Dataset) []model.FlatTrip {
 					StopID: s.Stop,
 					Name:   st.Name,
 					Region: s.Region,
+					OpCode: st.OpReg,
 					Lat:    st.Lat,
 					Lon:    st.Lon,
 					ArrMin: &arr,
 					DepMin: &dep,
 				})
 			}
+			if len(ft.Untimed) == 0 {
+				if len(weekdays) == 0 {
+					stats.DroppedEmptyWeekdays++
+					continue
+				}
+				if parity {
+					stats.ParityTrips++
+				}
+				ft.Weekdays = normWeekdays(weekdays)
+				if ft.Weekdays != nil {
+					stats.RestrictedTrips++
+				}
+			}
+			stats.Trips++
 			out = append(out, ft)
 		}
 	}
-	return out
+	return out, stats
 }

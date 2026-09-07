@@ -38,11 +38,12 @@ type AttachInput struct {
 }
 
 type MatchedStopTime struct {
-	Seq        int    `json:"seq"`
-	TerminalID int64  `json:"terminal_id"`
-	StopID     string `json:"stop_id"`
-	ArrivalS   int    `json:"arrival_s"`
-	DepartureS int    `json:"departure_s"`
+	Seq        int                       `json:"seq"`
+	TerminalID int64                     `json:"terminal_id"`
+	StopID     string                    `json:"stop_id"`
+	ArrivalS   int                       `json:"arrival_s"`
+	DepartureS int                       `json:"departure_s"`
+	Codes      []model.AdaptedIdentifier `json:"codes,omitempty"`
 }
 
 type PromotableTrip struct {
@@ -55,6 +56,7 @@ type PromotableTrip struct {
 	IsSyntheticKey bool              `json:"is_synthetic_key"`
 	WinnerSource   string            `json:"winner_source"`
 	WinnerPeriod   string            `json:"winner_period"`
+	Weekdays       []int             `json:"weekdays,omitempty"`
 	Carrier        string            `json:"carrier"`
 	CarrierINN     string            `json:"carrier_inn"`
 	StopTimes      []MatchedStopTime `json:"stop_times"`
@@ -75,6 +77,7 @@ type StagedTrip struct {
 	IsSyntheticKey bool              `json:"is_synthetic_key"`
 	Carrier        string            `json:"carrier"`
 	CarrierINN     string            `json:"carrier_inn"`
+	Weekdays       []int             `json:"weekdays,omitempty"`
 }
 
 type DeadTrip struct {
@@ -143,7 +146,7 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 				Direction: ft.Direction, ServiceID: ft.ServiceID, Run: ft.Run,
 				State:          "awaiting_times",
 				Reason:         "нет точных времён: frequency-only или меньше двух timed-стопов",
-				IsSyntheticKey: true, Carrier: ft.Carrier, CarrierINN: ft.CarrierINN,
+				IsSyntheticKey: true, Carrier: ft.Carrier, CarrierINN: ft.CarrierINN, Weekdays: ft.Weekdays,
 			})
 			continue
 		}
@@ -154,7 +157,7 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 				State:          "incomplete_trip",
 				Reason:         "стопы без времён, интерполяция запрещена",
 				Unmatched:      append([]string{}, ft.Untimed...),
-				IsSyntheticKey: true, Carrier: ft.Carrier, CarrierINN: ft.CarrierINN,
+				IsSyntheticKey: true, Carrier: ft.Carrier, CarrierINN: ft.CarrierINN, Weekdays: ft.Weekdays,
 			})
 			rep.Reviews = append(rep.Reviews, tripReview(source, routeNK, tripNK, "incomplete_trip", 0))
 			continue
@@ -168,7 +171,7 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 				Reason:         worstReason,
 				Matched:        matched,
 				Unmatched:      unmatched,
-				IsSyntheticKey: true, Carrier: ft.Carrier, CarrierINN: ft.CarrierINN,
+				IsSyntheticKey: true, Carrier: ft.Carrier, CarrierINN: ft.CarrierINN, Weekdays: ft.Weekdays,
 			})
 			rep.Reviews = append(rep.Reviews, tripReview(source, routeNK, tripNK, worstReason, worstScore))
 			continue
@@ -190,7 +193,7 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 				State:          "needs_review",
 				Reason:         soft,
 				Matched:        collapsed,
-				IsSyntheticKey: true, Carrier: ft.Carrier, CarrierINN: ft.CarrierINN,
+				IsSyntheticKey: true, Carrier: ft.Carrier, CarrierINN: ft.CarrierINN, Weekdays: ft.Weekdays,
 			})
 			rep.Reviews = append(rep.Reviews, tripReview(source, routeNK, tripNK, "low_confidence", 0))
 			continue
@@ -202,6 +205,7 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 			IsSyntheticKey: true, RouteSynthetic: routeSynthetic,
 			WinnerSource: source + ":" + ft.Period, WinnerPeriod: ft.Period,
 			Carrier: ft.Carrier, CarrierINN: ft.CarrierINN,
+			Weekdays:  ft.Weekdays,
 			StopTimes: collapsed,
 		})
 	}
@@ -241,10 +245,17 @@ func PairItemFromTerminal(t AttachTerminal) verification.PairItem {
 	}
 }
 
-func PairItemFromStop(name string, lat, lon *float64, settlement, source string) verification.PairItem {
+func StopCodes(source, opCode string) []model.AdaptedIdentifier {
+	if source == "mintrans" && opCode != "" {
+		return []model.AdaptedIdentifier{{System: "mintrans", CodeType: "op_reg", Code: opCode}}
+	}
+	return nil
+}
+
+func PairItemFromStop(name string, lat, lon *float64, settlement, source string, codes []model.AdaptedIdentifier) verification.PairItem {
 	return verification.PairItem{
 		Name: name, Lat: lat, Lon: lon,
-		Settlement: settlement, Source: source,
+		Settlement: settlement, Source: source, Codes: codes,
 	}
 }
 
@@ -258,7 +269,7 @@ func matchStops(ft model.FlatTrip, terms []AttachTerminal, source string, classF
 	worstReason := "incomplete_trip"
 	worstScore := 0.0
 	for seq, s := range ft.Stops {
-		stop := PairItemFromStop(s.Name, s.Lat, s.Lon, namesim.ExtractSettlement(s.Name), source)
+		stop := PairItemFromStop(s.Name, s.Lat, s.Lon, namesim.ExtractSettlement(s.Name), source, StopCodes(source, s.OpCode))
 		class := classFor(s.Region)
 		idx, d, score := verification.MatchStopToTerminal(stop, cands, class, paramsFor(class))
 		if d != verification.DecisionVerified {
@@ -283,6 +294,7 @@ func matchStops(ft model.FlatTrip, terms []AttachTerminal, source string, classF
 		matched = append(matched, MatchedStopTime{
 			Seq: seq, TerminalID: terms[idx].ID, StopID: s.StopID,
 			ArrivalS: arr, DepartureS: dep,
+			Codes: StopCodes(source, s.OpCode),
 		})
 	}
 	for i := range matched {
