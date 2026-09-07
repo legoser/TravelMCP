@@ -13,13 +13,17 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
+	"travelmcp/internal/adapters/nominatim"
 	"travelmcp/internal/config"
+	"travelmcp/internal/geocoder"
 	"travelmcp/internal/model"
 	"travelmcp/internal/skeleton"
 	"travelmcp/internal/store"
 	_ "travelmcp/internal/store/memory"
 	_ "travelmcp/internal/store/postgres"
+	"travelmcp/internal/support/httpx"
 	"travelmcp/internal/support/namesim"
 	"travelmcp/internal/sync"
 )
@@ -29,7 +33,7 @@ const appVersion = "skeleton-sync/1"
 func main() {
 	var configPath, tag, osmOverride, yandexOverride, reestrOverride, regionOverride string
 	var resumeRun int64
-	var dryRun bool
+	var dryRun, noReverse bool
 	flag.StringVar(&configPath, "config", "configs/config.dev.yaml", "путь к YAML-конфигу")
 	flag.StringVar(&tag, "tag", "pilot-kuzbass", "тег прогона")
 	flag.StringVar(&osmOverride, "osm", "", "переопределить sync.osm_path")
@@ -38,6 +42,7 @@ func main() {
 	flag.StringVar(&regionOverride, "region", "", "переопределить sync.skeleton_region")
 	flag.Int64Var(&resumeRun, "run", 0, "продолжить незавершённый прогон с этим sync_runs.id")
 	flag.BoolVar(&dryRun, "dry-run", false, "построить join и coverage без записи в БД")
+	flag.BoolVar(&noReverse, "no-reverse", false, "не обогащать адреса через Nominatim reverse")
 	flag.Parse()
 
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
@@ -122,6 +127,9 @@ func main() {
 		os.Exit(1)
 	}
 
+	if !noReverse {
+		enrichAddresses(ctx, st, &outcome, *cfg)
+	}
 	chunks := sync.ChunkSkeleton(outcome, sc.SkeletonChunkSize)
 	slog.Info("chunks", "count", len(chunks))
 	if err := stageRecords(ctx, st, runID, osm, yan); err != nil {
@@ -200,6 +208,49 @@ func main() {
 			os.Exit(1)
 		}
 	}
+}
+
+func enrichAddresses(ctx context.Context, st store.Store, outcome *skeleton.JoinOutcome, cfg config.Config) {
+	limit := cfg.Geocode.MaxCalls
+	if limit <= 0 {
+		limit = 500
+	}
+	if err := st.SetQuotaLimit(ctx, "nominatim", limit); err != nil {
+		slog.Warn("nominatim quota limit failed", "error", err)
+	}
+	rev := geocoder.Geocoder(nominatim.New(cfg, httpx.New(slog.Default(), "geocoder")))
+	done, skipped := 0, 0
+	for i := range outcome.Canon {
+		r := &outcome.Canon[i].Record
+		if r.Extra != nil && r.Extra["address"] != "" {
+			continue
+		}
+		if !r.HasCoords() {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			break
+		}
+		ok, _, err := st.TryConsumeQuota(ctx, "nominatim", limit)
+		if err != nil || !ok {
+			slog.Warn("nominatim quota exhausted, reverse stopped", "enriched", done, "error", err)
+			break
+		}
+		call, cancel := context.WithTimeout(ctx, 10*time.Second)
+		addr, err := rev.Reverse(call, *r.Lat, *r.Lon)
+		cancel()
+		if err != nil {
+			slog.Debug("nominatim reverse failed", "name", r.NameRu, "error", err)
+			skipped++
+			continue
+		}
+		if r.Extra == nil {
+			r.Extra = map[string]string{}
+		}
+		r.Extra["address"] = addr
+		done++
+	}
+	slog.Info("nominatim reverse done", "enriched", done, "skipped", skipped)
 }
 
 func mustSkeletonStore(st store.Store) interface {

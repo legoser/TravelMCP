@@ -575,10 +575,10 @@ availability-метриках здоровья коннектора.
 
 | Элемент | Статус | Триггер удаления |
 |---|---|---|
-| `internal/adapters/mintrans/importer.go` (`ImportIntercity*`) | Deprecated | паритет на `regions.json` |
+| `internal/adapters/mintrans/importer.go` (`ImportIntercity*`) | Вырезан из сервера (старт + `sync_mintrans` + `POST /api/v1/import/mintrans`→409); файл оставлен как референс до паритета на новом конвейере | паритет `skeleton-sync`+`trips-sync` на `regions.json` |
 | `internal/import/pipeline.go` | Deprecated | перенос стадий в `internal/sync` |
 | `internal/geo/resolve.go` (`GeoResolver`, геокодинг-по-имени) | Deprecated | verify-стадия + `geocode_cache` |
-| `internal/verification/verify.go` `VerifyTerminal` | рефакторинг → `ScorePair` | — |
+| `internal/verification/verify.go` `VerifyTerminal` | Удалён; `haversineMeters` переехал в `scorepair.go` | — |
 | `scripts/extract-minstran.py`: генер. `*_geo.json` | прекращается | после seed |
 | `data/reestr/missing_stops.json` | датасет → review-сигнал | после миграции Фазы 0 |
 | `data/reestr/{yandex,nominatim}_geo.json` | seed → архив | после seed |

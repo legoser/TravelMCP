@@ -106,23 +106,52 @@ func TestAttachFixtureOutcome(t *testing.T) {
 }
 
 func TestAttachUnmatchedStaging(t *testing.T) {
-	trips := loadFlatTrips(t)
-	terms := indexFromFixture(t, trips)
-	terms = terms[:len(terms)-1]
+	lat, lon := 55.34, 86.06
+	lat2, lon2 := 55.03, 82.89
+	terms := []AttachTerminal{
+		{ID: 1, Name: "Кемерово автовокзал", Lat: &lat, Lon: &lon, Settlement: "кемерово", Transport: "bus", Source: "osm", GeomFinalized: true},
+	}
+	trips := []model.FlatTrip{{
+		RouteReg: "54.22.078", Direction: "forward", ServiceID: 1, Period: "winter",
+		Stops: []model.FlatStop{
+			{StopID: "a", Name: "Кемерово автовокзал", Region: "42", Lat: &lat, Lon: &lon, ArrMin: intPtr(600), DepMin: intPtr(610)},
+			{StopID: "b", Name: "Новосибирск автовокзал", Region: "54", Lat: &lat2, Lon: &lon2, ArrMin: intPtr(900), DepMin: intPtr(910)},
+		},
+	}}
 	rep, err := AttachTrips(context.Background(), baseInput(trips, terms))
 	if err != nil {
 		t.Fatalf("attach: %v", err)
 	}
-	if len(rep.Staged) == 0 {
-		t.Fatal("want staged trips for missing terminal")
+	if len(rep.Staged) != 1 || rep.Staged[0].State != "skeleton_gap" || len(rep.Staged[0].Unmatched) == 0 {
+		t.Fatalf("staged = %+v", rep.Staged)
 	}
-	if len(rep.Reviews) == 0 {
-		t.Fatal("want review entries for staged trips")
+	if len(rep.Reviews) != 0 {
+		t.Fatalf("skeleton gap must not file reviews: %+v", rep.Reviews)
 	}
-	for _, s := range rep.Staged {
-		if s.State != "incomplete_trip" || len(s.Unmatched) == 0 {
-			t.Fatalf("staged = %+v", s)
-		}
+}
+
+func TestAttachDuplicateAmbiguousReviews(t *testing.T) {
+	lat, lon := 55.34, 86.06
+	terms := []AttachTerminal{
+		{ID: 1, Name: "Двойник", Lat: &lat, Lon: &lon, Settlement: "двойник", Transport: "bus", Source: "osm", GeomFinalized: true},
+		{ID: 2, Name: "Двойник", Lat: &lat, Lon: &lon, Settlement: "двойник", Transport: "bus", Source: "osm", GeomFinalized: true},
+	}
+	trips := []model.FlatTrip{{
+		RouteReg: "54.22.078", Direction: "forward", ServiceID: 1, Period: "winter",
+		Stops: []model.FlatStop{
+			{StopID: "a", Name: "Двойник", Region: "42", Lat: &lat, Lon: &lon, ArrMin: intPtr(600), DepMin: intPtr(610)},
+			{StopID: "b", Name: "Двойник", Region: "42", Lat: &lat, Lon: &lon, ArrMin: intPtr(660), DepMin: intPtr(670)},
+		},
+	}}
+	rep, err := AttachTrips(context.Background(), baseInput(trips, terms))
+	if err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	if len(rep.Staged) != 1 || rep.Staged[0].State != "incomplete_trip" {
+		t.Fatalf("staged = %+v", rep.Staged)
+	}
+	if len(rep.Reviews) != 1 || rep.Reviews[0].Reason != "duplicate_ambiguous" {
+		t.Fatalf("reviews = %+v", rep.Reviews)
 	}
 	for _, r := range rep.Reviews {
 		if r.EntityType != "trip" || r.Fingerprint == "" || r.EntityID >= 0 {

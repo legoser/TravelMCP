@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"log/slog"
 	"net/http"
@@ -14,10 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"travelmcp/internal/adapters/mintrans"
 	"travelmcp/internal/config"
-	"travelmcp/internal/geo"
-	"travelmcp/internal/geocoder"
 	"travelmcp/internal/jobs"
 	"travelmcp/internal/logger"
 	"travelmcp/internal/pricing"
@@ -26,7 +24,6 @@ import (
 	"travelmcp/internal/store"
 	_ "travelmcp/internal/store/memory"
 	_ "travelmcp/internal/store/postgres"
-	"travelmcp/internal/support/httpx"
 	"travelmcp/internal/telemetry"
 
 	_ "travelmcp/internal/adapters/nominatim"
@@ -51,31 +48,6 @@ func main() {
 	logger.Info("config loaded", "path", configPath, "addr", cfg.HTTP.Addr, "providers", strings.Join(cfg.Providers.Enabled, ","), "dsn", maskDSN(cfg.Database.DSN), "reestr", cfg.Providers.Intercity.ReestrPath, "log_level", cfg.Log.Level, "log_format", cfg.Log.Format, "log_levels", cfg.Log.Levels, "pricing_currency", cfg.Pricing.DefaultCurrency)
 
 	httpLogger := factory.For("http")
-	httpxLogger := factory.For("httpx")
-	httpxClient := httpx.New(httpxLogger, "geocoder")
-	var geoResolver *geo.GeoResolver
-	if g, err := geocoder.New(*cfg, httpxClient); err != nil {
-		logger.Warn("geocoder init", "error", err)
-	} else {
-		enabled := true
-		if cfg.Geocode.Enabled != nil {
-			enabled = *cfg.Geocode.Enabled
-		}
-		if !enabled {
-			logger.Info("geocode disabled by config")
-		} else {
-			maxCalls := cfg.Geocode.MaxCalls
-			if maxCalls > 0 {
-				logger.Warn("geocode.max_calls deprecated: используйте квоту БД api_quotas + TTL geocode_cache (Фаза 2)")
-			}
-			if maxCalls <= 0 {
-				maxCalls = 500
-			}
-			geoResolver = geo.NewGeoResolver(g, cfg.Geocoder.Limit, cfg.Verification.NameSimilarity, maxCalls)
-			logger.Info("geocoder ready", "attempts", cfg.Geocoder.Attempts, "limit", cfg.Geocoder.Limit, "name_similarity", cfg.Verification.NameSimilarity, "max_calls", maxCalls, "preferred", cfg.Geocoder.Kind, "registered", geocoder.RegisteredKinds())
-		}
-		_ = g
-	}
 
 	metrics := telemetry.New()
 	regStart := time.Now()
@@ -110,21 +82,7 @@ func main() {
 			}
 			for _, id := range cfg.Providers.Enabled {
 				if id == providers.IntercityID {
-					go func() {
-						is := time.Now()
-						logger.Info("import started (async)", "provider", id, "path", cfg.Providers.Intercity.ReestrPath)
-						var impErr error
-						if geoResolver != nil {
-							impErr = mintrans.ImportIntercityWithResolver(context.Background(), st, cfg.Providers.Intercity.ReestrPath, logger, geoResolver)
-						} else {
-							impErr = mintrans.ImportIntercity(context.Background(), st, cfg.Providers.Intercity.ReestrPath, logger)
-						}
-						if impErr != nil {
-							logger.Warn("import failed", "provider", id, "error", impErr, "elapsed_ms", time.Since(is).Milliseconds())
-						} else {
-							logger.Info("import completed", "provider", id, "path", cfg.Providers.Intercity.ReestrPath, "elapsed_ms", time.Since(is).Milliseconds())
-						}
-					}()
+					logger.Warn("legacy mintrans import disabled: канон пишут skeleton-sync + trips-sync, сервер только читает", "provider", id, "reestr", cfg.Providers.Intercity.ReestrPath)
 				}
 			}
 		}
@@ -134,7 +92,7 @@ func main() {
 	if st != nil {
 		go func() {
 			workerLogger := factory.For("jobs")
-			w := newJobsWorker(st, workerLogger, geoResolver, cfg.Providers.Intercity.ReestrPath, cfg)
+			w := newJobsWorker(st, workerLogger)
 			workerLogger.Info("jobs worker started")
 			w.Run(context.Background(), 5*time.Second)
 		}()
@@ -203,7 +161,7 @@ func parseDuration(s string, def time.Duration) time.Duration {
 	return def
 }
 
-func newJobsWorker(st store.Store, l *slog.Logger, geoResolver *geo.GeoResolver, reestrPath string, cfg *config.Config) *jobs.Worker {
+func newJobsWorker(st store.Store, l *slog.Logger) *jobs.Worker {
 	w := jobs.NewWorker(st, l)
 	w.Register("import_gtfs", func(ctx context.Context, job store.JobRow) error {
 		l.Info("handling import_gtfs", "id", job.ID, "payload", job.Payload)
@@ -273,26 +231,9 @@ func newJobsWorker(st store.Store, l *slog.Logger, geoResolver *geo.GeoResolver,
 		}
 		return nil
 	})
-	w.Register("sync_mintrans", func(ctx context.Context, job store.JobRow) error {
-		l.Info("handling sync_mintrans", "id", job.ID)
-		if reestrPath == "" && cfg != nil {
-			reestrPath = cfg.Providers.Intercity.ReestrPath
-		}
-		if reestrPath == "" {
-			reestrPath = "data/reestr/regions.json"
-		}
-		var err error
-		if geoResolver != nil {
-			err = mintrans.ImportIntercityWithResolver(ctx, st, reestrPath, l, geoResolver)
-		} else {
-			err = mintrans.ImportIntercity(ctx, st, reestrPath, l)
-		}
-		if err != nil {
-			l.Error("sync_mintrans failed", "err", err)
-			return err
-		}
-		l.Info("sync_mintrans done")
-		return nil
+	w.Register("sync_mintrans", func(_ context.Context, job store.JobRow) error {
+		l.Warn("sync_mintrans disabled: legacy-импорт вырезан, канон пишут skeleton-sync + trips-sync", "id", job.ID)
+		return errors.New("sync_mintrans отключён: legacy-импорт вырезан, канон пишут skeleton-sync + trips-sync")
 	})
 	w.Register("sync_rail", func(ctx context.Context, job store.JobRow) error {
 		l.Info("handling sync_rail", "id", job.ID)

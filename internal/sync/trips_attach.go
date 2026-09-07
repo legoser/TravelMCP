@@ -159,12 +159,11 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 				Unmatched:      append([]string{}, ft.Untimed...),
 				IsSyntheticKey: true, Carrier: ft.Carrier, CarrierINN: ft.CarrierINN, Weekdays: ft.Weekdays,
 			})
-			rep.Reviews = append(rep.Reviews, tripReview(source, routeNK, tripNK, "incomplete_trip", 0))
 			continue
 		}
 		matched, worstReason, worstScore, unmatched := matchStops(ft, in.Terminals, source, classFor, in.ParamsFor)
 		if len(unmatched) > 0 {
-			rep.Staged = append(rep.Staged, StagedTrip{
+			st := StagedTrip{
 				RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg,
 				Direction: ft.Direction, ServiceID: ft.ServiceID, Run: ft.Run,
 				State:          "incomplete_trip",
@@ -172,8 +171,14 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 				Matched:        matched,
 				Unmatched:      unmatched,
 				IsSyntheticKey: true, Carrier: ft.Carrier, CarrierINN: ft.CarrierINN, Weekdays: ft.Weekdays,
-			})
-			rep.Reviews = append(rep.Reviews, tripReview(source, routeNK, tripNK, worstReason, worstScore))
+			}
+			if worstReason == "incomplete_trip" {
+				st.State = "skeleton_gap"
+				st.Reason = "нет верифицированного терминала в скелете"
+			} else {
+				rep.Reviews = append(rep.Reviews, tripReview(source, routeNK, tripNK, worstReason, worstScore))
+			}
+			rep.Staged = append(rep.Staged, st)
 			continue
 		}
 		collapsed := collapseConsecutive(matched)

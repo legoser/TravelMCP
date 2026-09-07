@@ -16,7 +16,7 @@
 `GET /api/v1/admin/imports` — последние `imports(provider, at, records, status, checksum)` (источник истины `Postgres`, порядок `at DESC`).  
 `GET /api/v1/admin/logs` — `import_logs(job_id, entity_type, stage, action, confidence)` — per-stop trace `normalize→enrich→dedup→verify→canonical`.  
 `GET /api/v1/jobs` / `POST /api/v1/jobs {"type":"sync_mintrans","payload":"{}"}` — очередь `jobs(state pending→running→retry→done/dead, attempts, next_run)`; состояние видно в таблице.  
-Кнопки: **Обновить автобусы** → `POST /api/v1/import/mintrans` → `jobs type=sync_mintrans`, **Обновить ж/д** → `sync_rail`, **Upload gtfs.zip** → `import_gtfs`. Воркер `internal/jobs/worker.go` забирает `ClaimNextJob FOR UPDATE SKIP LOCKED`, `429` → `MarkJobRetry(next_run=now+attempt*2m cap 30m)` + ротация `B=mintrans→yandex→nominatim` (`api_quotas`).
+Кнопки: **Обновить автобусы** → `POST /api/v1/import/mintrans` — **отключена (409)**: legacy-импорт вырезан из сервера, канон пишут `skeleton-sync` + `trips-sync`; **Обновить ж/д** → `sync_rail`, **Upload gtfs.zip** → `import_gtfs`. Воркер `internal/jobs/worker.go` забирает `ClaimNextJob FOR UPDATE SKIP LOCKED`, `429` → `MarkJobRetry(next_run=now+attempt*2m cap 30m)` + ротация `B=mintrans→yandex→nominatim` (`api_quotas`). Джоба `sync_mintrans`, поставленная вручную через `POST /api/v1/jobs`, сразу падает с объяснением (не пишет в БД).
 
 ### Терминалы — ручная правка
 `PUT /api/v1/admin/terminals/{id} {"name":"Кемерово АВ","lat":55.355,"lon":86.088}`  

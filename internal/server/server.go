@@ -634,18 +634,7 @@ func (s *Server) handleImportGTFS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSyncMintrans(w http.ResponseWriter, r *http.Request) {
-	if s.store == nil {
-		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
-		return
-	}
-	var payload map[string]any
-	_ = json.NewDecoder(r.Body).Decode(&payload)
-	b, _ := json.Marshal(payload)
-	if len(b) == 0 {
-		b = []byte("{}")
-	}
-	id, _ := s.store.EnqueueJob(r.Context(), store.JobRow{Type: "sync_mintrans", Payload: string(b)})
-	writeJSONResponse(w, http.StatusCreated, map[string]any{"id": id, "type": "sync_mintrans"})
+	writeJSONResponse(w, http.StatusConflict, map[string]any{"error": "sync_mintrans отключён: legacy-импорт вырезан, канон пишут skeleton-sync + trips-sync"})
 }
 
 func (s *Server) handleSyncRail(w http.ResponseWriter, r *http.Request) {

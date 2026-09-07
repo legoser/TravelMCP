@@ -43,16 +43,17 @@ type TripsStore interface {
 }
 
 type PersistSummary struct {
-	Routes     int `json:"routes"`
-	Trips      int `json:"trips"`
-	StopTimes  int `json:"stop_times"`
-	Staged     int `json:"staged"`
-	Tombstoned int `json:"tombstoned"`
-	Reviews    int `json:"reviews"`
-	Dead       int `json:"dead"`
-	Restricted int `json:"restricted"`
-	Codes      int `json:"codes_attached"`
-	CodeClash  int `json:"code_conflicts"`
+	Routes      int `json:"routes"`
+	Trips       int `json:"trips"`
+	StopTimes   int `json:"stop_times"`
+	Staged      int `json:"staged"`
+	SkeletonGap int `json:"skeleton_gap"`
+	Tombstoned  int `json:"tombstoned"`
+	Reviews     int `json:"reviews"`
+	Dead        int `json:"dead"`
+	Restricted  int `json:"restricted"`
+	Codes       int `json:"codes_attached"`
+	CodeClash   int `json:"code_conflicts"`
 }
 
 func SplitTripNK(tripNK string) string {
@@ -149,6 +150,9 @@ func PersistAttachReport(ctx context.Context, db store.Store, rep AttachReport, 
 			return sum, err
 		}
 		sum.Staged++
+		if s.State == "skeleton_gap" {
+			sum.SkeletonGap++
+		}
 	}
 	for _, r := range rep.Reviews {
 		if err := ts.SaveReviewQueue(ctx, r); err != nil {

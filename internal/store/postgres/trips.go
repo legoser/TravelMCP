@@ -182,7 +182,7 @@ func (p *PostgresStore) AttachTerminalIdentifier(ctx context.Context, terminalID
 	err := p.pool.QueryRow(ctx, `SELECT terminal_id FROM terminal_identifiers WHERE system=$1 AND code=$2`, id.System, id.Code).Scan(&owner)
 	if err == nil {
 		if owner == terminalID {
-			return 0, nil
+			return 0, applyIdentifierPrimaryRule(ctx, p.pool, terminalID, id.System, id.CodeType, id.Code)
 		}
 		return owner, nil
 	}
@@ -194,7 +194,7 @@ func (p *PostgresStore) AttachTerminalIdentifier(ctx context.Context, terminalID
 		}
 		return 0, err
 	}
-	return 0, nil
+	return 0, applyIdentifierPrimaryRule(ctx, p.pool, terminalID, id.System, id.CodeType, id.Code)
 }
 
 func (p *PostgresStore) ListTerminalCodes(ctx context.Context, terminalID int64, system string) ([]model.AdaptedIdentifier, error) {
@@ -387,7 +387,7 @@ func (t *pgTxStore) AttachTerminalIdentifier(ctx context.Context, terminalID int
 	err := t.tx.QueryRow(ctx, `SELECT terminal_id FROM terminal_identifiers WHERE system=$1 AND code=$2`, id.System, id.Code).Scan(&owner)
 	if err == nil {
 		if owner == terminalID {
-			return 0, nil
+			return 0, applyIdentifierPrimaryRule(ctx, t.tx, terminalID, id.System, id.CodeType, id.Code)
 		}
 		return owner, nil
 	}
@@ -399,7 +399,7 @@ func (t *pgTxStore) AttachTerminalIdentifier(ctx context.Context, terminalID int
 		}
 		return 0, err
 	}
-	return 0, nil
+	return 0, applyIdentifierPrimaryRule(ctx, t.tx, terminalID, id.System, id.CodeType, id.Code)
 }
 
 func (t *pgTxStore) DeleteStagingTrip(ctx context.Context, source, routeCode, tripCode string) error {
