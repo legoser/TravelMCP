@@ -307,6 +307,8 @@ CREATE TABLE IF NOT EXISTS stop_times (
   drop_off_type smallint DEFAULT 0 CHECK(drop_off_type IN (0,1,2,3)),
   dwell int,
   is_provisional bool DEFAULT false,
+  match_score real,
+  match_method text CHECK (match_method IS NULL OR match_method IN ('code','scorepair')),
   PRIMARY KEY(trip_id, seq)
 );
 CREATE INDEX IF NOT EXISTS idx_stop_times_stop_departure ON stop_times(stop_id, departure);

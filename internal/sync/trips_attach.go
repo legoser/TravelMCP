@@ -45,6 +45,8 @@ type MatchedStopTime struct {
 	DepartureS    int                       `json:"departure_s"`
 	Codes         []model.AdaptedIdentifier `json:"codes,omitempty"`
 	IsProvisional bool                      `json:"is_provisional,omitempty"`
+	MatchScore    float64                   `json:"match_score,omitempty"`
+	MatchMethod   string                    `json:"match_method,omitempty"`
 }
 
 type PromotableTrip struct {
@@ -328,11 +330,17 @@ func matchStops(ft model.FlatTrip, idx *matchIndex, source string, classFor func
 			dep = *s.DepMin * 60
 		}
 		t := terms[poolIdx[idxBest]]
+		method := "scorepair"
+		if score.CodeMatch {
+			method = "code"
+		}
 		matched = append(matched, MatchedStopTime{
 			Seq: seq, TerminalID: t.ID, StopID: s.StopID,
 			ArrivalS: arr, DepartureS: dep,
 			Codes:         pairCodes,
 			IsProvisional: !t.GeomFinalized,
+			MatchScore:    score.Value,
+			MatchMethod:   method,
 		})
 	}
 	for i := range matched {

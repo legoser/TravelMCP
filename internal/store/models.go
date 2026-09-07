@@ -110,6 +110,8 @@ type StopTimeRow struct {
 	DropOffType   int
 	Dwell         int
 	IsProvisional bool
+	MatchScore    *float64
+	MatchMethod   string
 }
 
 type TransferRow struct {

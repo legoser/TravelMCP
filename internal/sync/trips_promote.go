@@ -246,10 +246,17 @@ func persistPromotedTrip(ctx context.Context, db store.Store, ts TripsStore, p P
 			if err != nil {
 				return err
 			}
+			var matchScore *float64
+			if m.MatchScore > 0 {
+				v := m.MatchScore
+				matchScore = &v
+			}
 			if err := tts.UpsertStopTime(ctx, store.StopTimeRow{
 				TripID: tripID, StopID: stopID, Seq: m.Seq,
 				Arrival: m.ArrivalS, Departure: m.DepartureS,
 				IsProvisional: m.IsProvisional,
+				MatchScore:    matchScore,
+				MatchMethod:   m.MatchMethod,
 			}); err != nil {
 				return err
 			}

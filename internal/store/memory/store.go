@@ -777,6 +777,16 @@ func (m *MemoryStore) UpsertStopTime(ctx context.Context, st StopTimeRow) error 
 	m.mu.Unlock()
 	return nil
 }
+
+// StopTimes — тестовый аксессор: копия stop_times для round-trip проверок
+// персиста (match_score/match_method/is_provisional).
+func (m *MemoryStore) StopTimes() []StopTimeRow {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]StopTimeRow, len(m.stopTimes))
+	copy(out, m.stopTimes)
+	return out
+}
 func (m *MemoryStore) UpsertTransfer(ctx context.Context, tr TransferRow) error {
 	m.mu.Lock()
 	m.transfers = append(m.transfers, tr)

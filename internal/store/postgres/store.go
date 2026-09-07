@@ -212,7 +212,7 @@ func (p *PostgresStore) UpsertStopTime(ctx context.Context, st StopTimeRow) erro
 	if p.pool == nil {
 		return nil
 	}
-	_, err := p.pool.Exec(ctx, `INSERT INTO stop_times(trip_id, stop_id, seq, arrival, departure, pickup_type, drop_off_type, dwell, is_provisional) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(trip_id, seq) DO UPDATE SET stop_id=EXCLUDED.stop_id, arrival=EXCLUDED.arrival, departure=EXCLUDED.departure, is_provisional=EXCLUDED.is_provisional`, st.TripID, st.StopID, st.Seq, st.Arrival, st.Departure, st.PickupType, st.DropOffType, st.Dwell, st.IsProvisional)
+	_, err := p.pool.Exec(ctx, `INSERT INTO stop_times(trip_id, stop_id, seq, arrival, departure, pickup_type, drop_off_type, dwell, is_provisional, match_score, match_method) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(trip_id, seq) DO UPDATE SET stop_id=EXCLUDED.stop_id, arrival=EXCLUDED.arrival, departure=EXCLUDED.departure, is_provisional=EXCLUDED.is_provisional, match_score=EXCLUDED.match_score, match_method=EXCLUDED.match_method`, st.TripID, st.StopID, st.Seq, st.Arrival, st.Departure, st.PickupType, st.DropOffType, st.Dwell, st.IsProvisional, st.MatchScore, st.MatchMethod)
 	return err
 }
 func (p *PostgresStore) UpsertTransfer(ctx context.Context, tr TransferRow) error {
@@ -1063,7 +1063,7 @@ func (t *pgTxStore) UpsertFrequency(ctx context.Context, f FrequencyRow) error {
 	return err
 }
 func (t *pgTxStore) UpsertStopTime(ctx context.Context, st StopTimeRow) error {
-	_, err := t.tx.Exec(ctx, `INSERT INTO stop_times(trip_id, stop_id, seq, arrival, departure, pickup_type, drop_off_type, dwell, is_provisional) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(trip_id, seq) DO UPDATE SET stop_id=EXCLUDED.stop_id, arrival=EXCLUDED.arrival, is_provisional=EXCLUDED.is_provisional`, st.TripID, st.StopID, st.Seq, st.Arrival, st.Departure, st.PickupType, st.DropOffType, st.Dwell, st.IsProvisional)
+	_, err := t.tx.Exec(ctx, `INSERT INTO stop_times(trip_id, stop_id, seq, arrival, departure, pickup_type, drop_off_type, dwell, is_provisional, match_score, match_method) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(trip_id, seq) DO UPDATE SET stop_id=EXCLUDED.stop_id, arrival=EXCLUDED.arrival, is_provisional=EXCLUDED.is_provisional, match_score=EXCLUDED.match_score, match_method=EXCLUDED.match_method`, st.TripID, st.StopID, st.Seq, st.Arrival, st.Departure, st.PickupType, st.DropOffType, st.Dwell, st.IsProvisional, st.MatchScore, st.MatchMethod)
 	return err
 }
 func (t *pgTxStore) UpsertTransfer(ctx context.Context, tr TransferRow) error {
