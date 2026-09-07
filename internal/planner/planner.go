@@ -662,8 +662,14 @@ func (p *Planner) csa(net *model.Network, fromStop, toStop string, depart time.T
 		for len(queue) > 0 {
 			cur := queue[0]
 			queue = queue[1:]
+			if net.ProvisionalStops[cur] {
+				continue
+			}
 			curT := arr[cur]
 			for _, tr := range transfersFrom[cur] {
+				if net.ProvisionalStops[tr.ToStopID] {
+					continue
+				}
 				cand := curT.Add(time.Duration(tr.Minutes) * time.Minute)
 				if at, ok := arr[tr.ToStopID]; !ok || cand.Before(at) {
 					arr[tr.ToStopID] = cand

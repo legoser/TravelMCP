@@ -140,3 +140,76 @@ func RecommendThreshold(rep CalibrationReport, targetNoisyRate float64) (float64
 	}
 	return best, fmt.Sprintf("максимальный порог с noisy-rate (сдвиг %.0fм) >= %.2f", rep.NoisyShiftM, targetNoisyRate)
 }
+
+// GateMethodReport — замер S-4: сравнение двух методов coverage-gate на одном
+// наборе стопов/терминалов. Soft — доля стопов с best-score ≥ softThreshold
+// (текущая ось MeasureAttachCoverage); Verified — доля стопов, которые реально
+// проходят MatchStopToTerminal с решением verified (ось attach-движка).
+type GateMethodReport struct {
+	Region          string  `json:"region"`
+	Total           int     `json:"total"`
+	SoftMatched     int     `json:"soft_matched"`
+	VerifiedMatched int     `json:"verified_matched"`
+	SoftRate        float64 `json:"soft_rate"`
+	VerifiedRate    float64 `json:"verified_rate"`
+}
+
+// CompareGateMethods прогоняет оба метода на одинаковом входе. softThreshold —
+// порог soft-оси (sync.coverage_soft_score, 0.4); verified использует полные
+// params (threshold 0.6 + margin + ambiguity + hard-guard).
+func CompareGateMethods(
+	stops []RegistryStop,
+	terms []AttachTerminal,
+	softThreshold float64,
+	paramsFor func(model.DensityClass) verification.Params,
+	classFor func(string) model.DensityClass,
+	source string,
+) []GateMethodReport {
+	if classFor == nil {
+		classFor = func(string) model.DensityClass { return model.DensityUrban }
+	}
+	if source == "" {
+		source = "mintrans"
+	}
+	cands := make([]verification.PairItem, 0, len(terms))
+	for _, t := range terms {
+		cands = append(cands, PairItemFromTerminal(t))
+	}
+	byRegion := map[string]*GateMethodReport{}
+	order := []string{}
+	for _, stop := range stops {
+		r, ok := byRegion[stop.Region]
+		if !ok {
+			r = &GateMethodReport{Region: stop.Region}
+			byRegion[stop.Region] = r
+			order = append(order, stop.Region)
+		}
+		r.Total++
+		item := PairItemFromStop(stop.Name, stop.Lat, stop.Lon, stop.Settlement, source, StopCodes(source, stop.OpCode))
+		class := classFor(stop.Region)
+		best := 0.0
+		for _, cand := range cands {
+			if sc := verification.ScorePair(item, cand, class, paramsFor(class)); sc.Value > best {
+				best = sc.Value
+			}
+		}
+		if best >= softThreshold {
+			r.SoftMatched++
+		}
+		_, d, _ := verification.MatchStopToTerminal(item, cands, class, paramsFor(class))
+		if d == verification.DecisionVerified {
+			r.VerifiedMatched++
+		}
+	}
+	out := make([]GateMethodReport, 0, len(order))
+	for _, reg := range order {
+		r := byRegion[reg]
+		if r.Total > 0 {
+			r.SoftRate = float64(r.SoftMatched) / float64(r.Total)
+			r.VerifiedRate = float64(r.VerifiedMatched) / float64(r.Total)
+		}
+		out = append(out, *r)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Region < out[j].Region })
+	return out
+}

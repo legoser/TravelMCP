@@ -90,6 +90,11 @@ type Nominatim struct {
 	URL string `yaml:"url"`
 }
 
+type Overpass struct {
+	URL       string `yaml:"url"`
+	MirrorURL string `yaml:"mirror_url"`
+}
+
 type Geocoder struct {
 	Kind     string `yaml:"kind"`
 	URL      string `yaml:"url"`
@@ -192,6 +197,7 @@ type Sync struct {
 	CoverageSoftScore   float64 `yaml:"coverage_soft_score"`
 	TripsChurnThreshold float64 `yaml:"trips_churn_threshold"`
 	TripsMaxSpeedKmh    float64 `yaml:"trips_max_speed_kmh"`
+	OverpassMax         int     `yaml:"overpass_max"`
 }
 
 type Config struct {
@@ -206,6 +212,7 @@ type Config struct {
 	Geocode       Geocode       `yaml:"geocode"`
 	Yandex        Yandex        `yaml:"yandex"`
 	Nominatim     Nominatim     `yaml:"nominatim"`
+	Overpass      Overpass      `yaml:"overpass"`
 	Motis         Motis         `yaml:"motis"`
 	Planner       Planner       `yaml:"planner"`
 	Log           Log           `yaml:"log"`
@@ -239,9 +246,13 @@ func Defaults() *Config {
 		Geocode:   Geocode{Enabled: boolPtr(true), MaxCalls: 0, TTLVerified: "2160h", TTLDisputed: "168h"},
 		Yandex:    Yandex{GeocodeURL: "https://geocode-maps.yandex.ru/1.x", GeocodeKind: ""},
 		Nominatim: Nominatim{URL: "https://nominatim.openstreetmap.org"},
-		Motis:     Motis{URL: "http://192.168.57.14:8077"},
-		Planner:   Planner{Engine: "csa", SemaphoreSize: runtime.NumCPU() * 2, SemaphoreEnable: true},
-		Log:       Log{Level: "info", Format: "json", Levels: map[string]string{}},
+		Overpass: Overpass{
+			URL:       "https://overpass-api.de/api/interpreter",
+			MirrorURL: "https://overpass.openstreetmap.fr/api/interpreter",
+		},
+		Motis:   Motis{URL: "http://192.168.57.14:8077"},
+		Planner: Planner{Engine: "csa", SemaphoreSize: runtime.NumCPU() * 2, SemaphoreEnable: true},
+		Log:     Log{Level: "info", Format: "json", Levels: map[string]string{}},
 		Verification: Verification{
 			ConfidenceThreshold: 0.6,
 			DistanceM:           200,
@@ -255,7 +266,7 @@ func Defaults() *Config {
 		Deduplication: Deduplication{DistanceM: 200},
 		Pricing:       Pricing{DefaultCurrency: "RUB"},
 		GTFS:          GTFS{TmpDir: "data/tmp/gtfs"},
-		Sync:          Sync{LogDir: "data/logs", CoverageGate: 0, SkeletonChunkSize: 100, OsmPath: "data/osm/stations.json", YandexDumpPath: "data/yandex/cache/global_stations_list.json", SkeletonRegion: "Кемеровская область - Кузбасс", Bbox: "53.5,84.0,57.0,88.5", LegacyThreshold: 0.6, CoverageSoftScore: 0.4, TripsChurnThreshold: 0.2, TripsMaxSpeedKmh: 200},
+		Sync:          Sync{LogDir: "data/logs", CoverageGate: 0, SkeletonChunkSize: 100, OsmPath: "data/osm/stations.json", YandexDumpPath: "data/yandex/cache/global_stations_list.json", SkeletonRegion: "Кемеровская область - Кузбасс", Bbox: "53.5,84.0,57.0,88.5", LegacyThreshold: 0.6, CoverageSoftScore: 0.4, TripsChurnThreshold: 0.2, TripsMaxSpeedKmh: 200, OverpassMax: 200},
 	}
 }
 
@@ -293,6 +304,12 @@ func syncLegacy(cfg *Config) {
 	}
 	if cfg.Nominatim.URL == "" {
 		cfg.Nominatim.URL = "https://nominatim.openstreetmap.org"
+	}
+	if cfg.Overpass.URL == "" {
+		cfg.Overpass.URL = "https://overpass-api.de/api/interpreter"
+	}
+	if cfg.Overpass.MirrorURL == "" {
+		cfg.Overpass.MirrorURL = "https://overpass.openstreetmap.fr/api/interpreter"
 	}
 	if cfg.Yandex.GeocodeURL == "" {
 		cfg.Yandex.GeocodeURL = "https://geocode-maps.yandex.ru/1.x"
@@ -380,6 +397,8 @@ func syncLegacy(cfg *Config) {
 	}
 	if cfg.Sync.Bbox == "" {
 		cfg.Sync.Bbox = "53.5,84.0,57.0,88.5"
+	} else if strings.EqualFold(cfg.Sync.Bbox, "none") {
+		cfg.Sync.Bbox = ""
 	}
 	if cfg.Sync.LegacyThreshold == 0 {
 		cfg.Sync.LegacyThreshold = 0.6
@@ -392,6 +411,9 @@ func syncLegacy(cfg *Config) {
 	}
 	if cfg.Sync.TripsMaxSpeedKmh == 0 {
 		cfg.Sync.TripsMaxSpeedKmh = 200
+	}
+	if cfg.Sync.OverpassMax == 0 {
+		cfg.Sync.OverpassMax = 200
 	}
 	if cfg.Pricing.DefaultCurrency == "" {
 		cfg.Pricing.DefaultCurrency = "RUB"
@@ -432,6 +454,12 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("NOMINATIM_BASE_URL"); v != "" {
 		cfg.Nominatim.URL = v
+	}
+	if v := os.Getenv("OVERPASS_URL"); v != "" {
+		cfg.Overpass.URL = v
+	}
+	if v := os.Getenv("OVERPASS_MIRROR_URL"); v != "" {
+		cfg.Overpass.MirrorURL = v
 	}
 	if v := os.Getenv("GEOCODER_KIND"); v != "" {
 		cfg.Geocoder.Kind = v
@@ -810,6 +838,13 @@ func setByPath(cfg *Config, parts []string, v string) {
 	case "nominatim":
 		if len(parts) == 2 && (parts[1] == "url" || parts[1] == "base_url") {
 			cfg.Nominatim.URL = v
+		}
+	case "overpass":
+		if len(parts) == 2 && (parts[1] == "url" || parts[1] == "base_url") {
+			cfg.Overpass.URL = v
+		}
+		if len(parts) == 2 && parts[1] == "mirror_url" {
+			cfg.Overpass.MirrorURL = v
 		}
 	case "motis":
 		if len(parts) == 2 && (parts[1] == "url" || parts[1] == "base_url") {

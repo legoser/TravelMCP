@@ -97,6 +97,35 @@ func TestPlanFootpathTransfer(t *testing.T) {
 	}
 }
 
+func TestPlanProvisionalStopNoTransfer(t *testing.T) {
+	p, net := newTestPlanner(t)
+
+	for _, trip := range net.Trips {
+		for i := range trip.StopTimes {
+			if trip.StopTimes[i].StopID == "c2" {
+				trip.StopTimes[i].IsProvisional = true
+			}
+		}
+	}
+	net.BuildIndexes()
+	if !net.ProvisionalStops["c2"] {
+		t.Fatal("c2 must be indexed as provisional")
+	}
+
+	journey, err := p.Plan(net,
+		model.Coords{Lat: 58.003, Lon: 56.285},
+		model.Coords{Lat: 58.010, Lon: 56.295},
+		model.SearchParams{Departure: dep("06:00"), MaxTransfers: -1},
+	)
+	if err == nil {
+		for _, l := range journey.Legs {
+			if l.Mode == model.ModeWalk && l.From.StopID == "c2" && l.To.StopID == "c2x" {
+				t.Fatal("provisional stop must not allow footpath transfer c2 -> c2x")
+			}
+		}
+	}
+}
+
 func TestPlanMaxTransfers(t *testing.T) {
 	p, net := newTestPlanner(t)
 

@@ -152,6 +152,42 @@ func TestJoinCodeMatch(t *testing.T) {
 	}
 }
 
+func TestJoinDuplicateAmbiguous(t *testing.T) {
+	cfg := DefaultJoinConfig()
+	osm := []model.AdaptedRecord{
+		rec("Автовокзал Центральный", 55.0, 86.0, map[string]string{"transport_type": "bus", "settlement": "Новосибирск"},
+			model.AdaptedIdentifier{System: "osm", CodeType: "osm_id", Code: "1"}),
+	}
+	yandex := []model.AdaptedRecord{
+		rec("Автовокзал Центральный", 55.0002, 86.0002, map[string]string{"transport_type": "bus", "settlement": "Новосибирск"},
+			model.AdaptedIdentifier{System: "yandex", CodeType: "yandex_code", Code: "s1"}),
+		rec("Автовокзал Центральный Павлов", 55.0004, 86.0003, map[string]string{"transport_type": "bus", "settlement": "Новосибирск"},
+			model.AdaptedIdentifier{System: "yandex", CodeType: "yandex_code", Code: "s2"}),
+	}
+	res := Join(osm, yandex, cfg)
+	if len(res.DuplicateAmbiguous) != 1 {
+		t.Fatalf("ожидался 1 duplicate_ambiguous, получено %d (canon=%d)", len(res.DuplicateAmbiguous), len(res.Canon))
+	}
+	if len(res.Canon) != 0 {
+		t.Fatalf("Canon должен быть пуст при duplicate_ambiguous, получено %d", len(res.Canon))
+	}
+	if res.DuplicateAmbiguous[0].Record.PrimaryCode() != "1" {
+		t.Fatalf("лучший кандидат — OSM record (primary), PrimaryCode=%s", res.DuplicateAmbiguous[0].Record.PrimaryCode())
+	}
+	hasYandex := false
+	for _, id := range res.DuplicateAmbiguous[0].Record.Identifiers {
+		if id.System == "yandex" && id.Code == "s1" {
+			hasYandex = true
+		}
+	}
+	if !hasYandex {
+		t.Fatalf("merged record должен содержать yandex_code s1: %+v", res.DuplicateAmbiguous[0].Record.Identifiers)
+	}
+	if len(res.Unverified) != 1 || res.Unverified[0].PrimaryCode() != "s2" {
+		t.Fatalf("второй кандидат уходит в unverified: %v", res.Unverified)
+	}
+}
+
 func TestInterpolateMidpoint(t *testing.T) {
 	stops := []SeqStop{
 		{Name: "A", Seq: 1, Lat: 55.0, Lon: 86.0, Matched: true},

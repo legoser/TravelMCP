@@ -79,6 +79,10 @@ geocoder:
 nominatim:
   url: "https://nominatim.openstreetmap.org"
 
+overpass:
+  url: "https://overpass-api.de/api/interpreter"
+  mirror_url: "https://overpass.openstreetmap.fr/api/interpreter"
+
 geocode:
   ttl_verified: "2160h" # 90д — подтверждённые (Фаза 2, GEOCODE_TTL_VERIFIED)
   ttl_disputed: "168h" # 7д — спорные/seed (Фаза 2, GEOCODE_TTL_DISPUTED)

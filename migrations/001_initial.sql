@@ -306,6 +306,7 @@ CREATE TABLE IF NOT EXISTS stop_times (
   pickup_type smallint DEFAULT 0 CHECK(pickup_type IN (0,1,2,3)),
   drop_off_type smallint DEFAULT 0 CHECK(drop_off_type IN (0,1,2,3)),
   dwell int,
+  is_provisional bool DEFAULT false,
   PRIMARY KEY(trip_id, seq)
 );
 CREATE INDEX IF NOT EXISTS idx_stop_times_stop_departure ON stop_times(stop_id, departure);

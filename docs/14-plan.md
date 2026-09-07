@@ -711,10 +711,19 @@ O-блоки (коннектор), затем S-блоки (settlement), зат�
   заменяются цепочкой); bbox на запад ~82.0 (конфиг `sync.bbox`). Готово: хабы
   привязаны, цепочка задокументирована.
 - **O-9. Вторая пара глаз.** Кандидат из Overpass — в пул `duplicate_ambiguous`
-  вместо третьего перебора тех же дампов. Готово: golden-тест.
+  вместо третьего перебора тех же дампов. `Join` теперь детектор `duplicate_ambiguous`
+  (`gap < Ambiguity=0.05` и `score >= threshold - margin` с 2+ кандидатами):
+  сомнительный match уходит в `DuplicateAmbiguous` (а не в `Canon`), второй
+  кандидат — в `Unverified`. Golden `TestJoinDuplicateAmbiguous`: два Яндекс-кандидата
+  с nameSim 1.0 и 0.9 на одинаковом расстоянии → gap 0.045 < 0.05 → ambiguous.
 - **O-10. Yandex-only с координатами — в канон.** Правило существования §1.2
-  смягчается: Yandex-only с координатами принимается с низким confidence +
-  provenance (раньше — только review). Готово: дифф §1.2 + тест промоушена.
+  смягчается: Yandex-only с координатами принимается с `confidence=0.4` + provenance
+  (`provenanceSources` через `IdentityOnly` → только yandex-system), вместо review.
+  Без координат — всё ещё `review_queue{skeleton_unverified}`. Реализация:
+  `PromoteSkeletonChunk` роутит `Unverified` с координатами → `promoteJoined` с
+  `Score=0.4, Enrichment=IdentityOnly`; без координат — `reviewUnverified`.
+  `TestPromoteSkeletonChunkYandexOnlyWithCoords`: 2 unverified (с/без координат) →
+  1 written + 1 review.
 
 ### S. Settlement-backfill (Yandex-first: сначала бесплатно, потом квота)
 
@@ -726,16 +735,32 @@ O-блоки (коннектор), затем S-блоки (settlement), зат�
 - **S-3. Rural-класс.** Переключатель rural-класса для минтранса только после
   S-1–S-2 (без backfill даёт +7 стопов — замерено, вхолостую не тратить).
   Готово: dry-run verified-rate до/после.
-- **S-4. Метод gate.** Решение verified-rate vs soft — замером новой осью на
-  пилоте после S-3, не раньше.
+- **S-4. Метод gate.** Замер выполнен CI-тестом `TestGateMethodSoftVsVerified`
+  (`CompareGateMethods` в `calibrate.go`; сценарии full/noisy-555м/empty).
+  Результаты: инвариант `verified-rate ≤ soft-rate` подтверждён на всех
+  сценариях (verified ⊂ soft — каждый verified-стоп проходит и soft-порог);
+  на зашумлённом индексе (+555м) soft держит 1.0 (гео-фича в полосе порога),
+  verified честно падает в 0.0 (hard-guard режет сдвинутую геометрию).
+  **Решение:** coverage-gate меряет **soft-rate** (есть ли кандидат вообще —
+  сигнал расширять скелет), attach-движок продолжает требовать **verified**
+  (двухуровневая дамба). Расхождение осей на регионе — стопы «кандидат есть,
+  но не верифицируется» — зона operator-флоу §5.4 (интерполяция/подтверждение),
+  а не причина блокировать или форсировать attach. `sync.coverage_gate`
+  (soft-порог) и `verification.*` (verified-порог) калибруются независимо.
 
 ### C. Two-tier attach (после O+S)
 
 - **C-1. Флаг `is_provisional`.** `stop_times.is_provisional bool DEFAULT false`;
-  6 точек: DDL, `StopTimeRow`, pool/tx `UpsertStopTime`, memory, движок attach,
-  `LoadNetwork` + CSA-ветка (provisional видны: посадка/высадка да, пересадки
-  нет). `pickup_type/drop_off_type` не трогать (чужая GTFS-семантика).
-  Готово: golden-тесты + миграция с 0 ошибок.
+  6 точек выполнены: DDL (миграция на scratch-схеме — 0 ошибок), `StopTimeRow.IsProvisional`
+  (+`MatchedStopTime.IsProvisional`, `model.StopTime.IsProvisional`), pool/tx
+  `UpsertStopTime` (INSERT + ON CONFLICT UPDATE), memory (структура целиком),
+  движок attach (`matchStops`: `IsProvisional = !terms[idx].GeomFinalized` — identity_only
+  терминал → provisional stop_time; тест `TestMatchStopsProvisionalFlag`),
+  `LoadNetwork` postgres/memory (SELECT `is_provisional` → модель) + CSA-ветка
+  (`Network.ProvisionalStops` в `BuildIndexes`; `relax` не выходит пешком из
+  provisional и не входит в provisional — посадка/высадка поездом да, пересадки нет;
+  тест `TestPlanProvisionalStopNoTransfer`). `pickup_type/drop_off_type` не тронуты
+  (чужая GTFS-семантика).
 - **C-2. Валидаторы на склейке.** Монотонность/скорость проверяются на новой
   форме входа (порядок стопов из Overpass × времена из Яндекса) — явный тест,
   что hard-валидаторы корректны именно на ней (писались под другую структуру).

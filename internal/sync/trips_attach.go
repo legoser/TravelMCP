@@ -38,12 +38,13 @@ type AttachInput struct {
 }
 
 type MatchedStopTime struct {
-	Seq        int                       `json:"seq"`
-	TerminalID int64                     `json:"terminal_id"`
-	StopID     string                    `json:"stop_id"`
-	ArrivalS   int                       `json:"arrival_s"`
-	DepartureS int                       `json:"departure_s"`
-	Codes      []model.AdaptedIdentifier `json:"codes,omitempty"`
+	Seq           int                       `json:"seq"`
+	TerminalID    int64                     `json:"terminal_id"`
+	StopID        string                    `json:"stop_id"`
+	ArrivalS      int                       `json:"arrival_s"`
+	DepartureS    int                       `json:"departure_s"`
+	Codes         []model.AdaptedIdentifier `json:"codes,omitempty"`
+	IsProvisional bool                      `json:"is_provisional,omitempty"`
 }
 
 type PromotableTrip struct {
@@ -299,7 +300,8 @@ func matchStops(ft model.FlatTrip, terms []AttachTerminal, source string, classF
 		matched = append(matched, MatchedStopTime{
 			Seq: seq, TerminalID: terms[idx].ID, StopID: s.StopID,
 			ArrivalS: arr, DepartureS: dep,
-			Codes: StopCodes(source, s.OpCode),
+			Codes:         StopCodes(source, s.OpCode),
+			IsProvisional: !terms[idx].GeomFinalized,
 		})
 	}
 	for i := range matched {

@@ -441,7 +441,8 @@ func (m *MemoryStore) ListTerminalsFiltered(ctx context.Context, limit, offset i
 	total := len(filtered)
 	out := filtered
 	dirDesc := strings.ToLower(order) == "desc"
-	if sort == "name" {
+	switch sort {
+	case "name":
 		sortSlice(out, func(a, b map[string]any) bool {
 			av := fmt.Sprint(a["name"])
 			bv := fmt.Sprint(b["name"])
@@ -450,7 +451,7 @@ func (m *MemoryStore) ListTerminalsFiltered(ctx context.Context, limit, offset i
 			}
 			return av < bv
 		})
-	} else if sort == "is_locked" {
+	case "is_locked":
 		sortSlice(out, func(a, b map[string]any) bool {
 			av := a["is_locked"].(bool)
 			bv := b["is_locked"].(bool)
@@ -462,7 +463,7 @@ func (m *MemoryStore) ListTerminalsFiltered(ctx context.Context, limit, offset i
 			}
 			return av && !bv
 		})
-	} else {
+	default:
 		sortSlice(out, func(a, b map[string]any) bool {
 			av := a["id"].(int64)
 			bv := b["id"].(int64)
@@ -1153,7 +1154,7 @@ func (m *MemoryStore) LoadNetwork(ctx context.Context, providers []string, day t
 			if !ok {
 				continue
 			}
-			times = append(times, model.StopTime{StopID: sid, Sequence: st.Seq, ArrivalSec: st.Arrival, DepartureSec: st.Departure})
+			times = append(times, model.StopTime{StopID: sid, Sequence: st.Seq, ArrivalSec: st.Arrival, DepartureSec: st.Departure, IsProvisional: st.IsProvisional})
 		}
 		sort.Slice(times, func(i, j int) bool { return times[i].Sequence < times[j].Sequence })
 		if len(times) == 0 {

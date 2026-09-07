@@ -134,6 +134,76 @@ func TestPromoteSkeletonChunkMemory(t *testing.T) {
 	}
 }
 
+func TestPromoteSkeletonChunkYandexOnlyWithCoords(t *testing.T) {
+	ctx := context.Background()
+	ms := memstore.NewMemoryStore()
+	runID, err := BeginSkeletonRun(ctx, ms, "plan-test", "sha-test", "skeleton-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	yandexOnlyWithCoords := model.AdaptedRecord{
+		Kind:   model.AdaptedTerminal,
+		NameRu: "Только Яндекс с координатами",
+		Source: "yandex",
+		Identifiers: []model.AdaptedIdentifier{
+			{System: "yandex", CodeType: "yandex_code", Code: "s5678"},
+		},
+		Extra: map[string]string{"region": "kuzbass", "transport_type": "bus"},
+	}
+	lat, lon := 55.5, 86.5
+	yandexOnlyWithCoords.Lat = &lat
+	yandexOnlyWithCoords.Lon = &lon
+
+	yandexOnlyNoCoords := model.AdaptedRecord{
+		Kind:   model.AdaptedTerminal,
+		NameRu: "Только Яндекс без координат",
+		Source: "yandex",
+		Identifiers: []model.AdaptedIdentifier{
+			{System: "yandex", CodeType: "yandex_code", Code: "s9998"},
+		},
+		Extra: map[string]string{"region": "kuzbass", "transport_type": "bus"},
+	}
+
+	chunk := SkeletonChunk{
+		Key:        "yandex-chunk",
+		Unverified: []model.AdaptedRecord{yandexOnlyWithCoords, yandexOnlyNoCoords},
+	}
+
+	sum, err := PromoteSkeletonChunk(ctx, ms, runID, chunk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.In != 2 {
+		t.Fatalf("in=2, got %d", sum.In)
+	}
+	if sum.Written != 1 {
+		t.Fatalf("yandex-only with coords должен попасть в canon: written=1, got %d", sum.Written)
+	}
+	if sum.Review != 1 {
+		t.Fatalf("yandex-only without coords → review: review=1, got %d", sum.Review)
+	}
+
+	list, total, err := ms.ListTerminalsFiltered(ctx, 10, 0, "name", "asc", "Только Яндекс с координатами")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || list[0]["name"] != "Только Яндекс с координатами" {
+		t.Fatalf("терминал обязан промоунтиться в канон: total=%d", total)
+	}
+
+	rq, err := ms.ListReviewQueue(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rq) != 1 {
+		t.Fatalf("только 1 запись в review_queue (без координат), получено %d", len(rq))
+	}
+	if rq[0].Reason != "skeleton_unverified" {
+		t.Fatalf("причина review=skeleton_unverified, получено %q", rq[0].Reason)
+	}
+}
+
 func TestSyntheticReviewIDStableNegative(t *testing.T) {
 	a := syntheticReviewID("terminal", "skeleton_unverified", "yandex", "s9999")
 	b := syntheticReviewID("terminal", "skeleton_unverified", "yandex", "s9999")

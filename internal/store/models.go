@@ -101,14 +101,15 @@ type FrequencyRow struct {
 }
 
 type StopTimeRow struct {
-	TripID      int64
-	StopID      int64
-	Seq         int
-	Arrival     int
-	Departure   int
-	PickupType  int
-	DropOffType int
-	Dwell       int
+	TripID        int64
+	StopID        int64
+	Seq           int
+	Arrival       int
+	Departure     int
+	PickupType    int
+	DropOffType   int
+	Dwell         int
+	IsProvisional bool
 }
 
 type TransferRow struct {

@@ -1,0 +1,33 @@
+{
+  "elements": [
+    {
+      "type": "relation",
+      "id": 100001,
+      "members": [
+        {"type": "node", "ref": 1, "role": "stop"},
+        {"type": "node", "ref": 2, "role": "stop"},
+        {"type": "node", "ref": 3, "role": "stop"},
+        {"type": "node", "ref": 4, "role": "stop"},
+        {"type": "node", "ref": 5, "role": "stop"}
+      ],
+      "tags": {
+        "name": "Кемерово — Новокузнецк",
+        "ref": "42",
+        "route": "bus",
+        "operator": "ГКУ КО 'Автовокзалы'",
+        "network": "Пригородные маршруты Кузбасса"
+      }
+    },
+    {
+      "type": "relation",
+      "id": 100002,
+      "members": [
+        {"type": "node", "ref": 10, "role": "stop"}
+      ],
+      "tags": {
+        "ref": "99",
+        "route": "bus"
+      }
+    }
+  ]
+}

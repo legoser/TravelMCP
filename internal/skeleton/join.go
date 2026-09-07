@@ -12,6 +12,7 @@ type JoinConfig struct {
 	GeoThresholdM float64
 	Threshold     float64
 	Margin        float64
+	Ambiguity     float64
 }
 
 func DefaultJoinConfig() JoinConfig {
@@ -19,6 +20,7 @@ func DefaultJoinConfig() JoinConfig {
 		GeoThresholdM: 500,
 		Threshold:     0.6,
 		Margin:        0.1,
+		Ambiguity:     0.05,
 	}
 }
 
@@ -163,6 +165,18 @@ func Join(osm, yandex []model.AdaptedRecord, cfg JoinConfig) JoinOutcome {
 				Record:     enrichFrom(o, yandex[best]),
 				Score:      bestScore,
 				Enrichment: Enriched,
+			})
+			continue
+		}
+		ambiguous := best >= 0 && len(yandex) > 1 &&
+			bestScore >= cfg.Threshold-cfg.Margin &&
+			bestScore-second < cfg.Ambiguity
+		if ambiguous {
+			used[best] = true
+			out.DuplicateAmbiguous = append(out.DuplicateAmbiguous, JoinedRecord{
+				Record:     enrichFrom(o, yandex[best]),
+				Score:      bestScore,
+				Enrichment: IdentityOnly,
 			})
 			continue
 		}

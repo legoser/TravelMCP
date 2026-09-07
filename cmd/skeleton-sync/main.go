@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"travelmcp/internal/adapters/nominatim"
+	"travelmcp/internal/adapters/overpass"
 	"travelmcp/internal/config"
 	"travelmcp/internal/geocoder"
 	"travelmcp/internal/model"
@@ -33,7 +34,7 @@ const appVersion = "skeleton-sync/1"
 func main() {
 	var configPath, tag, osmOverride, yandexOverride, reestrOverride, regionOverride string
 	var resumeRun int64
-	var dryRun, noReverse bool
+	var dryRun, noReverse, noOverpass bool
 	flag.StringVar(&configPath, "config", "configs/config.dev.yaml", "путь к YAML-конфигу")
 	flag.StringVar(&tag, "tag", "pilot-kuzbass", "тег прогона")
 	flag.StringVar(&osmOverride, "osm", "", "переопределить sync.osm_path")
@@ -43,6 +44,7 @@ func main() {
 	flag.Int64Var(&resumeRun, "run", 0, "продолжить незавершённый прогон с этим sync_runs.id")
 	flag.BoolVar(&dryRun, "dry-run", false, "построить join и coverage без записи в БД")
 	flag.BoolVar(&noReverse, "no-reverse", false, "не обогащать адреса через Nominatim reverse")
+	flag.BoolVar(&noOverpass, "no-overpass", false, "не обогащать через Overpass StationsAround")
 	flag.Parse()
 
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
@@ -67,27 +69,37 @@ func main() {
 		sc.SkeletonRegion = regionOverride
 	}
 
-	bbox, err := parseBbox(sc.Bbox)
-	if err != nil {
-		slog.Error("bad sync.bbox", "error", err)
-		os.Exit(1)
+	// bbox опционален: пустой — без фильтра (весь экстракт), режем регионами
+	var bboxFilter *bbox
+	if strings.TrimSpace(sc.Bbox) != "" {
+		b, err := parseBbox(sc.Bbox)
+		if err != nil {
+			slog.Error("bad sync.bbox", "error", err)
+			os.Exit(1)
+		}
+		bboxFilter = &b
 	}
 	osm, err := skeleton.OSMSource{Path: sc.OsmPath}.Load()
 	if err != nil {
 		slog.Error("osm load failed", "error", err)
 		os.Exit(1)
 	}
-	osm = filterBbox(osm, bbox)
+	if bboxFilter != nil {
+		osm = filterBbox(osm, *bboxFilter)
+	}
 	yan, err := skeleton.YandexDumpSource{Path: sc.YandexDumpPath}.Load()
 	if err != nil {
 		slog.Error("yandex load failed", "error", err)
 		os.Exit(1)
 	}
-	yan = filterRegion(yan, sc.SkeletonRegion)
-	slog.Info("sources loaded", "osm", len(osm), "yandex", len(yan), "region", sc.SkeletonRegion)
+	regions := parseRegionList(sc.SkeletonRegion)
+	if len(regions) > 0 {
+		yan = filterRegions(yan, regions)
+	}
+	slog.Info("sources loaded", "osm", len(osm), "yandex", len(yan), "regions", regions)
 
-	outcome := skeleton.Join(osm, yan, skeleton.DefaultJoinConfig())
-	slog.Info("join done", "canon", len(outcome.Canon), "unverified", len(outcome.Unverified))
+	outcome := joinPaged(osm, yan)
+	slog.Info("join done", "canon", len(outcome.Canon), "unverified", len(outcome.Unverified), "ambiguous", len(outcome.DuplicateAmbiguous))
 
 	inputSHA, err := hashInputs(sc.OsmPath, sc.YandexDumpPath, sc.ReestrPath)
 	if err != nil {
@@ -125,6 +137,10 @@ func main() {
 	if err := os.MkdirAll(sc.LogDir, 0o755); err != nil {
 		slog.Error("log dir failed", "error", err)
 		os.Exit(1)
+	}
+
+	if !noOverpass && sc.OverpassMax > 0 {
+		enrichFromOverpass(ctx, st, *cfg, sc.OverpassMax, &outcome)
 	}
 
 	if !noReverse {
@@ -208,6 +224,23 @@ func main() {
 			os.Exit(1)
 		}
 	}
+}
+
+func enrichFromOverpass(ctx context.Context, st store.Store, cfg config.Config, maxPoints int, outcome *skeleton.JoinOutcome) {
+	if len(outcome.Unverified) == 0 {
+		return
+	}
+	limit := 500
+	if err := st.SetQuotaLimit(ctx, "osm", limit); err != nil {
+		slog.Warn("overpass quota limit failed", "error", err)
+	}
+	adapter := overpass.New(cfg, httpx.New(slog.Default(), "overpass"))
+	cache := geocoder.NewMapGeoCacheStore(24 * time.Hour)
+	quotaFunc := func(ctx context.Context, provider string, lim int) (bool, int, error) {
+		return st.TryConsumeQuota(ctx, provider, lim)
+	}
+	provider := geocoder.NewCachedStationsProvider(adapter, cache, quotaFunc, limit)
+	skeleton.OverpassEnrich(ctx, outcome, provider, maxPoints, slog.Default())
 }
 
 func enrichAddresses(ctx context.Context, st store.Store, outcome *skeleton.JoinOutcome, cfg config.Config) {
@@ -302,6 +335,52 @@ func filterBbox(in []model.AdaptedRecord, b bbox) []model.AdaptedRecord {
 		}
 		out = append(out, r)
 	}
+	return out
+}
+
+// parseRegionList — «Р1, Р2» → [Р1, Р2]; пусто/«all»/* → nil (без фильтра).
+func parseRegionList(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" || strings.EqualFold(s, "all") || s == "*" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func filterRegions(in []model.AdaptedRecord, regions []string) []model.AdaptedRecord {
+	allow := make(map[string]bool, len(regions))
+	for _, r := range regions {
+		allow[r] = true
+	}
+	out := make([]model.AdaptedRecord, 0, len(in))
+	for _, r := range in {
+		if r.Extra != nil && allow[r.Extra["region"]] {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// joinPaged — Join через пагинированный JoinPager (эквивалентен Join,
+// O(N×M)/cells вместо O(N×M)): страницы по 100 OSM-записей, гео-ячейки 0.5°.
+func joinPaged(osm, yan []model.AdaptedRecord) skeleton.JoinOutcome {
+	pager := skeleton.NewJoinPager(osm, yan, skeleton.DefaultJoinConfig(), 100)
+	var out skeleton.JoinOutcome
+	for {
+		page, ok := pager.NextPage()
+		if !ok {
+			break
+		}
+		out.Canon = append(out.Canon, page.Canon...)
+		out.DuplicateAmbiguous = append(out.DuplicateAmbiguous, page.DuplicateAmbiguous...)
+	}
+	out.Unverified = pager.FlushUnverified()
 	return out
 }
 

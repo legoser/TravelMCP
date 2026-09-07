@@ -1,0 +1,38 @@
+{
+  "elements": [
+    {
+      "type": "node",
+      "id": 2001001,
+      "lat": 55.3541,
+      "lon": 86.0872,
+      "tags": {
+        "name": "Кемерово, автовокзал",
+        "public_transport": "station",
+        "transport_type": "bus"
+      }
+    },
+    {
+      "type": "node",
+      "id": 2001002,
+      "lat": 56.4934,
+      "lon": 85.9000,
+      "tags": {
+        "name": "Хромовка",
+        "railway": "station",
+        "transport_type": "rail"
+      }
+    },
+    {
+      "type": "way",
+      "id": 3002001,
+      "center": {
+        "lat": 55.355,
+        "lon": 86.0800
+      },
+      "tags": {
+        "name": "Собор",
+        "highway": "bus_stop"
+      }
+    }
+  ]
+}

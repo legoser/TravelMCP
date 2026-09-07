@@ -12,10 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"travelmcp/internal/model"
 	store "travelmcp/internal/store"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type StopRow = store.StopRow
@@ -211,7 +212,7 @@ func (p *PostgresStore) UpsertStopTime(ctx context.Context, st StopTimeRow) erro
 	if p.pool == nil {
 		return nil
 	}
-	_, err := p.pool.Exec(ctx, `INSERT INTO stop_times(trip_id, stop_id, seq, arrival, departure, pickup_type, drop_off_type, dwell) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(trip_id, seq) DO UPDATE SET stop_id=EXCLUDED.stop_id, arrival=EXCLUDED.arrival, departure=EXCLUDED.departure`, st.TripID, st.StopID, st.Seq, st.Arrival, st.Departure, st.PickupType, st.DropOffType, st.Dwell)
+	_, err := p.pool.Exec(ctx, `INSERT INTO stop_times(trip_id, stop_id, seq, arrival, departure, pickup_type, drop_off_type, dwell, is_provisional) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(trip_id, seq) DO UPDATE SET stop_id=EXCLUDED.stop_id, arrival=EXCLUDED.arrival, departure=EXCLUDED.departure, is_provisional=EXCLUDED.is_provisional`, st.TripID, st.StopID, st.Seq, st.Arrival, st.Departure, st.PickupType, st.DropOffType, st.Dwell, st.IsProvisional)
 	return err
 }
 func (p *PostgresStore) UpsertTransfer(ctx context.Context, tr TransferRow) error {
@@ -444,9 +445,10 @@ func (p *PostgresStore) ListTerminalsFiltered(ctx context.Context, limit, offset
 		dir = "DESC"
 	}
 	orderClause := "t.id " + dir
-	if sort == "name" {
+	switch sort {
+	case "name":
 		orderClause = "tn.name " + dir + ", t.id " + dir
-	} else if sort == "is_locked" {
+	case "is_locked":
 		orderClause = "t.is_locked " + dir + ", t.id " + dir
 	}
 	q = strings.TrimSpace(q)
@@ -574,14 +576,15 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 		trips = append(trips, r)
 		tripByID[r.ID] = r
 	}
-	stRows, err := p.pool.Query(ctx, `SELECT trip_id, stop_id, seq, arrival, departure FROM stop_times ORDER BY trip_id, seq`)
+	stRows, err := p.pool.Query(ctx, `SELECT trip_id, stop_id, seq, arrival, departure, coalesce(is_provisional, false) FROM stop_times ORDER BY trip_id, seq`)
 	if err == nil {
 		defer stRows.Close()
 		grouped := map[int64][]model.StopTime{}
 		for stRows.Next() {
 			var tripID, stopID int64
 			var seq, arr, dep int
-			_ = stRows.Scan(&tripID, &stopID, &seq, &arr, &dep)
+			var provisional bool
+			_ = stRows.Scan(&tripID, &stopID, &seq, &arr, &dep, &provisional)
 			sid, ok := stopIDMap[stopID]
 			if !ok {
 				continue
@@ -589,7 +592,7 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 			if _, ok := tripByID[tripID]; !ok {
 				continue
 			}
-			grouped[tripID] = append(grouped[tripID], model.StopTime{StopID: sid, Sequence: seq, ArrivalSec: arr, DepartureSec: dep})
+			grouped[tripID] = append(grouped[tripID], model.StopTime{StopID: sid, Sequence: seq, ArrivalSec: arr, DepartureSec: dep, IsProvisional: provisional})
 		}
 		for _, t := range trips {
 			times := grouped[t.ID]
@@ -1060,7 +1063,7 @@ func (t *pgTxStore) UpsertFrequency(ctx context.Context, f FrequencyRow) error {
 	return err
 }
 func (t *pgTxStore) UpsertStopTime(ctx context.Context, st StopTimeRow) error {
-	_, err := t.tx.Exec(ctx, `INSERT INTO stop_times(trip_id, stop_id, seq, arrival, departure, pickup_type, drop_off_type, dwell) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(trip_id, seq) DO UPDATE SET stop_id=EXCLUDED.stop_id, arrival=EXCLUDED.arrival`, st.TripID, st.StopID, st.Seq, st.Arrival, st.Departure, st.PickupType, st.DropOffType, st.Dwell)
+	_, err := t.tx.Exec(ctx, `INSERT INTO stop_times(trip_id, stop_id, seq, arrival, departure, pickup_type, drop_off_type, dwell, is_provisional) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(trip_id, seq) DO UPDATE SET stop_id=EXCLUDED.stop_id, arrival=EXCLUDED.arrival, is_provisional=EXCLUDED.is_provisional`, st.TripID, st.StopID, st.Seq, st.Arrival, st.Departure, st.PickupType, st.DropOffType, st.Dwell, st.IsProvisional)
 	return err
 }
 func (t *pgTxStore) UpsertTransfer(ctx context.Context, tr TransferRow) error {
@@ -1199,9 +1202,10 @@ func (t *pgTxStore) ListTerminalsFiltered(ctx context.Context, limit, offset int
 		dir = "DESC"
 	}
 	orderClause := "t.id " + dir
-	if sort == "name" {
+	switch sort {
+	case "name":
 		orderClause = "tn.name " + dir + ", t.id " + dir
-	} else if sort == "is_locked" {
+	case "is_locked":
 		orderClause = "t.is_locked " + dir + ", t.id " + dir
 	}
 	q = strings.TrimSpace(q)

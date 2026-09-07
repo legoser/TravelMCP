@@ -206,12 +206,13 @@ type Route struct {
 // StopTime — остановка рейса; времена — секунды от 00:00 UTC дня dayBase.
 // GTFS-подход: оба поля для индексов (stop_id, departure_sec) и (trip_id, seq).
 type StopTime struct {
-	StopID       string
-	Sequence     int
-	ArrivalSec   int
-	DepartureSec int
-	PickupType   int `json:"pickup_type"`
-	DropOffType  int `json:"drop_off_type"`
+	StopID        string
+	Sequence      int
+	ArrivalSec    int
+	DepartureSec  int
+	PickupType    int `json:"pickup_type"`
+	DropOffType   int `json:"drop_off_type"`
+	IsProvisional bool
 }
 
 // Service — календарь рейсов (будни/сезон). Даты — UTC, в БД — INTEGER YYYYMMDD.
@@ -321,11 +322,12 @@ type Network struct {
 	FareRules         []FareRule
 	StopZones         map[string]string
 
-	TransfersByStop map[string][]Transfer `json:"-"`
-	RouteStops      map[string][]string   `json:"-"`
-	TripStops       map[string][]string   `json:"-"`
-	MinTime         time.Time             `json:"-"`
-	MaxTime         time.Time             `json:"-"`
+	TransfersByStop  map[string][]Transfer `json:"-"`
+	ProvisionalStops map[string]bool       `json:"-"`
+	RouteStops       map[string][]string   `json:"-"`
+	TripStops        map[string][]string   `json:"-"`
+	MinTime          time.Time             `json:"-"`
+	MaxTime          time.Time             `json:"-"`
 }
 
 func NewNetwork() *Network {
@@ -343,6 +345,7 @@ func NewNetwork() *Network {
 		FareAttributes:    map[string]*FareAttribute{},
 		StopZones:         map[string]string{},
 		TransfersByStop:   map[string][]Transfer{},
+		ProvisionalStops:  map[string]bool{},
 		RouteStops:        map[string][]string{},
 		TripStops:         map[string][]string{},
 	}
@@ -353,12 +356,16 @@ func (n *Network) BuildIndexes() {
 	for _, tr := range n.Transfers {
 		n.TransfersByStop[tr.FromStopID] = append(n.TransfersByStop[tr.FromStopID], tr)
 	}
+	n.ProvisionalStops = make(map[string]bool)
 	n.RouteStops = make(map[string][]string)
 	n.TripStops = make(map[string][]string)
 	for _, trip := range n.Trips {
 		ids := make([]string, len(trip.StopTimes))
 		for i, st := range trip.StopTimes {
 			ids[i] = st.StopID
+			if st.IsProvisional {
+				n.ProvisionalStops[st.StopID] = true
+			}
 		}
 		n.TripStops[trip.ID] = ids
 		n.RouteStops[trip.RouteID] = append(n.RouteStops[trip.RouteID], ids...)

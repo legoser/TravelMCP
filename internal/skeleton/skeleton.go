@@ -22,8 +22,9 @@ type JoinedRecord struct {
 }
 
 type JoinOutcome struct {
-	Canon      []JoinedRecord
-	Unverified []model.AdaptedRecord
+	Canon              []JoinedRecord
+	Unverified         []model.AdaptedRecord
+	DuplicateAmbiguous []JoinedRecord
 }
 
 func extra(r model.AdaptedRecord, key string) string {

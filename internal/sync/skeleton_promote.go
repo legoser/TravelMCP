@@ -31,6 +31,7 @@ type SkeletonChunk struct {
 	Key        string
 	Canon      []skeleton.JoinedRecord
 	Unverified []model.AdaptedRecord
+	Ambiguous  []skeleton.JoinedRecord
 }
 
 type ChunkSummary struct {
@@ -87,6 +88,25 @@ func ChunkSkeleton(outcome skeleton.JoinOutcome, size int) []SkeletonChunk {
 		chunks = append(chunks, SkeletonChunk{
 			Key:        fmt.Sprintf("review:%s:%d", region, len(chunks)),
 			Unverified: part,
+		})
+	}
+	ambiguous := append([]skeleton.JoinedRecord{}, outcome.DuplicateAmbiguous...)
+	sort.Slice(ambiguous, func(i, j int) bool {
+		return skeletonChunkLess(ambiguous[i].Record, ambiguous[j].Record)
+	})
+	for start := 0; start < len(ambiguous); start += size {
+		end := start + size
+		if end > len(ambiguous) {
+			end = len(ambiguous)
+		}
+		part := ambiguous[start:end]
+		region := recordRegion(part[0].Record)
+		if region == "" {
+			region = "unknown"
+		}
+		chunks = append(chunks, SkeletonChunk{
+			Key:       fmt.Sprintf("ambiguous:%s:%d", region, len(chunks)),
+			Ambiguous: part,
 		})
 	}
 	return chunks
@@ -157,7 +177,7 @@ func PromoteSkeletonChunk(ctx context.Context, st store.Store, runID int64, chun
 	if _, ok := st.(SkeletonStore); !ok {
 		return ChunkSummary{}, fmt.Errorf("sync skeleton: стор не умеет промоушен скелета (нет алиасов/attribute_state)")
 	}
-	sum := ChunkSummary{Key: chunk.Key, In: len(chunk.Canon) + len(chunk.Unverified)}
+	sum := ChunkSummary{Key: chunk.Key, In: len(chunk.Canon) + len(chunk.Unverified) + len(chunk.Ambiguous)}
 	err := st.WithTx(ctx, func(tx store.Store) error {
 		tskel, ok := tx.(SkeletonStore)
 		if !ok {
@@ -184,7 +204,37 @@ func PromoteSkeletonChunk(ctx context.Context, st store.Store, runID int64, chun
 			if err := ctx.Err(); err != nil {
 				return err
 			}
+			if r.HasCoords() {
+				written, err := promoteJoined(ctx, tskel, runID, skeleton.JoinedRecord{
+					Record:     r,
+					Score:      0.4,
+					Enrichment: skeleton.IdentityOnly,
+				})
+				if err != nil {
+					return err
+				}
+				if written {
+					sum.Written++
+				}
+				continue
+			}
 			if err := reviewUnverified(ctx, tskel, r); err != nil {
+				return err
+			}
+			sum.Review++
+		}
+		for _, j := range chunk.Ambiguous {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			r := j.Record
+			if err := tskel.SaveReviewQueue(ctx, model.ReviewQueueEntry{
+				EntityType:  "terminal",
+				EntityID:    syntheticReviewID("terminal", "duplicate_ambiguous", r.Source, fallbackCode(r)),
+				Reason:      "duplicate_ambiguous",
+				Score:       j.Score,
+				Fingerprint: externalFingerprint(r),
+			}); err != nil {
 				return err
 			}
 			sum.Review++

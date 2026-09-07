@@ -27,6 +27,7 @@ import (
 	"travelmcp/internal/telemetry"
 
 	_ "travelmcp/internal/adapters/nominatim"
+	_ "travelmcp/internal/adapters/overpass"
 	_ "travelmcp/internal/adapters/yandex"
 )
 

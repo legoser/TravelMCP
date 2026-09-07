@@ -105,6 +105,38 @@ func TestAttachFixtureOutcome(t *testing.T) {
 	}
 }
 
+func TestMatchStopsProvisionalFlag(t *testing.T) {
+	latA, lonA := 55.0, 86.0
+	latB, lonB := 56.0, 87.0
+	terms := []AttachTerminal{
+		{ID: 1, Name: "Альфа", Lat: &latA, Lon: &lonA, Settlement: "альфа", Transport: "bus", Source: "osm", GeomFinalized: true},
+		{ID: 2, Name: "Бета", Lat: &latB, Lon: &lonB, Settlement: "бета", Transport: "bus", Source: "osm", GeomFinalized: false},
+	}
+	trips := []model.FlatTrip{{
+		RouteReg: "54.22.100", Direction: "forward", ServiceID: 1, Period: "winter",
+		Stops: []model.FlatStop{
+			{StopID: "a", Name: "Альфа", Region: "42", Lat: &latA, Lon: &lonA, ArrMin: intPtr(600), DepMin: intPtr(600)},
+			{StopID: "b", Name: "Бета", Region: "42", Lat: &latB, Lon: &lonB, ArrMin: intPtr(800), DepMin: intPtr(800)},
+		},
+	}}
+	in := baseInput(trips, terms)
+	in.ParamsFor = attachParamsFor
+	in.ClassForRegion = func(string) model.DensityClass { return model.DensityRural }
+	matched, _, _, unmatched := matchStops(trips[0], terms, "mintrans", in.ClassForRegion, in.ParamsFor)
+	if len(unmatched) != 0 {
+		t.Fatalf("unmatched: %v", unmatched)
+	}
+	if len(matched) != 2 {
+		t.Fatalf("matched=%d", len(matched))
+	}
+	if matched[0].IsProvisional {
+		t.Fatal("enriched (GeomFinalized=true) terminal must not be provisional")
+	}
+	if !matched[1].IsProvisional {
+		t.Fatal("identity_only (GeomFinalized=false) terminal must be provisional")
+	}
+}
+
 func TestAttachUnmatchedStaging(t *testing.T) {
 	lat, lon := 55.34, 86.06
 	lat2, lon2 := 55.03, 82.89
