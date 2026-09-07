@@ -127,6 +127,7 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 		classFor = func(string) model.DensityClass { return model.DensityUrban }
 	}
 	rep.In = len(in.Trips)
+	mindex := buildMatchIndex(in.Terminals)
 	current := map[string]string{}
 	for _, ft := range in.Trips {
 		if err := ctx.Err(); err != nil {
@@ -162,7 +163,7 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 			})
 			continue
 		}
-		matched, worstReason, worstScore, unmatched := matchStops(ft, in.Terminals, source, classFor, in.ParamsFor)
+		matched, worstReason, worstScore, unmatched := matchStops(ft, mindex, source, classFor, in.ParamsFor)
 		if len(unmatched) > 0 {
 			st := StagedTrip{
 				RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg,
@@ -265,19 +266,43 @@ func PairItemFromStop(name string, lat, lon *float64, settlement, source string,
 	}
 }
 
-func matchStops(ft model.FlatTrip, terms []AttachTerminal, source string, classFor func(string) model.DensityClass, paramsFor func(model.DensityClass) verification.Params) ([]MatchedStopTime, string, float64, []string) {
-	cands := make([]verification.PairItem, 0, len(terms))
-	for _, t := range terms {
-		cands = append(cands, PairItemFromTerminal(t))
-	}
+// matchStops — матчинг стопов рейса против терминалов через blocking-индекс
+// (D-1: пул = гео-окно ∪ код-совпадения ∪ no-coords, не вся страна) с greedy
+// exclusivity внутри рейса (D-2: занятый терминал недоступен следующим
+// позициям; кольцевой первый==последний — легитимен, §5.1).
+func matchStops(ft model.FlatTrip, idx *matchIndex, source string, classFor func(string) model.DensityClass, paramsFor func(model.DensityClass) verification.Params) ([]MatchedStopTime, string, float64, []string) {
+	terms := idx.terms
 	var matched []MatchedStopTime
 	var unmatched []string
 	worstReason := "incomplete_trip"
 	worstScore := 0.0
+	used := map[int64]bool{}
+	firstTerminal := int64(0)
+	lastStop := len(ft.Stops) - 1
 	for seq, s := range ft.Stops {
-		stop := PairItemFromStop(s.Name, s.Lat, s.Lon, namesim.ExtractSettlement(s.Name), source, StopCodes(source, s.OpCode))
+		pairCodes := StopCodes(source, s.OpCode)
+		stop := PairItemFromStop(s.Name, s.Lat, s.Lon, namesim.ExtractSettlement(s.Name), source, pairCodes)
 		class := classFor(s.Region)
-		idx, d, score := verification.MatchStopToTerminal(stop, cands, class, paramsFor(class))
+		params := paramsFor(class)
+
+		pool := idx.candidates(s, source)
+		cands := make([]verification.PairItem, 0, len(pool))
+		poolIdx := make([]int, 0, len(pool))
+		for _, ti := range pool {
+			id := terms[ti].ID
+			if used[id] {
+				// кольцевой рейс (§5.1): последний стоп может вернуться на
+				// терминал первого — но только если это не соседний дубль
+				// (между ними есть другие терминалы), иначе это 2-позиционный
+				// дубликат, который обязан уйти в unmatched
+				if !(seq == lastStop && seq > 1 && firstTerminal != 0 && id == firstTerminal) {
+					continue
+				}
+			}
+			cands = append(cands, PairItemFromTerminal(terms[ti]))
+			poolIdx = append(poolIdx, ti)
+		}
+		idxBest, d, score := verification.MatchStopToTerminal(stop, cands, class, params)
 		if d != verification.DecisionVerified {
 			unmatched = append(unmatched, s.StopID)
 			reason := string(d)
@@ -290,6 +315,11 @@ func matchStops(ft model.FlatTrip, terms []AttachTerminal, source string, classF
 			}
 			continue
 		}
+		matchedID := terms[poolIdx[idxBest]].ID
+		if len(matched) == 0 {
+			firstTerminal = matchedID
+		}
+		used[matchedID] = true
 		arr, dep := 0, 0
 		if s.ArrMin != nil {
 			arr = *s.ArrMin * 60
@@ -297,11 +327,12 @@ func matchStops(ft model.FlatTrip, terms []AttachTerminal, source string, classF
 		if s.DepMin != nil {
 			dep = *s.DepMin * 60
 		}
+		t := terms[poolIdx[idxBest]]
 		matched = append(matched, MatchedStopTime{
-			Seq: seq, TerminalID: terms[idx].ID, StopID: s.StopID,
+			Seq: seq, TerminalID: t.ID, StopID: s.StopID,
 			ArrivalS: arr, DepartureS: dep,
-			Codes:         StopCodes(source, s.OpCode),
-			IsProvisional: !terms[idx].GeomFinalized,
+			Codes:         pairCodes,
+			IsProvisional: !t.GeomFinalized,
 		})
 	}
 	for i := range matched {

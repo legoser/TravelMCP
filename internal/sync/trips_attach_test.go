@@ -122,7 +122,7 @@ func TestMatchStopsProvisionalFlag(t *testing.T) {
 	in := baseInput(trips, terms)
 	in.ParamsFor = attachParamsFor
 	in.ClassForRegion = func(string) model.DensityClass { return model.DensityRural }
-	matched, _, _, unmatched := matchStops(trips[0], terms, "mintrans", in.ClassForRegion, in.ParamsFor)
+	matched, _, _, unmatched := matchStops(trips[0], buildMatchIndex(terms), "mintrans", in.ClassForRegion, in.ParamsFor)
 	if len(unmatched) != 0 {
 		t.Fatalf("unmatched: %v", unmatched)
 	}
