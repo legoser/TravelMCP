@@ -96,15 +96,31 @@ type TombstonedTrip struct {
 }
 
 type AttachReport struct {
-	In            int                      `json:"in"`
-	Promoted      []PromotableTrip         `json:"promoted"`
-	Staged        []StagedTrip             `json:"staged"`
-	Reviews       []model.ReviewQueueEntry `json:"-"`
-	Dead          []DeadTrip               `json:"dead"`
-	Tombstoned    []TombstonedTrip         `json:"tombstoned"`
-	Churn         float64                  `json:"churn"`
-	Disappearance float64                  `json:"disappearance"`
-	Alert         bool                     `json:"alert"`
+	In             int                      `json:"in"`
+	Promoted       []PromotableTrip         `json:"promoted"`
+	Staged         []StagedTrip             `json:"staged"`
+	Reviews        []model.ReviewQueueEntry `json:"-"`
+	Dead           []DeadTrip               `json:"dead"`
+	Tombstoned     []TombstonedTrip         `json:"tombstoned"`
+	Churn          float64                  `json:"churn"`
+	Disappearance  float64                  `json:"disappearance"`
+	Alert          bool                     `json:"alert"`
+	MidGaps        int                      `json:"mid_gaps"`
+	GappedPromoted int                      `json:"gapped_promoted"`
+}
+
+// backbonePromotable — D-3: трип промоутится с дырками в середине, если оба
+// конца (первый/последний matched) verified и matched-остов связен: доля
+// verified ≥ 2/3 и минимум 2 стопа. Концы строгие (без них трип не публикуется
+// вовсе — пассажир не поедет в никуда), середина добирается later (§5.4).
+func backbonePromotable(matched []MatchedStopTime, totalStops int) bool {
+	if len(matched) < 2 {
+		return false
+	}
+	if float64(len(matched))/float64(totalStops) < 2.0/3.0 {
+		return false
+	}
+	return true
 }
 
 func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
@@ -166,7 +182,7 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 			continue
 		}
 		matched, worstReason, worstScore, unmatched := matchStops(ft, mindex, source, classFor, in.ParamsFor)
-		if len(unmatched) > 0 {
+		if len(unmatched) > 0 && !backbonePromotable(matched, len(ft.Stops)) {
 			st := StagedTrip{
 				RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg,
 				Direction: ft.Direction, ServiceID: ft.ServiceID, Run: ft.Run,
@@ -184,6 +200,13 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 			}
 			rep.Staged = append(rep.Staged, st)
 			continue
+		}
+		if len(unmatched) > 0 {
+			// D-3 backbone: концы verified, середина с дырками — промоут
+			// без непроверенных стопов (не staging целиком); перегоны через
+			// пропуск валидируются ниже на эффективной последовательности
+			rep.MidGaps += len(unmatched)
+			rep.GappedPromoted++
 		}
 		collapsed := collapseConsecutive(matched)
 		if bad := checkMonotonic(collapsed); bad != "" {
