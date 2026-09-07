@@ -54,6 +54,7 @@ type PersistSummary struct {
 	Restricted  int `json:"restricted"`
 	Codes       int `json:"codes_attached"`
 	CodeClash   int `json:"code_conflicts"`
+	MidGaps     int `json:"mid_gaps"`
 }
 
 func SplitTripNK(tripNK string) string {
@@ -114,6 +115,7 @@ func PersistAttachReport(ctx context.Context, db store.Store, rep AttachReport, 
 		source = "mintrans"
 	}
 	sum.Dead = len(rep.Dead)
+	sum.MidGaps = rep.MidGaps
 	runCodes := map[int64]map[string]bool{}
 	for _, p := range rep.Promoted {
 		for _, m := range p.StopTimes {
