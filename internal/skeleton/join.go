@@ -25,10 +25,17 @@ func DefaultJoinConfig() JoinConfig {
 }
 
 func PairScore(a, b model.AdaptedRecord, cfg JoinConfig) float64 {
+	return scorePairBody(a, b, cfg, namesim.NormalizedSimilarity)
+}
+
+// scorePairBody — единая формула скоринга пары OSM×Yandex (D-5): одна
+// реализация для PairScore (прямой вызов) и pairScoreCached (мемоизация
+// nameSim в JoinPager). nameSimFn — инжектируемое сравнение имён.
+func scorePairBody(a, b model.AdaptedRecord, cfg JoinConfig, nameSimFn func(string, string) float64) float64 {
 	if codesMatch(a, b) {
 		return 1
 	}
-	nameSim := namesim.NormalizedSimilarity(a.NameRu, b.NameRu)
+	nameSim := nameSimFn(a.NameRu, b.NameRu)
 	geom := 0.0
 	geomPresent := a.HasCoords() && b.HasCoords()
 	if geomPresent {

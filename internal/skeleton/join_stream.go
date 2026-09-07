@@ -158,72 +158,19 @@ func (p *JoinPager) NextPage() (JoinOutcome, bool) {
 }
 
 // pairScoreCached — PairScore с мемоизацией nameSim по паре имён: в плотных
-// городах одни и те же пары имён («Собор»×«Соборная») оцениваются многократно,
-// Левенштейн — доминирующая стоимость (9µs/вызов). Прочие фичи дёшевы.
+// городах одни и те же пары имён оцениваются многократно, Левенштейн —
+// доминирующая стоимость. Формула — общая scorePairBody (D-5), здесь только
+// кэширующая обёртка над nameSim.
 func (p *JoinPager) pairScoreCached(a, b model.AdaptedRecord) float64 {
-	if codesMatch(a, b) {
-		return 1
-	}
-	key := [2]string{a.NameRu, b.NameRu}
-	sim, ok := p.nameSim[key]
-	if !ok {
-		sim = namesim.NormalizedSimilarity(a.NameRu, b.NameRu)
-		p.nameSim[key] = sim
-	}
-	cfg := p.cfg
-	nameSim := sim
-	geom := 0.0
-	geomPresent := a.HasCoords() && b.HasCoords()
-	if geomPresent {
-		d := haversineM(*a.Lat, *a.Lon, *b.Lat, *b.Lon)
-		switch {
-		case d <= cfg.GeoThresholdM/5:
-			geom = 1
-		case d <= cfg.GeoThresholdM:
-			geom = 0.6
-		case d <= cfg.GeoThresholdM*4:
-			geom = 0.25
+	return scorePairBody(a, b, p.cfg, func(x, y string) float64 {
+		key := [2]string{x, y}
+		if v, ok := p.nameSim[key]; ok {
+			return v
 		}
-	}
-	as, bs := extra(a, "settlement"), extra(b, "settlement")
-	settlement := 0.0
-	settlementPresent := as != "" && bs != ""
-	if settlementPresent && namesim.Core(as) == namesim.Core(bs) {
-		settlement = 1
-	}
-	at, bt := extra(a, "transport_type"), extra(b, "transport_type")
-	transport := 0.0
-	transportPresent := at != "" && bt != ""
-	if transportPresent && transportCompatible(at, bt) {
-		transport = 1
-	}
-	type fw struct {
-		w       float64
-		v       float64
-		present bool
-	}
-	feats := []fw{
-		{0.45, nameSim, true},
-		{0.3, geom, geomPresent},
-		{0.15, settlement, settlementPresent},
-		{0.1, transport, transportPresent},
-	}
-	sumW := 0.0
-	for _, f := range feats {
-		if f.present {
-			sumW += f.w
-		}
-	}
-	if sumW == 0 {
-		return 0
-	}
-	score := 0.0
-	for _, f := range feats {
-		if f.present {
-			score += f.w / sumW * f.v
-		}
-	}
-	return score
+		v := namesim.NormalizedSimilarity(x, y)
+		p.nameSim[key] = v
+		return v
+	})
 }
 
 // prefilter отсекает кандидатов дальше geoWindowM без код-матча: быстрая
