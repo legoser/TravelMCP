@@ -84,9 +84,6 @@ func main() {
 		slog.Error("osm load failed", "error", err)
 		os.Exit(1)
 	}
-	if bboxFilter != nil {
-		osm = filterBbox(osm, *bboxFilter)
-	}
 	yan, err := skeleton.YandexDumpSource{Path: sc.YandexDumpPath}.Load()
 	if err != nil {
 		slog.Error("yandex load failed", "error", err)
@@ -95,6 +92,43 @@ func main() {
 	regions := parseRegionList(sc.SkeletonRegion)
 	if len(regions) > 0 {
 		yan = filterRegions(yan, regions)
+	}
+	// bbox не задан — выводим его автоматически из географии выбранных
+	// регионов Яндекса (+1° запас на периферию), чтобы не тянуть весь
+	// экстракт OSM в канон (OSM не несёт региональной привязки)
+	if bboxFilter == nil && len(yan) > 0 {
+		minLat, minLon, maxLat, maxLon := 0.0, 0.0, 0.0, 0.0
+		first := true
+		for _, y := range yan {
+			if !y.HasCoords() {
+				continue
+			}
+			if first {
+				minLat, minLon, maxLat, maxLon = *y.Lat, *y.Lon, *y.Lat, *y.Lon
+				first = false
+				continue
+			}
+			if *y.Lat < minLat {
+				minLat = *y.Lat
+			}
+			if *y.Lat > maxLat {
+				maxLat = *y.Lat
+			}
+			if *y.Lon < minLon {
+				minLon = *y.Lon
+			}
+			if *y.Lon > maxLon {
+				maxLon = *y.Lon
+			}
+		}
+		if !first {
+			const margin = 1.0
+			bboxFilter = &bbox{minLat: minLat - margin, minLon: minLon - margin, maxLat: maxLat + margin, maxLon: maxLon + margin}
+			slog.Info("auto bbox from yandex regions", "min", []float64{bboxFilter.minLat, bboxFilter.minLon}, "max", []float64{bboxFilter.maxLat, bboxFilter.maxLon})
+		}
+	}
+	if bboxFilter != nil {
+		osm = filterBbox(osm, *bboxFilter)
 	}
 	slog.Info("sources loaded", "osm", len(osm), "yandex", len(yan), "regions", regions)
 
