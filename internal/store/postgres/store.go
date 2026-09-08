@@ -331,7 +331,7 @@ func (p *PostgresStore) UpsertTerminal(ctx context.Context, r TerminalRow, names
 		}
 	}
 	for _, ident := range identifiers {
-		if _, err := p.pool.Exec(ctx, `INSERT INTO terminal_identifiers(terminal_id, system, code_type, code, is_primary) VALUES($1,$2,$3,$4,false) ON CONFLICT(terminal_id, system, code_type, code) DO NOTHING`, id, ident.System, ident.CodeType, ident.Code); err != nil {
+		if _, err := p.pool.Exec(ctx, `INSERT INTO terminal_identifiers(terminal_id, system, code_type, code, is_primary) VALUES($1,$2,$3,$4,false) ON CONFLICT DO NOTHING`, id, ident.System, ident.CodeType, ident.Code); err != nil {
 			return 0, err
 		}
 		if err := applyIdentifierPrimaryRule(ctx, p.pool, id, ident.System, ident.CodeType, ident.Code); err != nil {
@@ -1154,7 +1154,7 @@ func (t *pgTxStore) UpsertTerminal(ctx context.Context, r TerminalRow, names map
 		}
 	}
 	for _, ident := range identifiers {
-		if _, err := t.tx.Exec(ctx, `INSERT INTO terminal_identifiers(terminal_id, system, code_type, code, is_primary) VALUES($1,$2,$3,$4,false) ON CONFLICT(terminal_id, system, code_type, code) DO NOTHING`, id, ident.System, ident.CodeType, ident.Code); err != nil {
+		if _, err := t.tx.Exec(ctx, `INSERT INTO terminal_identifiers(terminal_id, system, code_type, code, is_primary) VALUES($1,$2,$3,$4,false) ON CONFLICT DO NOTHING`, id, ident.System, ident.CodeType, ident.Code); err != nil {
 			return 0, err
 		}
 		if err := applyIdentifierPrimaryRule(ctx, t.tx, id, ident.System, ident.CodeType, ident.Code); err != nil {

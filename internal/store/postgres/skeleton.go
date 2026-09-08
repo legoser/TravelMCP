@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
+
 	"travelmcp/internal/model"
 	store "travelmcp/internal/store"
 )
@@ -97,6 +99,18 @@ func (p *PostgresStore) StageSkeletonRecords(ctx context.Context, runID int64, r
 	if p.pool == nil {
 		return errNotImplemented
 	}
+	const stageBatchSize = 1000
+	batch := &pgx.Batch{}
+	flush := func() error {
+		if batch.Len() == 0 {
+			return nil
+		}
+		if err := p.pool.SendBatch(ctx, batch).Close(); err != nil {
+			return fmt.Errorf("stage skeleton batch: %w", err)
+		}
+		batch = &pgx.Batch{}
+		return nil
+	}
 	for _, r := range records {
 		code := r.PrimaryCode()
 		if code == "" {
@@ -120,11 +134,14 @@ func (p *PostgresStore) StageSkeletonRecords(ctx context.Context, runID int64, r
 			args = []any{runID, r.Source, code, r.NameRu, ex["settlement"], ex["region"], ex["transport_type"]}
 		}
 		q := fmt.Sprintf(`INSERT INTO staging_terminals(run_id, source, source_code, name_ru, geom, settlement, region, transport_type) VALUES($1,$2,$3,$4,%s) ON CONFLICT(run_id, source, source_code) DO UPDATE SET name_ru=EXCLUDED.name_ru, geom=EXCLUDED.geom, settlement=EXCLUDED.settlement, region=EXCLUDED.region, transport_type=EXCLUDED.transport_type`, tail)
-		if _, err := p.pool.Exec(ctx, q, args...); err != nil {
-			return fmt.Errorf("stage skeleton %s/%s: %w", r.Source, code, err)
+		batch.Queue(q, args...)
+		if batch.Len() >= stageBatchSize {
+			if err := flush(); err != nil {
+				return err
+			}
 		}
 	}
-	return nil
+	return flush()
 }
 
 func (p *PostgresStore) NearbyStagedCandidates(ctx context.Context, runID int64, source string, lat, lon, radiusM float64, limit int) ([]StagedTerminal, error) {
