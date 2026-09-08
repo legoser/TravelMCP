@@ -226,7 +226,7 @@ func main() {
 		}
 		accumulate(&total, chunkOps(sum))
 	}
-	total.In = len(outcome.Canon) + len(outcome.Unverified)
+	total.In = len(outcome.Canon) + len(outcome.Unverified) + len(outcome.DuplicateAmbiguous)
 	total.Unmatched = total.Review
 	if err := sync.FinishSkeletonRun(ctx, mustSkeletonStore(st), runID, "done", total); err != nil {
 		slog.Error("finish run failed", "error", err)
