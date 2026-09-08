@@ -67,11 +67,14 @@ func (p *PostgresStore) EnsureStopForTerminal(ctx context.Context, terminalID in
 	}
 	var id int64
 	if err := p.pool.QueryRow(ctx, `SELECT id FROM stops_canonical WHERE terminal_id=$1 ORDER BY id LIMIT 1`, terminalID).Scan(&id); err == nil {
+		_, _ = p.pool.Exec(ctx, `UPDATE stops_canonical sc SET geom = t.geom FROM terminals t WHERE t.id = sc.terminal_id AND sc.id = $1 AND sc.geom IS NULL AND t.geom IS NOT NULL`, id)
 		return id, nil
 	}
 	var geomLat, geomLon any
 	if lat != 0 || lon != 0 {
 		geomLat, geomLon = lat, lon
+	} else if tl, tln, err := p.terminalGeom(ctx, terminalID); err == nil {
+		geomLat, geomLon = tl, tln
 	}
 	err := p.pool.QueryRow(ctx, `INSERT INTO stops_canonical(terminal_id, geom, stop_type) VALUES($1, CASE WHEN $2::double precision IS NOT NULL AND $3::double precision IS NOT NULL THEN ST_SetSRID(ST_MakePoint($3,$2),4326)::geography ELSE NULL END, 'bus') RETURNING id`,
 		terminalID, geomLat, geomLon).Scan(&id)
@@ -82,6 +85,14 @@ func (p *PostgresStore) EnsureStopForTerminal(ctx context.Context, terminalID in
 		_, _ = p.pool.Exec(ctx, `INSERT INTO stop_names(stop_id, lang, name) VALUES($1,'ru',$2) ON CONFLICT(stop_id, lang) DO NOTHING`, id, name)
 	}
 	return id, nil
+}
+
+// terminalGeom — координаты терминала (fallback, когда стоп создаётся без
+// явных координат: канонический стоп наследует геометрию терминала).
+func (p *PostgresStore) terminalGeom(ctx context.Context, terminalID int64) (float64, float64, error) {
+	var lat, lon float64
+	err := p.pool.QueryRow(ctx, `SELECT ST_Y(geom::geometry), ST_X(geom::geometry) FROM terminals WHERE id=$1`, terminalID).Scan(&lat, &lon)
+	return lat, lon, err
 }
 
 func (p *PostgresStore) UpsertTripSource(ctx context.Context, s store.TripSourceRow) error {
@@ -309,11 +320,14 @@ func (t *pgTxStore) DeleteStopTimes(ctx context.Context, tripID int64) error {
 func (t *pgTxStore) EnsureStopForTerminal(ctx context.Context, terminalID int64, lat, lon float64, name string) (int64, error) {
 	var id int64
 	if err := t.tx.QueryRow(ctx, `SELECT id FROM stops_canonical WHERE terminal_id=$1 ORDER BY id LIMIT 1`, terminalID).Scan(&id); err == nil {
+		_, _ = t.tx.Exec(ctx, `UPDATE stops_canonical sc SET geom = t.geom FROM terminals t WHERE t.id = sc.terminal_id AND sc.id = $1 AND sc.geom IS NULL AND t.geom IS NOT NULL`, id)
 		return id, nil
 	}
 	var geomLat, geomLon any
 	if lat != 0 || lon != 0 {
 		geomLat, geomLon = lat, lon
+	} else if tl, tln, err := t.terminalGeom(ctx, terminalID); err == nil {
+		geomLat, geomLon = tl, tln
 	}
 	err := t.tx.QueryRow(ctx, `INSERT INTO stops_canonical(terminal_id, geom, stop_type) VALUES($1, CASE WHEN $2::double precision IS NOT NULL AND $3::double precision IS NOT NULL THEN ST_SetSRID(ST_MakePoint($3,$2),4326)::geography ELSE NULL END, 'bus') RETURNING id`,
 		terminalID, geomLat, geomLon).Scan(&id)
@@ -324,6 +338,12 @@ func (t *pgTxStore) EnsureStopForTerminal(ctx context.Context, terminalID int64,
 		_, _ = t.tx.Exec(ctx, `INSERT INTO stop_names(stop_id, lang, name) VALUES($1,'ru',$2) ON CONFLICT(stop_id, lang) DO NOTHING`, id, name)
 	}
 	return id, nil
+}
+
+func (t *pgTxStore) terminalGeom(ctx context.Context, terminalID int64) (float64, float64, error) {
+	var lat, lon float64
+	err := t.tx.QueryRow(ctx, `SELECT ST_Y(geom::geometry), ST_X(geom::geometry) FROM terminals WHERE id=$1`, terminalID).Scan(&lat, &lon)
+	return lat, lon, err
 }
 
 func (t *pgTxStore) UpsertTripSource(ctx context.Context, s store.TripSourceRow) error {

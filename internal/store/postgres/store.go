@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -516,6 +517,10 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 	for _, pr := range providers {
 		allow[pr] = true
 	}
+	dayBase := time.Now().UTC().Truncate(24 * time.Hour)
+	if !day.IsZero() {
+		dayBase = time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC)
+	}
 	net := model.NewNetwork()
 	stopIDMap := map[int64]string{}
 	// canonical stops: stops_canonical + stop_names + terminals geom
@@ -543,7 +548,7 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 		net.Stops[code] = &model.Stop{ID: code, ProviderID: "mintrans", Name: name.String, Lat: la, Lon: lo, Type: model.StopType(stopType.String)}
 		stopIDMap[id] = code
 	}
-	routeRows, err := p.pool.Query(ctx, `SELECT id, source_provider, carrier_id, external_route_code, short_name, long_name, mode FROM routes`)
+	routeRows, err := p.pool.Query(ctx, `SELECT id, source_provider, carrier_id, external_route_code, short_name, long_name, mode FROM routes WHERE valid_to IS NULL`)
 	if err != nil {
 		return nil, err
 	}
@@ -560,7 +565,7 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 		routeIDToMode[r.ID] = r.Mode
 		net.Routes[r.ExternalRouteCode] = &model.Route{ID: r.ExternalRouteCode, ProviderID: r.ProviderID, ShortName: r.ShortName, LongName: r.LongName, Mode: model.Mode(r.Mode)}
 	}
-	tRows, err := p.pool.Query(ctx, `SELECT id, route_id, provider_id, direction, service_id FROM trips`)
+	tRows, err := p.pool.Query(ctx, `SELECT id, route_id, provider_id, direction, service_id, service_days, external_trip_code FROM trips WHERE valid_to IS NULL`)
 	if err != nil {
 		return nil, err
 	}
@@ -569,10 +574,12 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 	var trips []TripRow
 	for tRows.Next() {
 		var r TripRow
-		_ = tRows.Scan(&r.ID, &r.RouteID, &r.ProviderID, &r.Direction, &r.ServiceID)
+		var serviceDays sql.NullString
+		_ = tRows.Scan(&r.ID, &r.RouteID, &r.ProviderID, &r.Direction, &r.ServiceID, &serviceDays, &r.ExternalTripCode)
 		if len(allow) > 0 && !allow[r.ProviderID] {
 			continue
 		}
+		r.ServiceDays = serviceDays.String
 		trips = append(trips, r)
 		tripByID[r.ID] = r
 	}
@@ -599,9 +606,13 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 			if len(times) == 0 {
 				continue
 			}
+			if !serviceDaysMatch(t.ServiceDays, dayBase) {
+				continue
+			}
 			code := routeIDToCode[t.RouteID]
 			mode := routeIDToMode[t.RouteID]
-			mt := &model.Trip{ID: code + ":" + t.Direction, RouteID: code, ProviderID: t.ProviderID, Mode: model.Mode(mode), ServiceID: t.ServiceID, StopTimes: times}
+			tripID := code + "|" + t.ExternalTripCode
+			mt := &model.Trip{ID: tripID, RouteID: code, ProviderID: t.ProviderID, Mode: model.Mode(mode), ServiceID: t.ServiceID, StopTimes: times}
 			net.Trips[mt.ID] = mt
 		}
 	}
@@ -662,9 +673,47 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 			}
 		}
 	}
-	dayBase := time.Now().UTC().Truncate(24 * time.Hour)
-	if !day.IsZero() {
-		dayBase = time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC)
+	if svcRows, err := p.pool.Query(ctx, `SELECT id, name, start_date, end_date FROM services`); err == nil {
+		defer svcRows.Close()
+		for svcRows.Next() {
+			var id int64
+			var name sql.NullString
+			var startD, endD sql.NullTime
+			_ = svcRows.Scan(&id, &name, &startD, &endD)
+			svc := &model.Service{ID: int(id)}
+			if name.Valid {
+				svc.Name = name.String
+			}
+			if startD.Valid {
+				svc.StartDate = startD.Time
+			}
+			if endD.Valid {
+				svc.EndDate = endD.Time
+			}
+			net.Services[int(id)] = svc
+		}
+	}
+	if sdRows, err := p.pool.Query(ctx, `SELECT service_id, weekday FROM service_days`); err == nil {
+		defer sdRows.Close()
+		for sdRows.Next() {
+			var sid int64
+			var wd int
+			_ = sdRows.Scan(&sid, &wd)
+			net.ServiceDays[int(sid)] = append(net.ServiceDays[int(sid)], model.ServiceDay{ServiceID: int(sid), Weekday: wd})
+		}
+	}
+	if seRows, err := p.pool.Query(ctx, `SELECT service_id, date, exception_type FROM service_exceptions`); err == nil {
+		defer seRows.Close()
+		for seRows.Next() {
+			var sid int64
+			var d sql.NullTime
+			var typ sql.NullString
+			_ = seRows.Scan(&sid, &d, &typ)
+			if !d.Valid {
+				continue
+			}
+			net.ServiceExceptions[int(sid)] = append(net.ServiceExceptions[int(sid)], model.ServiceException{ServiceID: int(sid), Date: d.Time, ExceptionType: model.ExceptionType(typ.String)})
+		}
 	}
 	for _, trip := range net.Trips {
 		for i := 0; i < len(trip.StopTimes)-1; i++ {
@@ -681,6 +730,31 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 	net.BuildIndexes()
 	return net, nil
 }
+
+// serviceDaysMatch — фильтрация трипа по дню недели на момент построения
+// сети (канонический формат trips.service_days: "0,1,2", Weekday 0=Sunday).
+// Пустая строка = нет календарной информации, трип не фильтруем.
+func serviceDaysMatch(serviceDays string, day time.Time) bool {
+	if serviceDays == "" {
+		return true
+	}
+	want := int(day.Weekday())
+	for _, part := range strings.Split(serviceDays, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		n, err := strconv.Atoi(part)
+		if err != nil {
+			continue
+		}
+		if n == want {
+			return true
+		}
+	}
+	return false
+}
+
 func (p *PostgresStore) MarkImported(ctx context.Context, providerID string, at time.Time, records int) error {
 	if p.pool == nil {
 		return nil

@@ -309,7 +309,8 @@ func (a *App) networkForDay(day time.Time) (*model.Network, error) {
 		a.logger.Debug("networkForDay", "day", day, "store", a.store != nil, "providers", len(a.registry.List()))
 	}
 	if a.store != nil {
-		ids := make([]string, 0, len(a.registry.List()))
+		ids := make([]string, 0, len(a.registry.List())+1)
+		ids = append(ids, "mintrans")
 		for _, p := range a.registry.List() {
 			ids = append(ids, p.ID())
 		}

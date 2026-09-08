@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1102,6 +1103,26 @@ func (m *MemoryStore) ImportAdaptedRecords(ctx context.Context, records []model.
 func (m *MemoryStore) LoadNetwork(ctx context.Context, providers []string, day time.Time) (*model.Network, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	dayBase := time.Now().UTC().Truncate(24 * time.Hour)
+	if !day.IsZero() {
+		dayBase = time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC)
+	}
+	serviceDaysMatch := func(serviceDays string) bool {
+		if serviceDays == "" {
+			return true
+		}
+		want := int(dayBase.Weekday())
+		for _, part := range strings.Split(serviceDays, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			if n, err := strconv.Atoi(part); err == nil && n == want {
+				return true
+			}
+		}
+		return false
+	}
 	allow := map[string]bool{}
 	if len(providers) > 0 {
 		for _, p := range providers {
@@ -1143,11 +1164,17 @@ func (m *MemoryStore) LoadNetwork(ctx context.Context, providers []string, day t
 		if len(allow) > 0 && !allow[r.ProviderID] {
 			continue
 		}
+		if r.ValidTo != nil {
+			continue
+		}
 		mr := &model.Route{ID: r.ExternalRouteCode, ProviderID: r.ProviderID, ShortName: r.ShortName, LongName: r.LongName, Mode: model.Mode(r.Mode)}
 		net.Routes[r.ExternalRouteCode] = mr
 	}
 	for _, t := range m.trips {
 		if len(allow) > 0 && !allow[t.ProviderID] {
+			continue
+		}
+		if t.ValidTo != nil {
 			continue
 		}
 		route, ok := m.routes[t.RouteID]
@@ -1170,7 +1197,10 @@ func (m *MemoryStore) LoadNetwork(ctx context.Context, providers []string, day t
 		if len(times) == 0 {
 			continue
 		}
-		mt := &model.Trip{ID: routeID + ":" + t.Direction, RouteID: routeID, ProviderID: t.ProviderID, Mode: model.Mode(route.Mode), ServiceID: t.ServiceID, StopTimes: times}
+		if !serviceDaysMatch(t.ServiceDays) {
+			continue
+		}
+		mt := &model.Trip{ID: routeID + "|" + t.ExternalTripCode, RouteID: routeID, ProviderID: t.ProviderID, Mode: model.Mode(route.Mode), ServiceID: t.ServiceID, StopTimes: times}
 		net.Trips[mt.ID] = mt
 		for i := 0; i < len(times)-1; i++ {
 			_ = i
@@ -1224,10 +1254,6 @@ func (m *MemoryStore) LoadNetwork(ctx context.Context, providers []string, day t
 		}
 	}
 	globalFareMem.mu.RUnlock()
-	dayBase := time.Now().UTC().Truncate(24 * time.Hour)
-	if !day.IsZero() {
-		dayBase = time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC)
-	}
 	// Build connections from stopTimes via trips
 	for _, trip := range net.Trips {
 		for i := 0; i < len(trip.StopTimes)-1; i++ {

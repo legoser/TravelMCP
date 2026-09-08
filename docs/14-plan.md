@@ -601,7 +601,7 @@ availability-метриках здоровья коннектора.
 | `data/reestr/{yandex,nominatim}_geo.json` | seed → архив | после seed |
 | `GEOCODE_MAX_CALLS` / `GeoResolver.maxCalls` | Deprecated → квота БД + TTL | после Фазы 2 |
 | `internal/geo/places.json` | без изменений, но **ревизуется** при переключении планировщика на Store(Postgres) | отдельный пункт Фазы 6 |
-| `internal/providers/intercity` (JSON-legacy) | Deprecated при переключении планировщика | Фаза 6 |
+| `internal/providers/intercity` (JSON-legacy) | Планировщик переключён на Store (`networkForDay` → `LoadNetwork` из канонической БД; intercity остаётся fallback-провайдером реестра) | Фаза 6 — вырезание после паритета покрытия (store-сеть ≥ legacy-сеть на всём срезе реестра) |
 
 Правило: после каждого пункта — `make check-deprecated`; срок жизни Deprecated
 ограничен фазой паритета.
