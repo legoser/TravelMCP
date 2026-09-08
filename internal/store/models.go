@@ -84,7 +84,7 @@ type TripRow struct {
 	ServiceDays      string
 	FrequencyFlag    int
 	Period           string
-	ServiceID        int
+	ServiceID        int64
 	DurationS        *int
 	DistanceM        *int
 	Method           *string
@@ -134,7 +134,7 @@ type QualityRow struct {
 }
 
 type ServiceRow struct {
-	ID         int
+	ID         int64
 	ProviderID string
 	Name       string
 	StartDate  string
@@ -142,12 +142,12 @@ type ServiceRow struct {
 }
 
 type ServiceDayRow struct {
-	ServiceID int
+	ServiceID int64
 	Weekday   int
 }
 
 type ServiceExceptionRow struct {
-	ServiceID     int
+	ServiceID     int64
 	Date          string
 	ExceptionType string
 }
@@ -307,8 +307,8 @@ type SkeletonTerminalRow struct {
 	ID               int64
 	NameRu           string
 	Lat, Lon         float64
-	Settlement        string
-	Transport         string
+	Settlement       string
+	Transport        string
 	Identifiers      []model.AdaptedIdentifier
 	EnrichmentStatus string
 }

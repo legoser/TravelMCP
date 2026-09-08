@@ -46,17 +46,17 @@ type reestrDataset struct {
 	Carriers  []reestrCarrier `json:"carriers"`
 	Schedules []reestrSched   `json:"schedules"`
 	Services  []struct {
-		ID        int    `json:"id"`
+		ID        int64  `json:"id"`
 		Name      string `json:"name"`
 		StartDate string `json:"start_date"`
 		EndDate   string `json:"end_date"`
 	} `json:"services"`
 	ServiceDays []struct {
-		ServiceID int `json:"service_id"`
+		ServiceID int64 `json:"service_id"`
 		Weekday   int `json:"weekday"`
 	} `json:"service_days"`
 	ServiceExceptions []struct {
-		ServiceID     int    `json:"service_id"`
+		ServiceID     int64  `json:"service_id"`
 		Date          string `json:"date"`
 		ExceptionType string `json:"exception_type"`
 	} `json:"service_exceptions"`
@@ -90,7 +90,7 @@ type reestrStop struct {
 type reestrSched struct {
 	Route     string            `json:"route"`
 	Direction string            `json:"direction"`
-	ServiceID int               `json:"service_id"`
+	ServiceID int64             `json:"service_id"`
 	Stops     []reestrSchedStop `json:"stops"`
 }
 type reestrSchedStop struct {

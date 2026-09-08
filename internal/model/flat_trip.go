@@ -14,7 +14,7 @@ type FlatStop struct {
 type FlatTrip struct {
 	RouteReg      string     `json:"route_reg"`
 	Direction     string     `json:"direction"`
-	ServiceID     int        `json:"service_id"`
+	ServiceID     int64      `json:"service_id"`
 	Run           int        `json:"run"`
 	Period        string     `json:"period"`
 	Carrier       string     `json:"carrier"`

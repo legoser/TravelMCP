@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -26,6 +27,14 @@ type App struct {
 	gazetteer *geo.Gazetteer
 	store     store.Store
 	logger    *slog.Logger
+
+	// Кэш сети из Store по дню: LoadNetwork на живой БД читает
+	// миллионы stop_times (GTFS-СПб — 3.5M), построчный запрос на каждый
+	// find_route недопустим. Сеть на день иммутабельна в рамках запросов.
+	netMu  sync.RWMutex
+	netDay string
+	net    *model.Network
+	netErr error
 }
 
 func New(plan *planner.Planner, registry *providers.Registry) *App {
@@ -308,6 +317,14 @@ func (a *App) networkForDay(day time.Time) (*model.Network, error) {
 	if a.logger != nil {
 		a.logger.Debug("networkForDay", "day", day, "store", a.store != nil, "providers", len(a.registry.List()))
 	}
+	dayKey := day.UTC().Truncate(24 * time.Hour).Format("2006-01-02")
+	a.netMu.RLock()
+	if a.net != nil && a.netDay == dayKey {
+		n := a.net
+		a.netMu.RUnlock()
+		return n, nil
+	}
+	a.netMu.RUnlock()
 	if a.store != nil {
 		ids := make([]string, 0, len(a.registry.List())+1)
 		ids = append(ids, "mintrans")
@@ -316,8 +333,11 @@ func (a *App) networkForDay(day time.Time) (*model.Network, error) {
 		}
 		if n, err := a.store.LoadNetwork(context.Background(), ids, day); err == nil && len(n.Stops) > 0 {
 			if a.logger != nil {
-				a.logger.Info("network from store", "stops", len(n.Stops), "trips", len(n.Trips))
+				a.logger.Info("network from store", "stops", len(n.Stops), "trips", len(n.Trips), "day", dayKey)
 			}
+			a.netMu.Lock()
+			a.netDay, a.net, a.netErr = dayKey, n, nil
+			a.netMu.Unlock()
 			return n, nil
 		} else if a.logger != nil && err != nil {
 			a.logger.Warn("store LoadNetwork failed, fallback to registry", "error", err)

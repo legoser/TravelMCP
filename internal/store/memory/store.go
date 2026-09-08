@@ -1281,6 +1281,14 @@ func (m *MemoryStore) LoadNetwork(ctx context.Context, providers []string, day t
 	}
 	sort.Slice(net.Connections, func(i, j int) bool { return net.Connections[i].Departure.Before(net.Connections[j].Departure) })
 	net.BuildIndexes()
+	net.BuildWalkTransfers()
+	net.BuildIndexes()
+	sort.Slice(net.Connections, func(i, j int) bool {
+		if net.Connections[i].Departure.Equal(net.Connections[j].Departure) {
+			return net.Connections[i].Arrival.Before(net.Connections[j].Arrival)
+		}
+		return net.Connections[i].Departure.Before(net.Connections[j].Departure)
+	})
 	return net, nil
 }
 

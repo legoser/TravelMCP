@@ -42,19 +42,19 @@ type reestrDataset struct {
 }
 
 type reestrService struct {
-	ID        int    `json:"id"`
+	ID        int64  `json:"id"`
 	Name      string `json:"name"`
 	StartDate string `json:"start_date"`
 	EndDate   string `json:"end_date"`
 }
 
 type reestrServiceDay struct {
-	ServiceID int `json:"service_id"`
+	ServiceID int64 `json:"service_id"`
 	Weekday   int `json:"weekday"`
 }
 
 type reestrException struct {
-	ServiceID     int    `json:"service_id"`
+	ServiceID     int64  `json:"service_id"`
 	Date          string `json:"date"`
 	ExceptionType string `json:"exception_type"`
 }
@@ -79,7 +79,7 @@ type reestrStop struct {
 type reestrSched struct {
 	Route     string            `json:"route"`
 	Direction string            `json:"direction"`
-	ServiceID int               `json:"service_id"`
+	ServiceID int64             `json:"service_id"`
 	Stops     []reestrSchedStop `json:"stops"`
 }
 
@@ -193,7 +193,7 @@ func (p *Intercity) build(ds *reestrDataset, day time.Time) *model.Network {
 	for _, svc := range ds.Services {
 		sd, _ := time.Parse("2006-01-02", svc.StartDate)
 		ed, _ := time.Parse("2006-01-02", svc.EndDate)
-		net.Services[svc.ID] = &model.Service{ID: svc.ID, Name: svc.Name, StartDate: sd, EndDate: ed}
+		net.Services[svc.ID] = &model.Service{ID: int(svc.ID), Name: svc.Name, StartDate: sd, EndDate: ed}
 	}
 	for _, sd := range ds.ServiceDays {
 		net.ServiceDays[sd.ServiceID] = append(net.ServiceDays[sd.ServiceID], model.ServiceDay{ServiceID: sd.ServiceID, Weekday: sd.Weekday})
@@ -369,7 +369,7 @@ func scheduleDays(sched reestrSched) string {
 	return ""
 }
 
-func (p *Intercity) serviceActive(net *model.Network, serviceID int, day time.Time) bool {
+func (p *Intercity) serviceActive(net *model.Network, serviceID int64, day time.Time) bool {
 	if serviceID == 0 {
 		return true
 	}

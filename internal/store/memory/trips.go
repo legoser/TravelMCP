@@ -232,3 +232,27 @@ func (m *MemoryStore) DeleteOutbox(ctx context.Context, id int64) error {
 	m.outbox = kept
 	return nil
 }
+
+func (m *MemoryStore) ListTerminalIDByCode(ctx context.Context, system, code string) (int64, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for termID, ids := range m.terminalIdents {
+		for _, id := range ids {
+			if id.System == system && id.Code == code {
+				return termID, true
+			}
+		}
+	}
+	return 0, false
+}
+
+func (m *MemoryStore) AppendStopTimes(ctx context.Context, rows []store.StopTimeRow) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.stopTimes = append(m.stopTimes, rows...)
+	return nil
+}
+
+func (m *MemoryStore) ReadServiceDays(ctx context.Context, serviceID int64) ([]int, error) {
+	return nil, nil
+}

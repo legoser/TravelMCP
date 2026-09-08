@@ -690,7 +690,7 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 			if endD.Valid {
 				svc.EndDate = endD.Time
 			}
-			net.Services[int(id)] = svc
+			net.Services[id] = svc
 		}
 	}
 	if sdRows, err := p.pool.Query(ctx, `SELECT service_id, weekday FROM service_days`); err == nil {
@@ -699,7 +699,7 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 			var sid int64
 			var wd int
 			_ = sdRows.Scan(&sid, &wd)
-			net.ServiceDays[int(sid)] = append(net.ServiceDays[int(sid)], model.ServiceDay{ServiceID: int(sid), Weekday: wd})
+			net.ServiceDays[sid] = append(net.ServiceDays[sid], model.ServiceDay{ServiceID: sid, Weekday: wd})
 		}
 	}
 	if seRows, err := p.pool.Query(ctx, `SELECT service_id, date, exception_type FROM service_exceptions`); err == nil {
@@ -712,7 +712,7 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 			if !d.Valid {
 				continue
 			}
-			net.ServiceExceptions[int(sid)] = append(net.ServiceExceptions[int(sid)], model.ServiceException{ServiceID: int(sid), Date: d.Time, ExceptionType: model.ExceptionType(typ.String)})
+			net.ServiceExceptions[sid] = append(net.ServiceExceptions[sid], model.ServiceException{ServiceID: sid, Date: d.Time, ExceptionType: model.ExceptionType(typ.String)})
 		}
 	}
 	for _, trip := range net.Trips {
@@ -728,6 +728,16 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 		}
 	}
 	net.BuildIndexes()
+	net.BuildWalkTransfers()
+	net.BuildIndexes()
+	// CSA требует неубывающий Departure; сортируем один раз при построении,
+	// чтобы Plan не пересортировал 1.9M connections на каждый запрос.
+	sort.Slice(net.Connections, func(i, j int) bool {
+		if net.Connections[i].Departure.Equal(net.Connections[j].Departure) {
+			return net.Connections[i].Arrival.Before(net.Connections[j].Arrival)
+		}
+		return net.Connections[i].Departure.Before(net.Connections[j].Departure)
+	})
 	return net, nil
 }
 

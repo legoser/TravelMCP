@@ -71,7 +71,7 @@ func TestFlattenWeekdayRestriction(t *testing.T) {
 		Routes:   []reestrRoute{{Reg: "42.22.001", Name: "X", Carrier: "Y"}},
 		Stops:    []reestrStop{mkStop("a"), mkStop("b")},
 		Services: []struct {
-			ID        int    `json:"id"`
+			ID        int64  `json:"id"`
 			Name      string `json:"name"`
 			StartDate string `json:"start_date"`
 			EndDate   string `json:"end_date"`
@@ -109,7 +109,7 @@ func TestFlattenContradictoryWeekdaysDropped(t *testing.T) {
 		Routes:   []reestrRoute{{Reg: "42.22.001", Name: "X", Carrier: "Y"}},
 		Stops:    []reestrStop{mkStop("a"), mkStop("b")},
 		Services: []struct {
-			ID        int    `json:"id"`
+			ID        int64  `json:"id"`
 			Name      string `json:"name"`
 			StartDate string `json:"start_date"`
 			EndDate   string `json:"end_date"`
@@ -138,7 +138,7 @@ func TestFlattenFrequencyOnly(t *testing.T) {
 			{ID: "b", Name: "Бета", Region: "54", OpReg: "2"},
 		},
 		Services: []struct {
-			ID        int    `json:"id"`
+			ID        int64  `json:"id"`
 			Name      string `json:"name"`
 			StartDate string `json:"start_date"`
 			EndDate   string `json:"end_date"`

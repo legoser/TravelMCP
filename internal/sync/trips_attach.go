@@ -54,7 +54,7 @@ type PromotableTrip struct {
 	TripNK         string            `json:"trip_nk"`
 	RouteReg       string            `json:"route_reg"`
 	Direction      string            `json:"direction"`
-	ServiceID      int               `json:"service_id"`
+	ServiceID      int64             `json:"service_id"`
 	Run            int               `json:"run"`
 	IsSyntheticKey bool              `json:"is_synthetic_key"`
 	WinnerSource   string            `json:"winner_source"`
@@ -71,7 +71,7 @@ type StagedTrip struct {
 	TripNK         string            `json:"trip_nk"`
 	RouteReg       string            `json:"route_reg"`
 	Direction      string            `json:"direction"`
-	ServiceID      int               `json:"service_id"`
+	ServiceID      int64             `json:"service_id"`
 	Run            int               `json:"run"`
 	State          string            `json:"state"`
 	Reason         string            `json:"reason"`
@@ -157,7 +157,7 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 			routeNK = mintrans.SyntheticKeyForRoute(ft.RouteReg, ft.RouteFrom, ft.RouteTo, ft.CarrierINN)
 			routeSynthetic = true
 		}
-		tripNK := routeNK + "|" + ft.Direction + ":" + strconv.Itoa(ft.ServiceID) + ":" + strconv.Itoa(ft.Run)
+		tripNK := routeNK + "|" + ft.Direction + ":" + strconv.FormatInt(ft.ServiceID, 10) + ":" + strconv.Itoa(ft.Run)
 		// В diff против канона (§5.3) входят только промоутнутые рейсы:
 		// staged/dead в каноне не живут, их «добавление» не churn.
 		if ft.FrequencyOnly || len(ft.Stops) < 2 {

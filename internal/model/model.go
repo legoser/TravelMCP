@@ -1,6 +1,7 @@
 package model
 
 import (
+	"math"
 	"strings"
 	"time"
 )
@@ -225,8 +226,8 @@ type Service struct {
 
 // ServiceDay — день недели сервиса; Weekday 0=Sunday..6=Saturday (как time.Weekday).
 type ServiceDay struct {
-	ServiceID int `json:"service_id"`
-	Weekday   int `json:"weekday"`
+	ServiceID int64 `json:"service_id"`
+	Weekday   int   `json:"weekday"`
 }
 
 type ExceptionType string
@@ -238,7 +239,7 @@ const (
 
 // ServiceException — исключения календаря на конкретную дату.
 type ServiceException struct {
-	ServiceID     int           `json:"service_id"`
+	ServiceID     int64         `json:"service_id"`
 	Date          time.Time     `json:"date"`
 	ExceptionType ExceptionType `json:"exception_type"`
 }
@@ -256,7 +257,7 @@ type Trip struct {
 	RouteID    string
 	ProviderID string
 	Mode       Mode
-	ServiceID  int
+	ServiceID  int64
 	StopTimes  []StopTime
 }
 
@@ -312,9 +313,9 @@ type Network struct {
 	Stations          map[string]*Station
 	ProviderStops     map[string]*ProviderStop
 	Carriers          map[string]*Carrier
-	Services          map[int]*Service
-	ServiceDays       map[int][]ServiceDay
-	ServiceExceptions map[int][]ServiceException
+	Services          map[int64]*Service
+	ServiceDays       map[int64][]ServiceDay
+	ServiceExceptions map[int64][]ServiceException
 	Connections       []Connection
 	Transfers         []Transfer
 	Zones             map[string]*Zone
@@ -338,9 +339,9 @@ func NewNetwork() *Network {
 		Stations:          map[string]*Station{},
 		ProviderStops:     map[string]*ProviderStop{},
 		Carriers:          map[string]*Carrier{},
-		Services:          map[int]*Service{},
-		ServiceDays:       map[int][]ServiceDay{},
-		ServiceExceptions: map[int][]ServiceException{},
+		Services:          map[int64]*Service{},
+		ServiceDays:       map[int64][]ServiceDay{},
+		ServiceExceptions: map[int64][]ServiceException{},
 		Zones:             map[string]*Zone{},
 		FareAttributes:    map[string]*FareAttribute{},
 		StopZones:         map[string]string{},
@@ -349,6 +350,108 @@ func NewNetwork() *Network {
 		RouteStops:        map[string][]string{},
 		TripStops:         map[string][]string{},
 	}
+}
+
+// WalkTransferRadiusM — радиус пешей пересадки между остановками
+// (типовая городская связка «вышел — перешёл»: 400м ≈ 5 мин).
+const WalkTransferRadiusM = 400
+
+// WalkTransferMinMinutes — минимальное время пешего transfer: чистое время
+// по haversine на 5 км/ч плюс 2 минуты навигационного запаса.
+func WalkTransferMinutes(distM float64) int {
+	return int(distM/5000.0*60.0) + 2
+}
+
+// BuildWalkTransfers — генерация пеших пересадок между близкими
+// остановками сети (городские фиды не содержат transfers.txt; без них CSA
+// не переходит между маршрутами и сеть распадается на изолированные
+// коридоры). Радиус WalkTransferRadiusM, время — WalkTransferMinutes.
+// Существующие n.Transfers не трогаются, добавляются только недостающие
+// пары; обе дуги (A→B и B→A) симметричны. Provisional-стопы в пеших
+// пересадках не участвуют (C-1: посадка/высадка да, пересадка нет).
+func (n *Network) BuildWalkTransfers() {
+	seen := make(map[string]bool, len(n.Transfers)*2)
+	for _, tr := range n.Transfers {
+		seen[tr.FromStopID+"|"+tr.ToStopID] = true
+	}
+	cell := func(lat, lon float64) (int, int) {
+		return int((lat + 90) * 10), int((lon + 180) * 10)
+	}
+	byCell := map[[2]int][]string{}
+	for id, s := range n.Stops {
+		if n.ProvisionalStops[id] {
+			continue
+		}
+		ci, cj := cell(s.Lat, s.Lon)
+		byCell[[2]int{ci, cj}] = append(byCell[[2]int{ci, cj}], id)
+	}
+	add := func(a, b string, distM float64) {
+		n.Transfers = append(n.Transfers, Transfer{FromStopID: a, ToStopID: b, Minutes: WalkTransferMinutes(distM)})
+	}
+	const cellDeg = 0.1
+	for _, ids := range byCell {
+		for i := 0; i < len(ids); i++ {
+			for j := i + 1; j < len(ids); j++ {
+				a, b := n.Stops[ids[i]], n.Stops[ids[j]]
+				if a == nil || b == nil {
+					continue
+				}
+				d := haversineKm(a.Lat, a.Lon, b.Lat, b.Lon) * 1000
+				if d > WalkTransferRadiusM {
+					continue
+				}
+				if !seen[ids[i]+"|"+ids[j]] {
+					add(ids[i], ids[j], d)
+					seen[ids[i]+"|"+ids[j]] = true
+				}
+				if !seen[ids[j]+"|"+ids[i]] {
+					add(ids[j], ids[i], d)
+					seen[ids[j]+"|"+ids[i]] = true
+				}
+			}
+		}
+	}
+	// соседние ячейки 0.1° (~11 км): граничные пары радиуса 400м
+	for c, ids := range byCell {
+		for _, off := range [][2]int{{1, 0}, {0, 1}, {1, 1}, {1, -1}} {
+			nc := [2]int{c[0] + off[0], c[1] + off[1]}
+			nids := byCell[nc]
+			for _, ida := range ids {
+				a := n.Stops[ida]
+				if a == nil {
+					continue
+				}
+				for _, idb := range nids {
+					b := n.Stops[idb]
+					if b == nil {
+						continue
+					}
+					d := haversineKm(a.Lat, a.Lon, b.Lat, b.Lon) * 1000
+					if d > WalkTransferRadiusM {
+						continue
+					}
+					if !seen[ida+"|"+idb] {
+						add(ida, idb, d)
+						seen[ida+"|"+idb] = true
+					}
+					if !seen[idb+"|"+ida] {
+						add(idb, ida, d)
+						seen[idb+"|"+ida] = true
+					}
+				}
+			}
+		}
+	}
+}
+
+func haversineKm(lat1, lon1, lat2, lon2 float64) float64 {
+	const R = 6371
+	dLat := (lat2 - lat1) * math.Pi / 180
+	dLon := (lon2 - lon1) * math.Pi / 180
+	sa := math.Sin(dLat / 2)
+	sb := math.Sin(dLon / 2)
+	h := sa*sa + math.Cos(lat1*math.Pi/180)*math.Cos(lat2*math.Pi/180)*sb*sb
+	return 2 * R * math.Asin(math.Sqrt(h))
 }
 
 func (n *Network) BuildIndexes() {

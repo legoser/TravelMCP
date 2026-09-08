@@ -44,7 +44,7 @@ func ValidateDatasetContract(raw []byte) error {
 	if err := checkStops(ds.Stops); err != nil {
 		return err
 	}
-	services := map[int]bool{}
+	services := map[int64]bool{}
 	for i, svc := range ds.Services {
 		if svc.ID <= 0 {
 			return fmt.Errorf("reestr: services[%d].id = %d, want > 0", i, svc.ID)
@@ -167,7 +167,7 @@ func blockDaysOf(b *reestrBlock) string {
 	return b.Days
 }
 
-func checkSchedules(scheds []reestrSched, routeSet, stopSet map[string]bool, services map[int]bool) error {
+func checkSchedules(scheds []reestrSched, routeSet, stopSet map[string]bool, services map[int64]bool) error {
 	seenDir := map[string]bool{}
 	for i, sc := range scheds {
 		if sc.Route == "" {
