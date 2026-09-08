@@ -610,6 +610,7 @@ CREATE TABLE IF NOT EXISTS terminal_aliases (
   observed_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (terminal_id, alias, lang)
 );
+CREATE INDEX IF NOT EXISTS idx_terminal_aliases_terminal ON terminal_aliases(terminal_id);
 
 -- old_id намеренно С FK: старая строка terminals не удаляется физически,
 -- а тумстоунится через SCD2 valid_to (аудит слияний); карта redirect плоская.

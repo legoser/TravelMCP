@@ -180,7 +180,7 @@ func settlementFeature(a, b PairItem) (float64, bool) {
 	if a.Settlement == "" || b.Settlement == "" {
 		return 0, false
 	}
-	if namesim.Core(a.Settlement) == namesim.Core(b.Settlement) {
+	if namesim.SameSettlement(a.Settlement, b.Settlement) {
 		return 1, true
 	}
 	return 0, true

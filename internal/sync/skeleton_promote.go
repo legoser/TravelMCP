@@ -276,7 +276,14 @@ func promoteJoined(ctx context.Context, st SkeletonStore, runID int64, j skeleto
 	if v := recordExtra(r, "address"); v != "" {
 		row.Address = v
 	}
-	names := map[string]string{"ru": r.NameRu}
+	// Primary-имя: yandex-title информативнее голого OSM-имени, когда
+	// добавляет город-контекст («Кемерово, автовокзал» vs «Автовокзал»).
+	// OSM-имя при этом сохраняется alias-ом, ничего не теряется.
+	nameRu := r.NameRu
+	if y := recordExtra(r, "yandex_title"); y != "" && yandexNameAddsContext(y, r.NameRu) {
+		nameRu = y
+	}
+	names := map[string]string{"ru": nameRu}
 	if r.NameEn != "" {
 		names["en"] = r.NameEn
 	}
@@ -286,6 +293,11 @@ func promoteJoined(ctx context.Context, st SkeletonStore, runID int64, j skeleto
 	}
 	if v := recordExtra(r, "yandex_title"); v != "" {
 		if err := st.UpsertTerminalAlias(ctx, store.TerminalAliasRow{TerminalID: id, Alias: v, Lang: "ru", Source: "yandex"}); err != nil {
+			return false, err
+		}
+	}
+	if nameRu != r.NameRu {
+		if err := st.UpsertTerminalAlias(ctx, store.TerminalAliasRow{TerminalID: id, Alias: r.NameRu, Lang: "ru", Source: "osm"}); err != nil {
 			return false, err
 		}
 	}
@@ -299,7 +311,7 @@ func promoteJoined(ctx context.Context, st SkeletonStore, runID int64, j skeleto
 	syncID := &runID
 	for _, attr := range []store.AttributeStateRow{
 		{EntityType: "terminal", EntityID: id, Field: "geom", Value: fmt.Sprintf("%v,%v", *r.Lat, *r.Lon), Source: geomSource, Confidence: j.Score, Origin: "live", SyncRunID: syncID},
-		{EntityType: "terminal", EntityID: id, Field: "name_ru", Value: r.NameRu, Source: geomSource, Confidence: j.Score, Origin: "live", SyncRunID: syncID},
+		{EntityType: "terminal", EntityID: id, Field: "name_ru", Value: nameRu, Source: geomSource, Confidence: j.Score, Origin: "live", SyncRunID: syncID},
 	} {
 		if err := st.UpsertAttributeState(ctx, attr); err != nil {
 			return false, err
@@ -362,6 +374,26 @@ func recordExtra(r model.AdaptedRecord, key string) string {
 		return ""
 	}
 	return r.Extra[key]
+}
+
+// yandexNameAddsContext — yandex-имя информативнее OSM-имени как primary,
+// если добавляет контекст (город-префикс), а OSM-имя целиком вложено в
+// yandex-имя как «хвост»: «Кемерово, автовокзал» ⊇ «Автовокзал»,
+// «Барнаул» ⊇ «Барнаул». Короткие OSM-имена без контекста («Вокзал»,
+// «Автовокзал», «Автостанция») — типичный кейс остановок у транспортных
+// хабов, их OSM-имя бесполезно без города.
+func yandexNameAddsContext(yandexName, osmName string) bool {
+	if yandexName == "" || osmName == "" {
+		return false
+	}
+	y := strings.ToLower(strings.TrimSpace(yandexName))
+	o := strings.ToLower(strings.TrimSpace(osmName))
+	if y == o || !strings.HasSuffix(y, o) {
+		return false
+	}
+	prefix := strings.TrimSpace(strings.TrimSuffix(y, o))
+	prefix = strings.TrimSuffix(strings.TrimSuffix(prefix, ","), " ")
+	return prefix != ""
 }
 
 func recordObjectType(r model.AdaptedRecord) string {

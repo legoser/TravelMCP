@@ -80,7 +80,72 @@ func ExtractSettlement(name string) string {
 		}
 		return strings.Join(out, " ")
 	}
+	// Паттерн реестра Минтранса: название — прилагательное города + тип
+	// объекта («Кемеровский АВ», «Мариинский автовокзал»). Префикса нет, но
+	// первый токен — городская форма прилагательного: возвращаем её,
+	// SameSettlement сведёт с именным вариантом («Кемерово»).
+	if len(toks) > 1 {
+		if first := toks[0]; len([]rune(first)) >= 6 {
+			for _, suf := range adjectiveSuffixes {
+				if strings.HasSuffix(first, suf) && !facilityStopWords[first] {
+					return first
+				}
+			}
+		}
+	}
 	return ""
+}
+
+// adjectiveSuffixes — суффиксы городских прилагательных («Кемеровский» от
+// «Кемерово»). Словарное сравнение имён не ловит связку
+// «Кемеровский АВ» ↔ «Кемерово, автовокзал», settlement-фича молчит и
+// без-координатный стоп уходит в skeleton_gap.
+var adjectiveSuffixes = []string{"ский", "цкий", "ая", "ое", "ый"}
+
+// SameSettlement — равенство названий поселений с учётом прилагательной
+// формы города: «Кемерово» ≡ «кемеровский» (основа прилагательного — префикс
+// имени города, хвост имени ≤2 символов — выпадающая гласная/«-ск»:
+// кемеров+о, мариин+ск, новокузнец+к). «Мариинск» ≡ «мариинский».
+func SameSettlement(a, b string) bool {
+	ca, cb := Core(a), Core(b)
+	if ca == "" || cb == "" {
+		return false
+	}
+	if ca == cb {
+		return true
+	}
+	return adjectiveStemMatches(ca, cb) || adjectiveStemMatches(cb, ca)
+}
+
+// adjectiveStemMatches: adj — прилагательное (заканчивается на суффикс),
+// city — имя города; основа прилагательного (≥4 символов) должна быть
+// префиксом города, остаток — ≤2 символов (кемеров|о, мариин|ск).
+func adjectiveStemMatches(adj, city string) bool {
+	ar, cr := []rune(adj), []rune(city)
+	for _, suf := range adjectiveSuffixes {
+		sr := []rune(suf)
+		if !hasSuffixRunes(ar, sr) {
+			continue
+		}
+		stem := ar[:len(ar)-len(sr)]
+		if len(stem) < 4 || len(stem) > len(cr) {
+			continue
+		}
+		if string(stem) != string(cr[:len(stem)]) {
+			continue
+		}
+		if len(cr)-len(stem) <= 2 {
+			return true
+		}
+	}
+	return false
+}
+
+func hasSuffixRunes(s, suf []rune) bool {
+	if len(s) < len(suf) {
+		return false
+	}
+	return string(s[len(s)-len(suf):]) == string(suf)
 }
 
 func Normalize(s string) string {

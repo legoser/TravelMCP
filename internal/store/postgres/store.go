@@ -456,14 +456,14 @@ func (p *PostgresStore) ListTerminalsFiltered(ctx context.Context, limit, offset
 	hasQ := q != ""
 	var total int
 	if hasQ {
-		_ = p.pool.QueryRow(ctx, `SELECT count(*) FROM terminals t WHERE EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE '%' || $1 || '%')`, q).Scan(&total)
+		_ = p.pool.QueryRow(ctx, `SELECT count(*) FROM terminals t WHERE EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE '%' || $1 || '%') OR EXISTS (SELECT 1 FROM terminal_aliases ta WHERE ta.terminal_id=t.id AND ta.alias ILIKE '%' || $1 || '%')`, q).Scan(&total)
 	} else {
 		_ = p.pool.QueryRow(ctx, `SELECT count(*) FROM terminals`).Scan(&total)
 	}
 	var rows pgx.Rows
 	var err error
 	if hasQ {
-		rows, err = p.pool.Query(ctx, fmt.Sprintf(`SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' WHERE EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE '%%' || $3 || '%%') ORDER BY %s LIMIT $1 OFFSET $2`, orderClause), limit, offset, q)
+		rows, err = p.pool.Query(ctx, fmt.Sprintf(`SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' WHERE EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE '%%' || $3 || '%%') OR EXISTS (SELECT 1 FROM terminal_aliases ta WHERE ta.terminal_id=t.id AND ta.alias ILIKE '%%' || $3 || '%%') ORDER BY %s LIMIT $1 OFFSET $2`, orderClause), limit, offset, q)
 	} else {
 		rows, err = p.pool.Query(ctx, fmt.Sprintf(`SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' ORDER BY %s LIMIT $1 OFFSET $2`, orderClause), limit, offset)
 	}

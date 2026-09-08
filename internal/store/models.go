@@ -307,7 +307,8 @@ type SkeletonTerminalRow struct {
 	ID               int64
 	NameRu           string
 	Lat, Lon         float64
-	Settlement       string
+	Settlement        string
+	Transport         string
 	Identifiers      []model.AdaptedIdentifier
 	EnrichmentStatus string
 }

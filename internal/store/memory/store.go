@@ -432,9 +432,17 @@ func (m *MemoryStore) ListTerminalsFiltered(ctx context.Context, limit, offset i
 						break
 					}
 				}
-				if !matched {
-					continue
+			}
+			if !matched {
+				for _, a := range m.aliases[id] {
+					if strings.Contains(strings.ToLower(a.Alias), q) {
+						matched = true
+						break
+					}
 				}
+			}
+			if !matched {
+				continue
 			}
 		}
 		filtered = append(filtered, map[string]any{"id": id, "name": name, "lat": tr.Lat, "lon": tr.Lon, "is_locked": tr.IsLocked, "place_id": tr.PlaceID})

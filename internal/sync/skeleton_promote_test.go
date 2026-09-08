@@ -134,6 +134,50 @@ func TestPromoteSkeletonChunkMemory(t *testing.T) {
 	}
 }
 
+func TestYandexNameAddsContext(t *testing.T) {
+	cases := []struct {
+		yandex, osm string
+		want        bool
+	}{
+		{"Кемерово, автовокзал", "Автовокзал", true},
+		{"Кемерово, ж/д вокзал", "Ж/Д вокзал", true},
+		{"Барнаул", "Барнаул", false},
+		{"Автовокзал", "Кемерово, автовокзал", false},
+		{"Томск, автовокзал", "Томская станция", false},
+		{"", "Автовокзал", false},
+		{"Кемерово, автовокзал", "", false},
+	}
+	for _, c := range cases {
+		if got := yandexNameAddsContext(c.yandex, c.osm); got != c.want {
+			t.Errorf("yandexNameAddsContext(%q, %q) = %v, want %v", c.yandex, c.osm, got, c.want)
+		}
+	}
+}
+
+func TestPromoteSkeletonChunkYandexPrimaryName(t *testing.T) {
+	ctx := context.Background()
+	ms := memstore.NewMemoryStore()
+	runID, err := BeginSkeletonRun(ctx, ms, "plan-name", "sha-name", "skeleton-name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := skelRec("Автовокзал", "Кемерово", "bus", "42", 55.3416, 86.061,
+		map[string]string{"yandex_title": "Кемерово, автовокзал", "settlement": "Кемерово"})
+	chunk := SkeletonChunk{Key: "name-chunk", Canon: []skeleton.JoinedRecord{
+		{Record: rec, Score: 0.9, Enrichment: skeleton.Enriched},
+	}}
+	if _, err := PromoteSkeletonChunk(ctx, ms, runID, chunk); err != nil {
+		t.Fatal(err)
+	}
+	list, total, err := ms.ListTerminalsFiltered(ctx, 10, 0, "name", "asc", "Кемерово, автовокзал")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || list[0]["name"] != "Кемерово, автовокзал" {
+		t.Fatalf("primary-имя должно брать yandex-title с городом: total=%d %+v", total, list)
+	}
+}
+
 func TestPromoteSkeletonChunkYandexOnlyWithCoords(t *testing.T) {
 	ctx := context.Background()
 	ms := memstore.NewMemoryStore()

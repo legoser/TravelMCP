@@ -305,7 +305,7 @@ func (p *PostgresStore) ListSkeletonTerminals(ctx context.Context) ([]store.Skel
 	if p.pool == nil {
 		return nil, errNotImplemented
 	}
-	rows, err := p.pool.Query(ctx, `SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.enrichment_status, coalesce(tt.tags->>'settlement','') FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' LEFT JOIN terminal_tags tt ON tt.terminal_id=t.id WHERE EXISTS (SELECT 1 FROM attribute_state a WHERE a.entity_type='terminal' AND a.entity_id=t.id AND a.sync_run_id IN (SELECT id FROM sync_runs WHERE kind='skeleton')) ORDER BY t.id`)
+	rows, err := p.pool.Query(ctx, `SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.enrichment_status, coalesce(tt.tags->>'settlement',''), coalesce(array_to_string(t.transport_types, '+'),'') FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' LEFT JOIN terminal_tags tt ON tt.terminal_id=t.id WHERE EXISTS (SELECT 1 FROM attribute_state a WHERE a.entity_type='terminal' AND a.entity_id=t.id AND a.sync_run_id IN (SELECT id FROM sync_runs WHERE kind='skeleton')) ORDER BY t.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -314,7 +314,7 @@ func (p *PostgresStore) ListSkeletonTerminals(ctx context.Context) ([]store.Skel
 	var ids []int64
 	for rows.Next() {
 		var r store.SkeletonTerminalRow
-		if err := rows.Scan(&r.ID, &r.NameRu, &r.Lat, &r.Lon, &r.EnrichmentStatus, &r.Settlement); err != nil {
+		if err := rows.Scan(&r.ID, &r.NameRu, &r.Lat, &r.Lon, &r.EnrichmentStatus, &r.Settlement, &r.Transport); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

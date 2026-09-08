@@ -116,7 +116,7 @@ func SkeletonRowToAttachTerminals(rows []store.SkeletonTerminalRow) []AttachTerm
 		}
 		out = append(out, AttachTerminal{
 			ID: r.ID, Name: r.NameRu, Lat: lat, Lon: lon,
-			Settlement: r.Settlement, Source: source,
+			Settlement: r.Settlement, Transport: r.Transport, Source: source,
 			Codes:         r.Identifiers,
 			GeomFinalized: r.EnrichmentStatus == "enriched",
 		})
@@ -246,9 +246,12 @@ func RunTripsSync(ctx context.Context, db store.Store, st TripsRunnerStore, trip
 	}
 	sum.Waited = waited
 	if !gatePass && !cfg.Force {
-		slog.Warn("sync trips: starvation-alert, регионы заблокированы gate", "blocked", blocked)
+		slog.Warn("sync trips: starvation-alert, регионы заблокированы gate", "blocked", blocked, "gate", cfg.CoverageGate)
 	}
 	sum.Forced = cfg.Force
+	if filled, missing := ResolveStopCoords(filtered, terms, cfg.Source); missing > 0 {
+		slog.Info("sync trips: гео-резолв стопов через скелет", "filled", filled, "missing", missing)
+	}
 	routeRegs := RouteRegions(filtered)
 	attachable := map[string]bool{}
 	var routes []string

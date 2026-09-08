@@ -52,7 +52,7 @@ func scorePairBody(a, b model.AdaptedRecord, cfg JoinConfig, nameSimFn func(stri
 	as, bs := extra(a, "settlement"), extra(b, "settlement")
 	settlement := 0.0
 	settlementPresent := as != "" && bs != ""
-	if settlementPresent && namesim.Core(as) == namesim.Core(bs) {
+	if settlementPresent && namesim.SameSettlement(as, bs) {
 		settlement = 1
 	}
 	at, bt := extra(a, "transport_type"), extra(b, "transport_type")
