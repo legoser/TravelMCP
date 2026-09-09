@@ -4,14 +4,18 @@
 package integration
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
 	"travelmcp/internal/config"
+	"travelmcp/internal/logger"
 	"travelmcp/internal/model"
 	"travelmcp/internal/providers"
 	"travelmcp/internal/server"
@@ -158,6 +162,53 @@ func TestFindRouteNoRoute(t *testing.T) {
 func TestFindRouteValidation(t *testing.T) {
 	_, client := newApp(t)
 	common.AssertBadArgs(t, client)
+}
+
+func TestFindRouteDebugLogging(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Log.Level = "debug"
+	cfg.Log.Format = "json"
+
+	reg := providers.NewRegistry([]string{"synth"})
+	metrics := telemetry.New()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStdout := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = oldStdout }()
+
+	lf := logger.NewFactory(cfg.Log)
+	lg := lf.For("test")
+
+	ts := httptest.NewServer(server.NewWithStore(cfg, lg, metrics, reg, nil))
+	t.Cleanup(ts.Close)
+
+	client := common.NewMCPClient(ts.URL)
+	common.AssertPlaceJourney(t, client)
+
+	_ = w.Close()
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+	os.Stdout = oldStdout
+
+	output := buf.String()
+	for _, expectedLog := range []string{
+		"find_route request",
+		"resolvePoint: georesolve",
+		"networkForDay",
+		"plan start",
+		"csa start",
+		"network ready",
+		"find_route search",
+		"find_route success",
+	} {
+		if !strings.Contains(output, expectedLog) {
+			t.Errorf("debug log missing expected message %q", expectedLog)
+		}
+	}
 }
 
 func TestAPIKeyAuth(t *testing.T) {
