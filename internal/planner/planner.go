@@ -182,16 +182,28 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 	}
 
 	if fromPlace != nil {
+		if p.logger != nil {
+			p.logger.Debug("matchStops: georesolve place", "place", fromPlace.Name, "coords", from, "maxWalk", maxWalk)
+		}
 		fromStop, foundFrom = findStopByPlace(net.Stops, fromPlace.Name, from, maxWalk, originStops)
+		if p.logger != nil {
+			p.logger.Debug("matchStops: place resolved", "place", fromPlace.Name, "found", foundFrom, "stop", fromStop.ID, "stop_name", fromStop.Name, "via_place", foundFrom)
+		}
 	}
 	idx := geo.NewSpatialIndex(net.Stops)
 	if !foundFrom {
+		if p.logger != nil {
+			p.logger.Debug("matchStops: spatial nearest", "coords", from, "maxWalk", maxWalk)
+		}
 		fromStops := idx.Nearest(from, maxWalk, 0)
 		if len(fromStops) == 0 {
 			fromStops = geo.NearestStops(net.Stops, from, maxWalk, 0)
 		}
 		if len(fromStops) == 0 {
 			return nil, fmt.Errorf("planner: нет остановок, достижимых пешком (лимит %d мин) от точки отправления", maxWalk)
+		}
+		if p.logger != nil {
+			p.logger.Debug("matchStops: nearest stops", "coord", from, "candidates", len(fromStops), "sample", fromStops[0].ID)
 		}
 		fromStop = chooseBestStop(fromStops, originStops)
 		if fromStop == nil {
@@ -200,9 +212,18 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 	}
 
 	if toPlace != nil {
+		if p.logger != nil {
+			p.logger.Debug("matchStops: georesolve place", "place", toPlace.Name, "coords", to, "maxWalk", maxWalk)
+		}
 		toStop, foundTo = findStopByPlace(net.Stops, toPlace.Name, to, maxWalk, nil)
+		if p.logger != nil {
+			p.logger.Debug("matchStops: place resolved", "place", toPlace.Name, "found", foundTo, "stop", toStop.ID, "stop_name", toStop.Name, "via_place", foundTo)
+		}
 	}
 	if !foundTo {
+		if p.logger != nil {
+			p.logger.Debug("matchStops: spatial nearest", "coords", to, "maxWalk", maxWalk)
+		}
 		toStops := idx.Nearest(to, maxWalk, 0)
 		if len(toStops) == 0 {
 			toStops = geo.NearestStops(net.Stops, to, maxWalk, 0)
@@ -219,6 +240,10 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 
 	accessMin := geo.WalkTimeMinutes(geo.Haversine(from, fromStop.Coordinates()))
 	egressMin := geo.WalkTimeMinutes(geo.Haversine(to, toStop.Coordinates()))
+
+	if p.logger != nil {
+		p.logger.Debug("matchStops: final", "from_stop", fromStop.ID, "from_stop_name", fromStop.Name, "to_stop", toStop.ID, "to_stop_name", toStop.Name, "access_min", accessMin, "egress_min", egressMin, "via_from_place", foundFrom, "via_to_place", foundTo)
+	}
 
 	if params.Arrival != nil {
 		latestArrivalAtStop := params.Arrival.Add(-time.Duration(egressMin) * time.Minute)
@@ -465,6 +490,9 @@ func (p *Planner) paretoAlternatives(net *model.Network, from, to model.Coords, 
 			break
 		}
 	}
+	if p.logger != nil && len(alts) > 0 {
+		p.logger.Debug("pareto alternatives", "best_arrival", best.Arrival, "alternatives", len(alts), "first_arrival", alts[0].Arrival, "first_transfers", alts[0].Transfers)
+	}
 	return alts
 }
 
@@ -621,7 +649,7 @@ type step struct {
 
 func (p *Planner) csa(net *model.Network, fromStop, toStop string, depart time.Time, params model.SearchParams) ([]model.Leg, error) {
 	if p.logger != nil {
-		p.logger.Debug("csa start", "from", fromStop, "to", toStop, "depart", depart, "connections", len(net.Connections))
+		p.logger.Debug("csa start", "from", fromStop, "to", toStop, "depart", depart, "connections", len(net.Connections), "transfers", len(net.Transfers))
 	}
 	maxTransfers := params.MaxTransfers
 	if maxTransfers < 0 {
@@ -711,6 +739,9 @@ func (p *Planner) csa(net *model.Network, fromStop, toStop string, depart time.T
 	steps := p.reconstruct(pred, fromStop, toStop)
 	legs := buildLegs(net, arr, steps)
 
+	if p.logger != nil {
+		p.logger.Debug("csa result", "from", fromStop, "to", toStop, "reached", len(arr), "steps", len(steps), "legs", len(legs), "maxTransfers", maxTransfers)
+	}
 	if maxTransfers > 0 && len(legs)-1 > maxTransfers {
 		return nil, fmt.Errorf("planner: маршрут требует %d пересадок, больше лимита %d", len(legs)-1, maxTransfers)
 	}
@@ -777,7 +808,13 @@ func (p *Planner) planArrival(net *model.Network, fromStop, toStop string, arriv
 		break
 	}
 	if len(bestLegs) == 0 {
+		if p.logger != nil {
+			p.logger.Debug("planArrival: no route found", "fromStop", fromStop, "toStop", toStop, "arrival", arrival, "candidates", len(candidates))
+		}
 		return nil, time.Time{}, fmt.Errorf("planner: маршрут между %s и %s не найден (нет рейсов до %s)", fromStop, toStop, arrival.Format(time.RFC3339))
+	}
+	if p.logger != nil {
+		p.logger.Debug("planArrival: found", "fromStop", fromStop, "toStop", toStop, "departure", bestDep, "arrival", bestLegs[len(bestLegs)-1].Arrival, "legs", len(bestLegs), "earliest_dep", bestLegs[0].Departure)
 	}
 	return bestLegs, bestDep, nil
 }

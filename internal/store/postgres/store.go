@@ -513,6 +513,7 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 	if p.pool == nil {
 		return nil, errNotImplemented
 	}
+	loadStart := time.Now()
 	allow := map[string]bool{}
 	for _, pr := range providers {
 		allow[pr] = true
@@ -521,6 +522,7 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 	if !day.IsZero() {
 		dayBase = time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC)
 	}
+	slog.Debug("LoadNetwork start", "providers", providers, "day", dayBase.Format("2006-01-02"), "pool", p.pool != nil)
 	net := model.NewNetwork()
 	stopIDMap := map[int64]string{}
 	// canonical stops: stops_canonical + stop_names + terminals geom
@@ -738,6 +740,7 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 		}
 		return net.Connections[i].Departure.Before(net.Connections[j].Departure)
 	})
+	slog.Debug("LoadNetwork done", "stops", len(net.Stops), "trips", len(net.Trips), "connections", len(net.Connections), "transfers", len(net.Transfers), "elapsed_ms", time.Since(loadStart).Milliseconds(), "day", dayBase.Format("2006-01-02"))
 	return net, nil
 }
 

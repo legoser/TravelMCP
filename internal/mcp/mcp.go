@@ -286,12 +286,21 @@ func (a *App) resolvePointWithPlace(args map[string]any, kind string) (model.Coo
 		return model.Coords{}, nil, fmt.Errorf("%s: укажите либо %s_place, либо %s_lat/%s_lon", kind, kind, kind, kind)
 	}
 	if hasPlace {
+		if a.logger != nil {
+			a.logger.Debug("resolvePoint: georesolve", "kind", kind, "place", place, "gazetteer", a.gazetteer != nil)
+		}
 		if a.gazetteer == nil {
 			return model.Coords{}, nil, fmt.Errorf("%s: газетир недоступен", kind)
 		}
 		c, ok := a.gazetteer.Resolve(place)
 		if !ok {
+			if a.logger != nil {
+				a.logger.Debug("resolvePoint: georesolve failed", "kind", kind, "place", place)
+			}
 			return model.Coords{}, nil, fmt.Errorf("%s: населённый пункт %q не найден", kind, place)
+		}
+		if a.logger != nil {
+			a.logger.Debug("resolvePoint: georesolve ok", "kind", kind, "place", place, "coords", c)
 		}
 		return c, &place, nil
 	}
@@ -331,16 +340,22 @@ func (a *App) networkForDay(day time.Time) (*model.Network, error) {
 		for _, p := range a.registry.List() {
 			ids = append(ids, p.ID())
 		}
+		storeStart := time.Now()
 		if n, err := a.store.LoadNetwork(context.Background(), ids, day); err == nil && len(n.Stops) > 0 {
 			if a.logger != nil {
-				a.logger.Info("network from store", "stops", len(n.Stops), "trips", len(n.Trips), "day", dayKey)
+				a.logger.Info("network from store", "stops", len(n.Stops), "trips", len(n.Trips), "connections", len(n.Connections), "transfers", len(n.Transfers), "day", dayKey, "elapsed_ms", time.Since(storeStart).Milliseconds())
+				a.logger.Debug("promote: LoadNetwork done", "stops", len(n.Stops), "routes", len(n.Routes), "trips", len(n.Trips), "connections", len(n.Connections), "elapsed_ms", time.Since(storeStart).Milliseconds())
 			}
 			a.netMu.Lock()
 			a.netDay, a.net, a.netErr = dayKey, n, nil
 			a.netMu.Unlock()
 			return n, nil
-		} else if a.logger != nil && err != nil {
-			a.logger.Warn("store LoadNetwork failed, fallback to registry", "error", err)
+		} else if a.logger != nil {
+			if err != nil {
+				a.logger.Warn("store LoadNetwork failed, fallback to registry", "error", err, "elapsed_ms", time.Since(storeStart).Milliseconds())
+			} else {
+				a.logger.Warn("store LoadNetwork empty, fallback to registry", "stops", 0, "elapsed_ms", time.Since(storeStart).Milliseconds())
+			}
 		}
 	}
 	net := model.NewNetwork()
@@ -525,6 +540,9 @@ func (a *App) networkForDay(day time.Time) (*model.Network, error) {
 	}
 	sort.Slice(net.Connections, func(i, j int) bool { return net.Connections[i].Departure.Before(net.Connections[j].Departure) })
 	net.BuildIndexes()
+	if a.logger != nil {
+		a.logger.Debug("promote: network merged from registry", "providers", len(a.registry.List()), "stops", len(net.Stops), "routes", len(net.Routes), "trips", len(net.Trips), "connections", len(net.Connections), "transfers", len(net.Transfers))
+	}
 	return net, nil
 }
 

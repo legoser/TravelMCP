@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
@@ -1111,6 +1112,7 @@ func (m *MemoryStore) ImportAdaptedRecords(ctx context.Context, records []model.
 func (m *MemoryStore) LoadNetwork(ctx context.Context, providers []string, day time.Time) (*model.Network, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	loadStart := time.Now()
 	dayBase := time.Now().UTC().Truncate(24 * time.Hour)
 	if !day.IsZero() {
 		dayBase = time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC)
@@ -1289,6 +1291,7 @@ func (m *MemoryStore) LoadNetwork(ctx context.Context, providers []string, day t
 		}
 		return net.Connections[i].Departure.Before(net.Connections[j].Departure)
 	})
+	slog.Debug("LoadNetwork done", "stops", len(net.Stops), "trips", len(net.Trips), "connections", len(net.Connections), "transfers", len(net.Transfers), "elapsed_ms", time.Since(loadStart).Milliseconds())
 	return net, nil
 }
 

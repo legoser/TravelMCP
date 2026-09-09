@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/uuid"
 	mcpserver "github.com/mark3labs/mcp-go/server"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/crypto/bcrypt"
 
@@ -123,6 +124,10 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 		if logger == nil {
 			s.logger = lf.For("http")
 		}
+		if cfg.Log.Loki.URL != "" {
+			plannerLogger = telemetry.NewLokiHandler(cfg.Log.Loki, plannerLogger)
+			mcpLogger = telemetry.NewLokiHandler(cfg.Log.Loki, mcpLogger)
+		}
 	}
 	app := mcp.NewWithStore(planner.NewWithConfig(metrics, cfg.Planner.Engine, plannerLogger, cfg.Planner.SemaphoreSize, cfg.Planner.SemaphoreEnable), registry, st, mcpLogger)
 	mcpHandler := mcpserver.NewStreamableHTTPServer(app.Server(), mcpserver.WithStateLess(true))
@@ -131,6 +136,10 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 	mux.Handle("GET /healthz", http.HandlerFunc(s.handleHealthz))
 	mux.Handle("GET /readyz", http.HandlerFunc(s.handleReadyz))
 	mux.Handle("GET /metrics", promhttp.Handler())
+	if cfg != nil && cfg.Telemetry.OTLPMetricsURL != "" {
+		otlpHandler := telemetry.NewOTLPMetricsHandler(prometheus.DefaultGatherer.(*prometheus.Registry))
+		mux.Handle("/api/v1/metrics/otlp", s.auth(otlpHandler, "mcp:read"))
+	}
 	mux.Handle("POST /api/v1/register", http.HandlerFunc(s.handleRegister))
 	mux.Handle("POST /api/v1/login", http.HandlerFunc(s.handleLogin))
 	mux.Handle("GET /api/v1/providers", s.auth(http.HandlerFunc(s.handleProviders), "mcp:read"))
@@ -176,6 +185,7 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 
 	rl := middleware.NewRateLimiter(cfg.HTTP)
 	handler := rl.Middleware(mux)
+	handler = tracingMiddleware(handler)
 	handler = s.loggingMiddleware(handler)
 	handler = requestIDMiddleware(handler)
 	handler = metricsMiddleware(handler)
@@ -1740,6 +1750,23 @@ func (s *Server) mcpJSONValidation(next http.Handler) http.Handler {
 			}
 		}
 		next.ServeHTTP(w, r)
+	})
+}
+
+func tracingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		traceID := r.Header.Get("X-Trace-ID")
+		spanID := r.Header.Get("X-Span-ID")
+		if traceID == "" {
+			traceID = uuid.NewString()[:16]
+		}
+		if spanID == "" {
+			spanID = uuid.NewString()[:8]
+		}
+		w.Header().Set("X-Trace-ID", traceID)
+		w.Header().Set("X-Span-ID", spanID)
+		ctx := telemetry.ContextWithTrace(r.Context(), traceID, spanID)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

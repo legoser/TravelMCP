@@ -14,6 +14,29 @@ GET /metrics  # Prometheus exposition
 - `travelmcp_http_requests_total{code="200",path="/mcp"} counter`
 - `travelmcp_external_requests_total{host="geocode-maps.yandex.ru",status="200"} counter`
 
+### OTLP metrics → Prometheus (`/api/v1/metrics/otlp`)
+
+Опциональный endpoint, сервирующий Prometheus-метрики в JSON-формате, совместимом с OTLP HTTP (resourceMetrics → scopeMetrics → metrics). Сервис **сам слушает** на порту `http.addr` (по умолчанию `:8080`). Параметр `telemetry.otlp_metrics_url` в конфиге — **пометка для внешних систем** (Prometheus/OTel коллектор), которые забирают метрики по этому пути.
+
+```yaml
+telemetry:
+  otlp_metrics_url: "" # пусто = выключано; prod: "http://mcp-server:8080/api/v1/metrics/otlp"
+```
+
+```
+POST /api/v1/metrics/otlp  # auth: mcp:read, хост: http://mcp-server:8080
+```
+
+Пример ответа:
+```json
+{
+  "resourceMetrics": [{
+    "resource": {"attributes": [{"key":"service.name","value":"travelmcp"}]},
+    "scopeMetrics": [{"metrics": [{"name":"travelmcp_planner_duration_seconds","type":"histogram","count":5,"sum":0.042}]}]
+  }]
+}
+```
+
 Пример `prometheus.yml`:
 ```yaml
 scrape_configs:
@@ -41,6 +64,41 @@ services:
 ## Request-ID и логи
 
 Middleware `requestIDMiddleware` — `X-Request-ID` генерируется (`uuid`) если не передан, прокидывается в `ctx` и `X-Request-ID` ответа. `httpx` логирует `module`/`method`/`host`/`status`/`elapsed_ms` на `Info`, тело `8192` байт на `Debug`.
+
+### trace_id / span_id корреляция
+
+Middleware `tracingMiddleware` (включено по умолчанию) генерирует `X-Trace-ID` и `X-Span-ID` per-request (UUID, сокращенные для компактности), кладёт их в `context.Context` и выставляет в HTTP-заголовках ответа. slog-хэндлеры, созданные через `NewLokiHandler`, автоматически добавляют `trace_id`/`span_id` к каждому записанному сообщению, если они есть в контексте.
+
+### Loki push (debug pipeline logs)
+
+Опциональный Loki-push хэндлер `internal/telemetry/loki.go:31` батчит slog-записи и пушит их в Loki по HTTP `/loki/api/v1/push` в JSON-формате (stream `service=travelmcp,level=debug`). Включение через конфиг:
+
+```yaml
+log:
+  loki:
+    url: "http://loki:3100" # LOG_LOKI_URL env
+    enabled: true          # LOG_LOKI_ENABLED=true
+    batch_size: 100
+    batch_wait: "1s"
+```
+
+Хэндлер оборачивает существующий slog-логгер (`lokiSlogHandler`), так что сообщения продолжают идти в stdout (JSON/text), а копия с `trace_id`/`span_id` уходит в Loki.
+
+## Debug logging pipeline stages
+
+На `log.level: "debug"` включены структурированные debug-записи на ключевых этапах пайплайна:
+
+| Этап | Где | Что логируется |
+|------|-----|-----------------|
+| `matchStops` | `internal/mcp/mcp.go:resolvePointWithPlace` | `georesolve` (place → coords), `spatial nearest` (координаты → стопы), `promote` финал |
+| `matchStops` | `internal/planner/planner.go:planWithStops` | `georesolve place`, `spatial nearest`, `nearest stops`, `promote` финал (from_stop/to_stop, access_min, egress_min) |
+| `promote` | `internal/mcp/mcp.go:resolvePointWithPlace` | georesolve успех/провал |
+| `promote` | `internal/mcp/mcp.go:networkForDay` | `LoadNetwork done` (stops, trips, connections, transfers, elapsed_ms) |
+| `promote` | `internal/mcp/mcp.go:handleFindRoute` | `network ready`, `find_route search` |
+| `LoadNetwork` | `internal/store/postgres/store.go`, `internal/store/memory/store.go` | `LoadNetwork start`/`done` (stops, trips, connections, transfers, elapsed_ms) |
+| `csa` | `internal/planner/planner.go:csa` | `csa start` (from, to, connections), `csa result` (reached, steps, legs) |
+| `planArrival` | `internal/planner/planner.go:planArrival` | `planArrival: found`/`no route` (departure, arrival, legs) |
+| `paretoAlternatives` | `internal/planner/planner.go:paretoAlternatives` | `pareto alternatives` (best_arrival, alternatives count) |
 
 ### Форматеры `internal/logger/factory.go:35`
 
@@ -85,7 +143,7 @@ planner:
 
 Логи — `slog JSON` (`log.format=json`) с `request_id` полем. Для ELK: shipper `Filebeat` → `Logstash` фильтрует `request_id`, `module`.
 
-OTel трейсинг — заглушка (интерфейс готов в `telemetry`), подключение через `OTEL_EXPORTER_OTLP_ENDPOINT`.
+OTel трейсинг — заглушка (интерфейс готов в `telemetry`), подключение через `OTEL_EXPORTER_OTLP_ENDPOINT`. Сейчас реализована корреляция `trace_id`/`span_id` через middleware + Loki push (см. выше).
 
 ## Cache / Queue (переключение)
 

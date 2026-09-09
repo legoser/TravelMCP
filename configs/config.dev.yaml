@@ -63,9 +63,15 @@ log:
     # http: "info"
     # providers.intercity: "debug"
     # httpx: "debug"
+  # Loki push: LOG_LOKI_URL=http://localhost:3100 (отключено если пусто)
+  loki:
+    url: "${LOG_LOKI_URL:-}"
+    enabled: false # вкл: LOG_LOKI_ENABLED=true
+    batch_size: 100
+    batch_wait: "1s"
 
 telemetry:
-  prometheus_addr: ":9090"
+  otlp_metrics_url: "${OTLP_METRICS_URL:-http://localhost:4318/v1/metrics}" # включить OTLP HTTP endpoint на /api/v1/metrics/otlp
 
 geocoder:
   # Приоритет по умолчанию: nominatim (OSM, бесплатно) -> yandex (требует ключ).

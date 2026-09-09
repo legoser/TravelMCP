@@ -173,10 +173,19 @@ type Log struct {
 	Format    string            `yaml:"format"`
 	AddSource bool              `yaml:"add_source"`
 	Levels    map[string]string `yaml:"levels"`
+	Loki      LokiLog           `yaml:"loki"`
+}
+
+type LokiLog struct {
+	URL       string `yaml:"url"`
+	Enabled   *bool  `yaml:"enabled"`
+	BatchSize int    `yaml:"batch_size"`
+	BatchWait string `yaml:"batch_wait"`
 }
 
 type Telemetry struct {
 	PrometheusAddr string `yaml:"prometheus_addr"`
+	OTLPMetricsURL string `yaml:"otlp_metrics_url"`
 }
 
 type Pricing struct {
@@ -252,7 +261,7 @@ func Defaults() *Config {
 		},
 		Motis:   Motis{URL: "http://192.168.57.14:8077"},
 		Planner: Planner{Engine: "csa", SemaphoreSize: runtime.NumCPU() * 2, SemaphoreEnable: true},
-		Log:     Log{Level: "info", Format: "json", Levels: map[string]string{}},
+		Log:     Log{Level: "info", Format: "json", Levels: map[string]string{}, Loki: LokiLog{BatchSize: 100, BatchWait: "1s"}},
 		Verification: Verification{
 			ConfidenceThreshold: 0.6,
 			DistanceM:           200,
@@ -517,6 +526,20 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("LOG_ADD_SOURCE"); v != "" {
 		cfg.Log.AddSource = v == "1" || v == "true"
 	}
+	if v := os.Getenv("LOG_LOKI_URL"); v != "" {
+		cfg.Log.Loki.URL = v
+	}
+	if v := os.Getenv("LOG_LOKI_ENABLED"); v != "" {
+		cfg.Log.Loki.Enabled = boolPtr(v == "1" || v == "true")
+	}
+	if v := os.Getenv("LOG_LOKI_BATCH_SIZE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.Log.Loki.BatchSize = n
+		}
+	}
+	if v := os.Getenv("LOG_LOKI_BATCH_WAIT"); v != "" {
+		cfg.Log.Loki.BatchWait = v
+	}
 	if v := os.Getenv("MOTIS_URL"); v != "" {
 		cfg.Motis.URL = v
 	}
@@ -705,6 +728,13 @@ func setByPath(cfg *Config, parts []string, v string) {
 				cfg.Log.Levels = map[string]string{}
 			}
 			cfg.Log.Levels[parts[2]] = v
+		}
+		if len(parts) == 3 && parts[1] == "loki" && parts[2] == "url" {
+			cfg.Log.Loki.URL = v
+		}
+		if len(parts) == 3 && parts[1] == "loki" && parts[2] == "enabled" {
+			b := v == "1" || v == "true"
+			cfg.Log.Loki.Enabled = &b
 		}
 	case "providers":
 		if len(parts) == 2 && parts[1] == "enabled" {
