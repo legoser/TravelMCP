@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -35,7 +36,7 @@ func TestMergeIsolatesProviderConflict(t *testing.T) {
 	reg.Register(&mockProv{id: "p1", net: n1})
 	reg.Register(&mockProv{id: "p2", net: n2})
 	app := New(planner.New(telemetry.New()), reg)
-	net, err := app.networkForDay(time.Now())
+	net, err := app.networkForDay(context.Background(), time.Now())
 	if err != nil {
 		t.Fatalf("networkForDay failed: %v", err)
 	}
@@ -64,7 +65,7 @@ func TestMergeIsolatesProviderConflict(t *testing.T) {
 	reg2 := providers.NewRegistry(nil)
 	reg2.Register(&mockProv{id: "p3", net: n3})
 	app2 := New(planner.New(telemetry.New()), reg2)
-	net2, _ := app2.networkForDay(time.Now())
+	net2, _ := app2.networkForDay(context.Background(), time.Now())
 	if _, ok := net2.Stops["bad"]; ok {
 		t.Fatalf("bad should be excluded")
 	}

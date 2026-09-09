@@ -49,6 +49,7 @@ planner:
   engine: "csa" # csa|raptor (RAPTOR frequency-based для межгорода)
   semaphore_enable: true
   semaphore_size: 0 # 0 = NumCPU*2, иначе явный размер
+  max_walk_minutes: 30 # дефолт пешей доступности, если запрос не задал; междугородние автовокзалы часто за окраиной — можно поднять (env PLANNER_MAX_WALK_MINUTES)
 
 log:
   level: "info" # debug|info|warn|error — переключение без пересборки (LOG_LEVEL env)

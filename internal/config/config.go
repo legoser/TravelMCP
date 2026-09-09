@@ -144,6 +144,7 @@ type Planner struct {
 	Engine          string `yaml:"engine"`
 	SemaphoreSize   int    `yaml:"semaphore_size"`
 	SemaphoreEnable bool   `yaml:"semaphore_enable"`
+	MaxWalkMinutes  int    `yaml:"max_walk_minutes"`
 }
 
 type Deduplication struct {
@@ -260,7 +261,7 @@ func Defaults() *Config {
 			MirrorURL: "https://overpass.openstreetmap.fr/api/interpreter",
 		},
 		Motis:   Motis{URL: "http://192.168.57.14:8077"},
-		Planner: Planner{Engine: "csa", SemaphoreSize: runtime.NumCPU() * 2, SemaphoreEnable: true},
+		Planner: Planner{Engine: "csa", SemaphoreSize: runtime.NumCPU() * 2, SemaphoreEnable: true, MaxWalkMinutes: 30},
 		Log:     Log{Level: "info", Format: "json", Levels: map[string]string{}, Loki: LokiLog{BatchSize: 100, BatchWait: "1s"}},
 		Verification: Verification{
 			ConfidenceThreshold: 0.6,
@@ -538,6 +539,11 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("PLANNER_SEMAPHORE_ENABLE"); v != "" {
 		cfg.Planner.SemaphoreEnable = v == "1" || v == "true"
 	}
+	if v := os.Getenv("PLANNER_MAX_WALK_MINUTES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 180 {
+			cfg.Planner.MaxWalkMinutes = n
+		}
+	}
 	if v := os.Getenv("HTTP_RATE_LIMIT_RPS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.HTTP.RateLimit.RPS = n
@@ -782,6 +788,11 @@ func setByPath(cfg *Config, parts []string, v string) {
 		}
 		if len(parts) == 2 && parts[1] == "semaphore_enable" {
 			cfg.Planner.SemaphoreEnable = v == "1" || v == "true"
+		}
+		if len(parts) == 2 && parts[1] == "max_walk_minutes" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 180 {
+				cfg.Planner.MaxWalkMinutes = n
+			}
 		}
 	case "auth":
 		if len(parts) == 2 && parts[1] == "admin_token" {

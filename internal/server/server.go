@@ -125,7 +125,7 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 			s.logger = lf.For("http")
 		}
 	}
-	app := mcp.NewWithStore(planner.NewWithConfig(metrics, cfg.Planner.Engine, plannerLogger, cfg.Planner.SemaphoreSize, cfg.Planner.SemaphoreEnable), registry, st, mcpLogger)
+	app := mcp.NewWithStore(planner.NewWithConfig(metrics, cfg.Planner.Engine, plannerLogger, cfg.Planner.SemaphoreSize, cfg.Planner.SemaphoreEnable).WithDefaultMaxWalk(cfg.Planner.MaxWalkMinutes), registry, st, mcpLogger)
 	mcpHandler := mcpserver.NewStreamableHTTPServer(app.Server(), mcpserver.WithStateLess(true))
 
 	mux := http.NewServeMux()
@@ -200,9 +200,9 @@ const ctxUserKey ctxKey = "user"
 
 func (s *Server) auth(next http.Handler, requiredScope string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		s.logger.Debug("auth check", "path", r.URL.Path, "required", requiredScope, "remote", r.RemoteAddr)
+		s.logger.DebugContext(r.Context(), "auth check", "path", r.URL.Path, "required", requiredScope, "remote", r.RemoteAddr)
 		if s.cfg.Auth.AdminToken == "" {
-			s.logger.Warn("auth open-mode: ADMIN_TOKEN empty", "path", r.URL.Path)
+			s.logger.WarnContext(r.Context(), "auth open-mode: ADMIN_TOKEN empty", "path", r.URL.Path)
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -213,41 +213,41 @@ func (s *Server) auth(next http.Handler, requiredScope string) http.Handler {
 			key = h
 		}
 		if s.cfg.Auth.AdminToken != "" && subtle.ConstantTimeCompare([]byte(key), []byte(s.cfg.Auth.AdminToken)) == 1 {
-			s.logger.Info("auth admin token", "path", r.URL.Path, "remote", r.RemoteAddr)
+			s.logger.InfoContext(r.Context(), "auth admin token", "path", r.URL.Path, "remote", r.RemoteAddr)
 			ctx := context.WithValue(r.Context(), ctxUserKey, &store.UserRow{ID: 0, Email: "admin", Role: "admin", Status: "active"})
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 		if key == "" {
-			s.logger.Warn("auth missing key", "path", r.URL.Path, "remote", r.RemoteAddr)
+			s.logger.WarnContext(r.Context(), "auth missing key", "path", r.URL.Path, "remote", r.RemoteAddr)
 			w.Header().Set("WWW-Authenticate", `Bearer realm="travelmcp"`)
 			writeJSONResponse(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized", "message": "API key required: Authorization: Bearer <key> or X-API-Key"})
 			return
 		}
 		if s.store == nil {
-			s.logger.Warn("auth store disabled", "path", r.URL.Path)
+			s.logger.WarnContext(r.Context(), "auth store disabled", "path", r.URL.Path)
 			w.Header().Set("WWW-Authenticate", `Bearer realm="travelmcp"`)
 			writeJSONResponse(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized", "message": "invalid API key"})
 			return
 		}
 		ak, ok := s.store.GetApiKey(r.Context(), key)
 		if !ok {
-			s.logger.Warn("auth invalid key", "path", r.URL.Path, "key_prefix", keyPrefix(key))
+			s.logger.WarnContext(r.Context(), "auth invalid key", "path", r.URL.Path, "key_prefix", keyPrefix(key))
 			writeJSONResponse(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized", "message": "invalid API key"})
 			return
 		}
 		user, ok := s.store.GetUserByID(r.Context(), ak.UserID)
 		if !ok || user.Status != "active" {
-			s.logger.Warn("auth inactive user", "path", r.URL.Path, "user_id", ak.UserID, "status", user.Status)
+			s.logger.WarnContext(r.Context(), "auth inactive user", "path", r.URL.Path, "user_id", ak.UserID, "status", user.Status)
 			writeJSONResponse(w, http.StatusForbidden, map[string]any{"error": "forbidden", "message": "user not active or pending moderation"})
 			return
 		}
 		if requiredScope != "" && !hasScope(ak.Scopes, requiredScope) && user.Role != "admin" {
-			s.logger.Warn("auth insufficient scope", "path", r.URL.Path, "user", user.Email, "scopes", ak.Scopes, "required", requiredScope)
+			s.logger.WarnContext(r.Context(), "auth insufficient scope", "path", r.URL.Path, "user", user.Email, "scopes", ak.Scopes, "required", requiredScope)
 			writeJSONResponse(w, http.StatusForbidden, map[string]any{"error": "forbidden", "message": "insufficient scope"})
 			return
 		}
-		s.logger.Debug("auth ok", "path", r.URL.Path, "user", user.Email, "role", user.Role, "scopes", ak.Scopes)
+		s.logger.DebugContext(r.Context(), "auth ok", "path", r.URL.Path, "user", user.Email, "role", user.Role, "scopes", ak.Scopes)
 		_ = s.store.TouchApiKey(r.Context(), key)
 		ctx := context.WithValue(r.Context(), ctxUserKey, &user)
 		next.ServeHTTP(w, r.WithContext(ctx))
@@ -350,7 +350,7 @@ func (s *Server) handleGTFS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if net == nil {
-		app := mcp.NewWithStore(planner.NewWithConfig(s.metrics, s.cfg.Planner.Engine, s.logger, s.cfg.Planner.SemaphoreSize, s.cfg.Planner.SemaphoreEnable), s.registry, s.store, s.logger)
+		app := mcp.NewWithStore(planner.NewWithConfig(s.metrics, s.cfg.Planner.Engine, s.logger, s.cfg.Planner.SemaphoreSize, s.cfg.Planner.SemaphoreEnable).WithDefaultMaxWalk(s.cfg.Planner.MaxWalkMinutes), s.registry, s.store, s.logger)
 		_ = app
 		muxNet := model.NewNetwork()
 		for _, p := range s.registry.List() {
@@ -1896,18 +1896,18 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 		}
 		switch {
 		case rec.status >= 500:
-			s.logger.Error("request", attrs...)
+			s.logger.ErrorContext(r.Context(), "request", attrs...)
 		case rec.status >= 400:
-			s.logger.Warn("request", attrs...)
+			s.logger.WarnContext(r.Context(), "request", attrs...)
 		default:
 			if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || r.URL.Path == "/metrics" {
-				s.logger.Debug("request", attrs...)
+				s.logger.DebugContext(r.Context(), "request", attrs...)
 			} else {
-				s.logger.Info("request", attrs...)
+				s.logger.InfoContext(r.Context(), "request", attrs...)
 			}
 		}
 		if s.logger.Enabled(r.Context(), slog.LevelDebug) && rec.status >= 400 {
-			s.logger.Debug("request debug", "method", r.Method, "path", r.URL.Path, "query", r.URL.RawQuery, "headers", fmt.Sprint(r.Header))
+			s.logger.DebugContext(r.Context(), "request debug", "method", r.Method, "path", r.URL.Path, "query", r.URL.RawQuery, "headers", fmt.Sprint(r.Header))
 		}
 	})
 }

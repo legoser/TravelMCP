@@ -7,6 +7,7 @@ import (
 	"math"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,10 +18,11 @@ import (
 )
 
 type Planner struct {
-	metrics *telemetry.Metrics
-	engine  string
-	logger  *slog.Logger
-	sem     chan struct{}
+	metrics        *telemetry.Metrics
+	engine         string
+	logger         *slog.Logger
+	sem            chan struct{}
+	defaultMaxWalk int
 }
 
 func New(metrics *telemetry.Metrics) *Planner {
@@ -33,6 +35,16 @@ func NewWithEngine(metrics *telemetry.Metrics, engine string) *Planner {
 
 func NewWithLogger(metrics *telemetry.Metrics, engine string, logger *slog.Logger) *Planner {
 	return NewWithConfig(metrics, engine, logger, 0, true)
+}
+
+// WithDefaultMaxWalk — конфигурируемый дефолт пешей доступности (мин),
+// применяется когда запрос не задал max_walk_minutes. Междугородние
+// автовокзалы часто за окраиной: 30 мин (2.5 км) режет легитимные стыковки.
+func (p *Planner) WithDefaultMaxWalk(minutes int) *Planner {
+	if minutes > 0 {
+		p.defaultMaxWalk = minutes
+	}
+	return p
 }
 
 func NewWithConfig(metrics *telemetry.Metrics, engine string, logger *slog.Logger, semSize int, semEnable bool) *Planner {
@@ -165,7 +177,10 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 	}
 	maxWalk := params.MaxWalkMinutes
 	if maxWalk <= 0 {
-		maxWalk = 30
+		maxWalk = p.defaultMaxWalk
+		if maxWalk <= 0 {
+			maxWalk = 30
+		}
 	}
 	if p.logger != nil {
 		p.logger.Debug("plan start", "from", from, "to", to, "departure", params.Departure, "arrival", params.Arrival, "engine", p.engine, "maxWalk", maxWalk, "allowGap", params.AllowGap)
@@ -195,7 +210,7 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 			fromStops = geo.NearestStops(net.Stops, from, maxWalk, 0)
 		}
 		if len(fromStops) == 0 {
-			return nil, fmt.Errorf("planner: нет остановок, достижимых пешком (лимит %d мин) от точки отправления", maxWalk)
+			return nil, fmt.Errorf("planner: нет остановок, достижимых пешком (лимит %d мин) от точки отправления%s", maxWalk, nearestStopHint(net.Stops, from, maxWalk))
 		}
 		if p.logger != nil {
 			p.logger.Debug("matchStops: nearest stops", "coord", from, "candidates", len(fromStops), "sample", fromStops[0].ID)
@@ -218,7 +233,7 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 			toStops = geo.NearestStops(net.Stops, to, maxWalk, 0)
 		}
 		if len(toStops) == 0 {
-			return nil, fmt.Errorf("planner: нет остановок, достижимых пешком (лимит %d мин) от точки назначения", maxWalk)
+			return nil, fmt.Errorf("planner: нет остановок, достижимых пешком (лимит %d мин) от точки назначения%s", maxWalk, nearestStopHint(net.Stops, to, maxWalk))
 		}
 		if best := chooseBestToStop(toStops); best != nil {
 			toStop = best
@@ -575,9 +590,58 @@ func findStopByPlace(stops map[string]*model.Stop, placeName string, coords mode
 		}
 	}
 	if logger != nil {
-		logger.Debug("matchStops: place not resolved (no stop in walk radius)", "place", placeName)
+		// Диагностика провала: ближайший стоп с матчингом имени по всей сети
+		// (без радиуса) — отличает «стопов с этим именем нет вообще» от
+		// «есть в N км» (типовой кейс межгорода: автовокзал за walk-radius).
+		var nearest *model.Stop
+		nearestD := math.Inf(1)
+		nearestHow := ""
+		for _, s := range stops {
+			how := ""
+			if tokenMatch(s.Name) {
+				how = "token"
+			} else if strings.Contains(strings.ToLower(s.Name), lowerPlace) {
+				how = "substring"
+			}
+			if how == "" {
+				continue
+			}
+			if d := geo.Haversine(coords, s.Coordinates()); d < nearestD {
+				nearestD, nearest, nearestHow = d, s, how
+			}
+		}
+		if nearest != nil {
+			logger.Debug("matchStops: place not resolved (name-matched stop outside walk radius)",
+				"place", placeName, "nearest_stop", nearest.ID, "nearest_name", nearest.Name,
+				"dist_km", math.Round(nearestD*10)/10, "match", nearestHow,
+				"walk_radius_km", math.Round(walkRadius*10)/10,
+				"hint", "передайте max_walk_minutes ≥ dist/5*60 или уточните точку координатами")
+		} else {
+			logger.Debug("matchStops: place not resolved (no name-matched stop in network at all)", "place", placeName)
+		}
 	}
 	return nil, false
+}
+
+// nearestStopHint — подсказка к ошибке «нет остановок в радиусе»: ближайший
+// стоп сети вообще и расстояние до него. Отличает «данных нет» от
+// «остановка есть, но дальше лимита — увеличьте max_walk_minutes».
+func nearestStopHint(stops map[string]*model.Stop, from model.Coords, maxWalk int) string {
+	var nearest *model.Stop
+	nearestD := math.Inf(1)
+	for _, s := range stops {
+		if d := geo.Haversine(from, s.Coordinates()); d < nearestD {
+			nearestD, nearest = d, s
+		}
+	}
+	if nearest == nil {
+		return "; в сети нет ни одной остановки"
+	}
+	needMin := int(nearestD / 5.0 * 60.0)
+	if needMin <= maxWalk {
+		return ""
+	}
+	return fmt.Sprintf("; ближайшая остановка %q — %s км пешком (~%d мин), увеличьте max_walk_minutes", nearest.Name, strconv.FormatFloat(math.Round(nearestD*10)/10, 'f', -1, 64), needMin)
 }
 
 func pickBest(candidates []*model.Stop, origin map[string]bool, coords model.Coords, maxWalkMinutes int, stops map[string]*model.Stop) *model.Stop {

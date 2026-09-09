@@ -45,6 +45,16 @@ func NewWithStore(plan *planner.Planner, registry *providers.Registry, st store.
 	a := &App{plan: plan, registry: registry, store: st, logger: logger}
 	gz, err := geo.DefaultGazetteer()
 	if err == nil {
+		// Канон Postgres — основной источник поселений; статические 102 записи
+		// остаются базой, registry-провайдеры — fallback (реестр/synth).
+		if st != nil {
+			if src, ok := st.(geo.SettlementSource); ok {
+				added, skipped, err := gz.LoadSettlements(context.Background(), src)
+				if logger != nil {
+					logger.Info("gazetteer: loaded settlements from store", "added", added, "skipped_non_plausible", skipped, "error", err)
+				}
+			}
+		}
 		for _, p := range registry.List() {
 			if n, err := p.Network(); err == nil {
 				stops := make([]*model.Stop, 0, len(n.Stops))
@@ -77,7 +87,7 @@ func (a *App) Server() *server.MCPServer {
 		mcp.WithString("arrival", mcp.Description("Время прибытия в формате RFC3339 (альтернатива departure — быть в точке к этому времени)")),
 		mcp.WithBoolean("allow_gap", mcp.Description("Разрешить gap/self-leg для непокрытых фрагментов (дверь-в-дверь всегда)")),
 		mcp.WithString("preference", mcp.Description("Предпочтение: arrival (быстрее) или transfers (меньше пересадок), по умолчанию arrival")),
-		mcp.WithNumber("max_walk_minutes", mcp.Description("Максимальная пешая доступность до остановки, мин. По умолчанию 30")),
+		mcp.WithNumber("max_walk_minutes", mcp.Description("Максимальная пешая доступность до остановки, мин (по умолчанию — из конфига сервера, 30)")),
 		mcp.WithNumber("max_transfers", mcp.Description("Лимит пересадок; -1 — без ограничения. По умолчанию -1")),
 		mcp.WithString("transit_modes", mcp.Description("Режимы транспорта через запятую: BUS,COACH,RAIL,TRAM,FLIGHT. Пусто — все режимы")),
 	)
@@ -94,7 +104,7 @@ func (a *App) Server() *server.MCPServer {
 
 func (a *App) handleFindRoute(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if a.logger != nil {
-		a.logger.Debug("find_route request", "args", req.GetArguments())
+		a.logger.DebugContext(ctx, "find_route request", "args", req.GetArguments())
 	}
 	for _, k := range []string{"from_place", "to_place", "departure", "arrival", "preference"} {
 		if v, ok := req.GetArguments()[k]; ok {
@@ -103,17 +113,17 @@ func (a *App) handleFindRoute(ctx context.Context, req mcp.CallToolRequest) (*mc
 			}
 		}
 	}
-	from, fromPlace, err := a.resolvePointWithPlace(req.GetArguments(), "from")
+	from, fromPlace, err := a.resolvePointWithPlace(ctx, req.GetArguments(), "from")
 	if err != nil {
 		if a.logger != nil {
-			a.logger.Warn("find_route bad args", "error", err, "args", req.GetArguments())
+			a.logger.WarnContext(ctx, "find_route bad args", "error", err, "args", req.GetArguments())
 		}
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	to, toPlace, err := a.resolvePointWithPlace(req.GetArguments(), "to")
+	to, toPlace, err := a.resolvePointWithPlace(ctx, req.GetArguments(), "to")
 	if err != nil {
 		if a.logger != nil {
-			a.logger.Warn("find_route bad args", "error", err, "args", req.GetArguments())
+			a.logger.WarnContext(ctx, "find_route bad args", "error", err, "args", req.GetArguments())
 		}
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -224,16 +234,16 @@ func (a *App) handleFindRoute(ctx context.Context, req mcp.CallToolRequest) (*mc
 	if params.Arrival != nil {
 		day = *params.Arrival
 	}
-	net, err := a.networkForDay(day)
+	net, err := a.networkForDay(ctx, day)
 	if err != nil {
 		if a.logger != nil {
-			a.logger.Error("network build failed", "error", err)
+			a.logger.ErrorContext(ctx, "network build failed", "error", err)
 		}
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if a.logger != nil {
-		a.logger.Debug("network ready", "stops", len(net.Stops), "trips", len(net.Trips), "connections", len(net.Connections))
-		a.logger.Info("find_route search", "from", from, "to", to, "departure", params.Departure, "arrival", params.Arrival, "allowGap", params.AllowGap)
+		a.logger.DebugContext(ctx, "network ready", "stops", len(net.Stops), "trips", len(net.Trips), "connections", len(net.Connections))
+		a.logger.InfoContext(ctx, "find_route search", "from", from, "to", to, "departure", params.Departure, "arrival", params.Arrival, "allowGap", params.AllowGap)
 	}
 
 	var journey *model.Journey
@@ -251,24 +261,19 @@ func (a *App) handleFindRoute(ctx context.Context, req mcp.CallToolRequest) (*mc
 	}
 	if err != nil {
 		if a.logger != nil {
-			a.logger.Warn("find_route no route", "error", err, "from", from, "to", to)
+			a.logger.WarnContext(ctx, "find_route no route", "error", err, "from", from, "to", to)
 		}
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if a.logger != nil {
-		a.logger.Info("find_route success", "departure", journey.Departure, "arrival", journey.Arrival, "legs", len(journey.Legs), "transfers", journey.Transfers, "alternatives", len(journey.Alternatives))
-		a.logger.Debug("journey legs", "legs", journey.Legs)
+		a.logger.InfoContext(ctx, "find_route success", "departure", journey.Departure, "arrival", journey.Arrival, "legs", len(journey.Legs), "transfers", journey.Transfers, "alternatives", len(journey.Alternatives))
+		a.logger.DebugContext(ctx, "journey legs", "legs", journey.Legs)
 	}
 
 	return mcp.NewToolResultJSON(journey)
 }
 
-func (a *App) resolvePoint(args map[string]any, kind string) (model.Coords, error) {
-	coords, _, err := a.resolvePointWithPlace(args, kind)
-	return coords, err
-}
-
-func (a *App) resolvePointWithPlace(args map[string]any, kind string) (model.Coords, *string, error) {
+func (a *App) resolvePointWithPlace(ctx context.Context, args map[string]any, kind string) (model.Coords, *string, error) {
 	place, hasPlace := argString(args, kind+"_place")
 	hasPlace = hasPlace && strings.TrimSpace(place) != ""
 	hasLatRaw := args[kind+"_lat"] != nil
@@ -287,22 +292,22 @@ func (a *App) resolvePointWithPlace(args map[string]any, kind string) (model.Coo
 	}
 	if hasPlace {
 		if a.logger != nil {
-			a.logger.Debug("resolvePoint: georesolve", "kind", kind, "place", place, "gazetteer", a.gazetteer != nil)
+			a.logger.DebugContext(ctx, "resolvePoint: georesolve", "kind", kind, "place", place, "gazetteer_entries", a.gazetteer.Len())
 		}
 		if a.gazetteer == nil {
 			return model.Coords{}, nil, fmt.Errorf("%s: газетир недоступен", kind)
 		}
-		c, ok := a.gazetteer.Resolve(place)
-		if !ok {
+		rr := a.gazetteer.ResolveDetailed(place)
+		if !rr.Found {
 			if a.logger != nil {
-				a.logger.Debug("resolvePoint: georesolve failed", "kind", kind, "place", place)
+				a.logger.WarnContext(ctx, "resolvePoint: place not in gazetteer", "kind", kind, "place", place, "hint", "нет в каноне settlement-тегов и статических записях")
 			}
 			return model.Coords{}, nil, fmt.Errorf("%s: населённый пункт %q не найден", kind, place)
 		}
 		if a.logger != nil {
-			a.logger.Debug("resolvePoint: georesolve ok", "kind", kind, "place", place, "coords", c)
+			a.logger.DebugContext(ctx, "resolvePoint: georesolve ok", "kind", kind, "place", place, "coords", rr.Coords, "method", rr.Method, "matched", rr.Matched)
 		}
-		return c, &place, nil
+		return rr.Coords, &place, nil
 	}
 	if !hasLat || !hasLon {
 		return model.Coords{}, nil, fmt.Errorf("%s: укажите %s_place или координаты %s_lat/%s_lon", kind, kind, kind, kind)
@@ -319,12 +324,12 @@ func (a *App) handleListProviders(ctx context.Context, req mcp.CallToolRequest) 
 }
 
 func (a *App) network() (*model.Network, error) {
-	return a.networkForDay(time.Now())
+	return a.networkForDay(context.Background(), time.Now())
 }
 
-func (a *App) networkForDay(day time.Time) (*model.Network, error) {
+func (a *App) networkForDay(ctx context.Context, day time.Time) (*model.Network, error) {
 	if a.logger != nil {
-		a.logger.Debug("networkForDay", "day", day, "store", a.store != nil, "providers", len(a.registry.List()))
+		a.logger.DebugContext(ctx, "networkForDay", "day", day, "store", a.store != nil, "providers", len(a.registry.List()))
 	}
 	dayKey := day.UTC().Truncate(24 * time.Hour).Format("2006-01-02")
 	a.netMu.RLock()
@@ -341,10 +346,14 @@ func (a *App) networkForDay(day time.Time) (*model.Network, error) {
 			ids = append(ids, p.ID())
 		}
 		storeStart := time.Now()
-		if n, err := a.store.LoadNetwork(context.Background(), ids, day); err == nil && len(n.Stops) > 0 {
+		if n, err := a.store.LoadNetwork(ctx, ids, day); err == nil && len(n.Stops) > 0 {
 			if a.logger != nil {
-				a.logger.Info("network from store", "stops", len(n.Stops), "trips", len(n.Trips), "connections", len(n.Connections), "transfers", len(n.Transfers), "day", dayKey, "elapsed_ms", time.Since(storeStart).Milliseconds())
-				a.logger.Debug("promote: LoadNetwork done", "stops", len(n.Stops), "routes", len(n.Routes), "trips", len(n.Trips), "connections", len(n.Connections), "elapsed_ms", time.Since(storeStart).Milliseconds())
+				byProv := map[string]int{}
+				for _, t := range n.Trips {
+					byProv[t.ProviderID]++
+				}
+				a.logger.InfoContext(ctx, "network from store", "stops", len(n.Stops), "trips", len(n.Trips), "connections", len(n.Connections), "transfers", len(n.Transfers), "day", dayKey, "trips_by_provider", fmt.Sprint(byProv), "elapsed_ms", time.Since(storeStart).Milliseconds())
+				a.logger.DebugContext(ctx, "promote: LoadNetwork done", "stops", len(n.Stops), "routes", len(n.Routes), "trips", len(n.Trips), "connections", len(n.Connections), "elapsed_ms", time.Since(storeStart).Milliseconds())
 			}
 			a.netMu.Lock()
 			a.netDay, a.net, a.netErr = dayKey, n, nil
@@ -352,9 +361,9 @@ func (a *App) networkForDay(day time.Time) (*model.Network, error) {
 			return n, nil
 		} else if a.logger != nil {
 			if err != nil {
-				a.logger.Warn("store LoadNetwork failed, fallback to registry", "error", err, "elapsed_ms", time.Since(storeStart).Milliseconds())
+				a.logger.WarnContext(ctx, "store LoadNetwork failed, fallback to registry", "error", err, "elapsed_ms", time.Since(storeStart).Milliseconds())
 			} else {
-				a.logger.Warn("store LoadNetwork empty, fallback to registry", "stops", 0, "elapsed_ms", time.Since(storeStart).Milliseconds())
+				a.logger.WarnContext(ctx, "store LoadNetwork empty, fallback to registry", "stops", 0, "elapsed_ms", time.Since(storeStart).Milliseconds())
 			}
 		}
 	}
@@ -541,7 +550,7 @@ func (a *App) networkForDay(day time.Time) (*model.Network, error) {
 	sort.Slice(net.Connections, func(i, j int) bool { return net.Connections[i].Departure.Before(net.Connections[j].Departure) })
 	net.BuildIndexes()
 	if a.logger != nil {
-		a.logger.Debug("promote: network merged from registry", "providers", len(a.registry.List()), "stops", len(net.Stops), "routes", len(net.Routes), "trips", len(net.Trips), "connections", len(net.Connections), "transfers", len(net.Transfers))
+		a.logger.DebugContext(ctx, "promote: network merged from registry", "providers", len(a.registry.List()), "stops", len(net.Stops), "routes", len(net.Routes), "trips", len(net.Trips), "connections", len(net.Connections), "transfers", len(net.Transfers))
 	}
 	return net, nil
 }

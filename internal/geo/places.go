@@ -67,37 +67,17 @@ func (g *Gazetteer) AddStops(stops []*model.Stop) {
 
 func normQuery(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.ReplaceAll(s, "ё", "е")
 	return strings.Join(strings.Fields(s), " ")
 }
 
 func (g *Gazetteer) Resolve(query string) (model.Coords, bool) {
-	q := normQuery(query)
-	if q == "" {
-		return model.Coords{}, false
-	}
-
-	var short *Place
-	shortLen := 0
-	for i := range g.places {
-		p := &g.places[i]
-		for _, a := range append(p.Aliases, p.Name) {
-			n := normQuery(a)
-			if n == q || exactMatch(n, q) {
-				return model.Coords{Lat: p.Lat, Lon: p.Lon}, true
-			}
-			if strings.Contains(n, q) {
-				if short == nil || len(n) < shortLen {
-					short = p
-					shortLen = len(n)
-				}
-			}
-		}
-	}
-	if short != nil {
-		return model.Coords{Lat: short.Lat, Lon: short.Lon}, true
-	}
-	return model.Coords{}, false
+	r := g.ResolveDetailed(query)
+	return r.Coords, r.Found
 }
+
+// Len — размер справочника (диагностика наполнения в логах).
+func (g *Gazetteer) Len() int { return len(g.places) }
 
 // exactMatch checks if the stop name contains the query as a whole word/token,
 // not as a substring of a longer word. This prevents "омск" from matching "томск".
