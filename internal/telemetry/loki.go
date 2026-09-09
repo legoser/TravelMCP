@@ -20,7 +20,7 @@ type LokiHandler struct {
 	mu        sync.Mutex
 	url       string
 	client    *http.Client
-	batch     []lokiStreamEntry
+	batch     map[string][]lokiStreamEntry // level → entries
 	batchMax  int
 	batchWait time.Duration
 	errs      *slog.Logger
@@ -45,6 +45,28 @@ func (e lokiStreamEntry) MarshalJSON() ([]byte, error) {
 	return json.Marshal([2]any{strconv.FormatInt(e.Timestamp, 10), e.Line})
 }
 
+func levelToString(level slog.Level) string {
+	switch {
+	case level < slog.LevelInfo:
+		return "debug"
+	case level < slog.LevelWarn:
+		return "info"
+	case level < slog.LevelError:
+		return "warn"
+	default:
+		return "error"
+	}
+}
+
+func encodeLogLine(msg string, attrs []slog.Attr, level slog.Level) string {
+	line := map[string]any{"level": levelToString(level), "msg": msg}
+	for _, a := range attrs {
+		line[a.Key] = a.Value.Any()
+	}
+	b, _ := json.Marshal(line)
+	return string(b)
+}
+
 func NewLokiHandler(cfg config.LokiLog, base *slog.Logger) *slog.Logger {
 	if cfg.URL == "" || (cfg.Enabled != nil && !*cfg.Enabled) {
 		return base
@@ -52,6 +74,7 @@ func NewLokiHandler(cfg config.LokiLog, base *slog.Logger) *slog.Logger {
 	h := &LokiHandler{
 		url:       strings.TrimRight(cfg.URL, "/") + "/loki/api/v1/push",
 		client:    &http.Client{Timeout: 10 * time.Second},
+		batch:     map[string][]lokiStreamEntry{},
 		batchMax:  cfg.BatchSize,
 		batchWait: parseDur(cfg.BatchWait, 1*time.Second),
 		errs:      base.With("module", "loki"),
@@ -84,16 +107,27 @@ func (h *LokiHandler) flushLoop() {
 func (h *LokiHandler) flush() {
 	h.mu.Lock()
 	batch := h.batch
-	h.batch = nil
+	h.batch = map[string][]lokiStreamEntry{}
 	h.mu.Unlock()
 	if len(batch) == 0 {
 		return
 	}
-	stream := lokiStream{
-		Stream: map[string]string{"service": "travelmcp", "level": "debug"},
-		Values: batch,
+	var total int
+	streams := make([]lokiStream, 0, len(batch))
+	for lvl, entries := range batch {
+		if len(entries) == 0 {
+			continue
+		}
+		total += len(entries)
+		streams = append(streams, lokiStream{
+			Stream: map[string]string{"service": "travelmcp", "level": lvl},
+			Values: entries,
+		})
 	}
-	req := lokiPushRequest{Streams: []lokiStream{stream}}
+	if len(streams) == 0 {
+		return
+	}
+	req := lokiPushRequest{Streams: streams}
 	data, err := json.Marshal(req)
 	if err != nil {
 		h.reportError("loki marshal", err, 0)
@@ -107,13 +141,13 @@ func (h *LokiHandler) flush() {
 	httpReq.Header.Set("Content-Type", "application/json")
 	resp, err := h.client.Do(httpReq)
 	if err != nil {
-		h.reportError("loki push", err, len(batch))
+		h.reportError("loki push", err, total)
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		h.reportError(fmt.Sprintf("loki push status %d: %s", resp.StatusCode, strings.TrimSpace(string(body))), nil, len(batch))
+		h.reportError(fmt.Sprintf("loki push status %d: %s", resp.StatusCode, strings.TrimSpace(string(body))), nil, total)
 	}
 }
 
@@ -131,17 +165,18 @@ func (h *LokiHandler) reportError(msg string, err error, dropped int) {
 }
 
 func (h *LokiHandler) Write(level slog.Level, msg string, attrs []slog.Attr) {
-	parts := []string{msg}
-	for _, a := range attrs {
-		parts = append(parts, fmt.Sprintf("%s=%v", a.Key, a.Value.Any()))
-	}
+	lvl := levelToString(level)
 	entry := lokiStreamEntry{
 		Timestamp: time.Now().UnixNano(),
-		Line:      strings.Join(parts, " "),
+		Line:      encodeLogLine(msg, attrs, level),
 	}
 	h.mu.Lock()
-	h.batch = append(h.batch, entry)
-	flushNow := len(h.batch) >= h.batchMax
+	h.batch[lvl] = append(h.batch[lvl], entry)
+	var total int
+	for _, entries := range h.batch {
+		total += len(entries)
+	}
+	flushNow := total >= h.batchMax
 	h.mu.Unlock()
 	if flushNow {
 		h.flush()

@@ -15,6 +15,7 @@ import (
 
 	"travelmcp/internal/adapters/mintrans"
 	"travelmcp/internal/config"
+	"travelmcp/internal/logger"
 	"travelmcp/internal/store"
 	_ "travelmcp/internal/store/memory"
 	_ "travelmcp/internal/store/postgres"
@@ -36,14 +37,15 @@ func main() {
 	flag.BoolVar(&dryRun, "dry-run", false, "coverage + gate + attach без записи в БД")
 	flag.Parse()
 
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	ctx := context.Background()
 
 	cfg, err := config.Load(configPath)
 	if err != nil {
-		slog.Error("config load failed", "error", err)
+		fmt.Fprintf(os.Stderr, "config load failed: %v\n", err)
 		os.Exit(1)
 	}
+	factory := logger.NewFactory(cfg.Log)
+	slog.SetDefault(factory.For("main"))
 	sc := cfg.Sync
 	if reestrOverride != "" {
 		sc.ReestrPath = reestrOverride
@@ -107,6 +109,7 @@ func main() {
 	}
 
 	if dryRun {
+		rcfg.Logger = factory.For("trips_sync")
 		sum, err := sync.RunTripsSync(ctx, st, rst, trips, rcfg)
 		if err != nil {
 			slog.Error("dry run failed", "error", err)
@@ -122,6 +125,7 @@ func main() {
 		slog.Error("begin run failed", "error", err)
 		os.Exit(1)
 	}
+	rcfg.Logger = factory.For("trips_sync").With("run_id", runID)
 	opsPath := filepath.Join(sc.LogDir, fmt.Sprintf("sync_%d.log.jsonl", runID))
 	if err := os.MkdirAll(sc.LogDir, 0o755); err != nil {
 		slog.Error("log dir failed", "error", err)

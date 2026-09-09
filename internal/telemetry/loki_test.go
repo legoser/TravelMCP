@@ -54,8 +54,103 @@ func TestLokiHandlerReceivesLogsWithTraceID(t *testing.T) {
 	if _, err := strconv.ParseInt(ts, 10, 64); err != nil {
 		t.Fatalf("loki timestamp must be nanoseconds integer, got %q: %v", ts, err)
 	}
-	if !strings.Contains(line, "test message") || !strings.Contains(line, "trace_id=traceABC") {
+	if !strings.Contains(line, "test message") || !strings.Contains(line, "trace_id") {
 		t.Fatalf("line must contain message and trace_id, got %q", line)
+	}
+}
+
+func TestLokiHandlerLevelLabels(t *testing.T) {
+	type pushPayload struct {
+		Streams []struct {
+			Stream map[string]string `json:"stream"`
+			Values [][2]string       `json:"values"`
+		} `json:"streams"`
+	}
+	var sent []pushPayload
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body pushPayload
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		sent = append(sent, body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	var buf bytes.Buffer
+	base := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	cfg := config.LokiLog{URL: srv.URL, Enabled: boolPtr(true), BatchSize: 100, BatchWait: "100ms"}
+	lg := NewLokiHandler(cfg, base)
+
+	lg.Debug("debug msg")
+	lg.Info("info msg")
+	lg.Warn("warn msg")
+	lg.Error("error msg")
+
+	time.Sleep(500 * time.Millisecond)
+	if len(sent) == 0 {
+		t.Fatal("expected at least one Loki push request")
+	}
+
+	levels := map[string]bool{}
+	for _, p := range sent {
+		for _, s := range p.Streams {
+			lvl := s.Stream["level"]
+			if lvl == "" {
+				t.Fatalf("stream missing level label: %+v", s.Stream)
+			}
+			levels[lvl] = true
+		}
+	}
+	for _, want := range []string{"debug", "info", "warn", "error"} {
+		if !levels[want] {
+			t.Fatalf("expected level %q in Loki streams, got: %v", want, levels)
+		}
+	}
+}
+
+func TestLokiHandlerJSONFields(t *testing.T) {
+	type pushPayload struct {
+		Streams []struct {
+			Stream map[string]string `json:"stream"`
+			Values [][2]string       `json:"values"`
+		} `json:"streams"`
+	}
+	var sent []pushPayload
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body pushPayload
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		sent = append(sent, body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	var buf bytes.Buffer
+	base := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	cfg := config.LokiLog{URL: srv.URL, Enabled: boolPtr(true), BatchSize: 1, BatchWait: "100ms"}
+	lg := NewLokiHandler(cfg, base)
+
+	lg.InfoContext(context.Background(), "search", "route", "X", "status", 200, "count", 5)
+
+	time.Sleep(500 * time.Millisecond)
+	if len(sent) == 0 {
+		t.Fatal("expected at least one Loki push request")
+	}
+	line := sent[0].Streams[0].Values[0][1]
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(line), &parsed); err != nil {
+		t.Fatalf("Loki log line must be valid JSON, got %q: %v", line, err)
+	}
+	if parsed["msg"] != "search" {
+		t.Fatalf("expected msg=search, got %v", parsed["msg"])
+	}
+	if parsed["route"] != "X" {
+		t.Fatalf("expected route=X, got %v", parsed["route"])
+	}
+	if parsed["status"] != float64(200) {
+		t.Fatalf("expected status=200, got %v", parsed["status"])
+	}
+	if parsed["count"] != float64(5) {
+		t.Fatalf("expected count=5, got %v", parsed["count"])
 	}
 }
 

@@ -42,6 +42,7 @@ type TripsRunConfig struct {
 	Tag            string
 	ParamsFor      func(model.DensityClass) verification.Params
 	ClassFor       func(string) model.DensityClass
+	Logger         *slog.Logger
 }
 
 type RouteOps struct {
@@ -195,6 +196,11 @@ func RunTripsSync(ctx context.Context, db store.Store, st TripsRunnerStore, trip
 		cfg.PollInterval = 5 * time.Second
 	}
 	allowed := map[string]bool{}
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger = logger.With("step", "trips_sync")
 	for _, r := range cfg.Regions {
 		allowed[r] = true
 	}
@@ -237,7 +243,7 @@ func RunTripsSync(ctx context.Context, db store.Store, st TripsRunnerStore, trip
 			break
 		}
 		waited = true
-		slog.Warn("sync trips: gate не пройден, ожидание скелета", "blocked", blocked, "gate", cfg.CoverageGate)
+		logger.Warn("gate not passed, waiting for skeleton", "blocked", blocked, "gate", cfg.CoverageGate)
 		select {
 		case <-ctx.Done():
 			return sum, ctx.Err()
@@ -246,11 +252,11 @@ func RunTripsSync(ctx context.Context, db store.Store, st TripsRunnerStore, trip
 	}
 	sum.Waited = waited
 	if !gatePass && !cfg.Force {
-		slog.Warn("sync trips: starvation-alert, регионы заблокированы gate", "blocked", blocked, "gate", cfg.CoverageGate)
+		logger.Warn("starvation alert, regions blocked by gate", "blocked", blocked, "gate", cfg.CoverageGate)
 	}
 	sum.Forced = cfg.Force
 	if filled, missing := ResolveStopCoords(filtered, terms, cfg.Source); missing > 0 {
-		slog.Info("sync trips: гео-резолв стопов через скелет", "filled", filled, "missing", missing)
+		logger.Info("stops resolved via skeleton", "filled", filled, "missing", missing)
 	}
 	routeRegs := RouteRegions(filtered)
 	attachable := map[string]bool{}
@@ -290,7 +296,7 @@ func RunTripsSync(ctx context.Context, db store.Store, st TripsRunnerStore, trip
 		Trips: in, Terminals: terms,
 		PrevCanon: prev, TrustRouteNK: cfg.TrustRouteNK, Source: cfg.Source,
 		ChurnThreshold: cfg.ChurnThreshold, MaxSpeedKmh: cfg.MaxSpeedKmh,
-		ParamsFor: cfg.ParamsFor, ClassForRegion: classFor,
+		ParamsFor: cfg.ParamsFor, ClassForRegion: classFor, Logger: logger,
 	})
 	if err != nil {
 		return sum, err
@@ -304,12 +310,12 @@ func RunTripsSync(ctx context.Context, db store.Store, st TripsRunnerStore, trip
 	if cfg.DryRun {
 		return sum, nil
 	}
-	persist, err := PersistAttachReport(ctx, db, rep, cfg.Source)
+	persist, err := PersistAttachReport(ctx, db, rep, cfg.Source, logger)
 	if err != nil {
 		return sum, err
 	}
 	sum.Persist = persist
-	slog.Info("sync trips: прогон завершён", "routes", sum.Routes, "skipped", sum.Skipped,
+	logger.Info("trips sync run complete", "routes", sum.Routes, "skipped", sum.Skipped,
 		"promoted", len(rep.Promoted), "staged", len(rep.Staged), "dead", len(rep.Dead),
 		"blocked", blocked, "full_rate", sum.FullTripRate)
 	return sum, nil

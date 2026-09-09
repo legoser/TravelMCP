@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"log/slog"
 	"testing"
 
 	"travelmcp/internal/model"
@@ -76,7 +77,7 @@ func TestMatchStopsExclusivityWithinTrip(t *testing.T) {
 	}}
 	idx := buildMatchIndex(terms)
 	matched, reason, _, unmatched := matchStops(trips[0], idx, "mintrans",
-		func(string) model.DensityClass { return model.DensityRural }, attachParamsFor)
+		func(string) model.DensityClass { return model.DensityRural }, attachParamsFor, slog.Default())
 	if len(matched) != 1 {
 		t.Fatalf("только первый стоп берёт терминал: matched=%d", len(matched))
 	}
@@ -112,7 +113,7 @@ func TestMatchStopsCircularRouteAllowed(t *testing.T) {
 	}}
 	idx := buildMatchIndex(terms)
 	matched, _, _, unmatched := matchStops(trips[0], idx, "mintrans",
-		func(string) model.DensityClass { return model.DensityRural }, attachParamsFor)
+		func(string) model.DensityClass { return model.DensityRural }, attachParamsFor, slog.Default())
 	if len(unmatched) != 0 {
 		t.Fatalf("кольцевой повторный визит легитимен: unmatched=%v", unmatched)
 	}

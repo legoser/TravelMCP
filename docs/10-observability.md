@@ -11,7 +11,7 @@ GET /metrics  # Prometheus exposition
 Метрики:
 - `travelmcp_planner_duration_seconds{engine="csa|raptor"} histogram` — длительность планирования.
 - `travelmcp_provider_health{provider="synth|intercity"} gauge 1/0`
-- `travelmcp_http_requests_total{code="200",path="/mcp"} counter`
+- `travelmcp_http_requests_total{code="200",handler="/mcp"} counter` — `handler` is the normalized route pattern (numeric IDs replaced with `{id}`), preventing high-cardinality explosion.
 - `travelmcp_external_requests_total{host="geocode-maps.yandex.ru",status="200"} counter`
 
 ### OTLP metrics → Prometheus (`/api/v1/metrics/otlp`)

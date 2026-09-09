@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -122,7 +123,7 @@ func TestMatchStopsProvisionalFlag(t *testing.T) {
 	in := baseInput(trips, terms)
 	in.ParamsFor = attachParamsFor
 	in.ClassForRegion = func(string) model.DensityClass { return model.DensityRural }
-	matched, _, _, unmatched := matchStops(trips[0], buildMatchIndex(terms), "mintrans", in.ClassForRegion, in.ParamsFor)
+	matched, _, _, unmatched := matchStops(trips[0], buildMatchIndex(terms), "mintrans", in.ClassForRegion, in.ParamsFor, slog.Default())
 	if len(unmatched) != 0 {
 		t.Fatalf("unmatched: %v", unmatched)
 	}

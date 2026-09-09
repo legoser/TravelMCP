@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -25,7 +26,7 @@ func TestPersistResolvesTripReviewsOnPromotion(t *testing.T) {
 		t.Fatalf("attach: %v", err)
 	}
 	seedAttachTerminals(t, ms, terms)
-	if _, err := PersistAttachReport(ctx, ms, rep, "mintrans"); err != nil {
+	if _, err := PersistAttachReport(ctx, ms, rep, "mintrans", slog.Default()); err != nil {
 		t.Fatalf("persist1: %v", err)
 	}
 	openReviews := reviewCount(t, ms)

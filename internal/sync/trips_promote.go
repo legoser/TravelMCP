@@ -104,8 +104,12 @@ func regionOfRouteReg(routeReg string) string {
 	return ""
 }
 
-func PersistAttachReport(ctx context.Context, db store.Store, rep AttachReport, source string) (PersistSummary, error) {
+func PersistAttachReport(ctx context.Context, db store.Store, rep AttachReport, source string, logger *slog.Logger) (PersistSummary, error) {
 	var sum PersistSummary
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger = logger.With("step", "persist_attach")
 	if rep.Alert {
 		return sum, fmt.Errorf("sync trips: churn-alert: накопление идентификаторов заморожено, персист запрещён")
 	}
@@ -133,7 +137,7 @@ func PersistAttachReport(ctx context.Context, db store.Store, rep AttachReport, 
 		if err := ctx.Err(); err != nil {
 			return sum, err
 		}
-		n, err := persistPromotedTrip(ctx, db, ts, p, source, runCodes)
+		n, err := persistPromotedTrip(ctx, db, ts, p, source, runCodes, logger)
 		if err != nil {
 			return sum, err
 		}
@@ -186,7 +190,7 @@ func PersistAttachReport(ctx context.Context, db store.Store, rep AttachReport, 
 		return sum, fmt.Errorf("sync trips: несходимость строк при персисте: in=%d promoted=%d staged=%d dead=%d",
 			rep.In, len(rep.Promoted), len(rep.Staged), len(rep.Dead))
 	}
-	slog.Info("sync trips: отчёт записан", "routes", sum.Routes, "trips", sum.Trips,
+	logger.Info("persist attach report done", "routes", sum.Routes, "trips", sum.Trips,
 		"stop_times", sum.StopTimes, "staged", sum.Staged, "tombstoned", sum.Tombstoned, "reviews_resolved", sum.ReviewsResolved)
 	return sum, nil
 }
@@ -200,8 +204,10 @@ type promotedCounts struct {
 	reviewsResolved int
 }
 
-func persistPromotedTrip(ctx context.Context, db store.Store, ts TripsStore, p PromotableTrip, source string, runCodes map[int64]map[string]bool) (promotedCounts, error) {
+func persistPromotedTrip(ctx context.Context, db store.Store, ts TripsStore, p PromotableTrip, source string, runCodes map[int64]map[string]bool, logger *slog.Logger) (promotedCounts, error) {
 	var out promotedCounts
+	tripTag := logger.With("route_nk", p.RouteNK, "trip_nk", p.TripNK)
+	tripTag.Debug("persisting trip")
 	err := db.WithTx(ctx, func(tx store.Store) error {
 		tts, ok := tx.(TripsStore)
 		if !ok {
@@ -334,7 +340,12 @@ func persistPromotedTrip(ctx context.Context, db store.Store, ts TripsStore, p P
 		out.restricted = serviceDays != ""
 		return nil
 	})
-	return out, err
+	if err != nil {
+		tripTag.Error("persist trip failed", "error", err)
+		return out, fmt.Errorf("sync trips: persist trip %s|%s failed: %w", p.RouteNK, p.TripNK, err)
+	}
+	tripTag.Debug("trip persisted", "stop_times", out.stopTimes, "codes", out.codesAttached, "code_clashes", out.codeClash)
+	return out, nil
 }
 
 func persistStagedTrip(ctx context.Context, ts TripsStore, s StagedTrip, source string) error {

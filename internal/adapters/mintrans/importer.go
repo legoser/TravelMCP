@@ -53,7 +53,7 @@ type reestrDataset struct {
 	} `json:"services"`
 	ServiceDays []struct {
 		ServiceID int64 `json:"service_id"`
-		Weekday   int `json:"weekday"`
+		Weekday   int   `json:"weekday"`
 	} `json:"service_days"`
 	ServiceExceptions []struct {
 		ServiceID     int64  `json:"service_id"`

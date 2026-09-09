@@ -50,7 +50,7 @@ type reestrService struct {
 
 type reestrServiceDay struct {
 	ServiceID int64 `json:"service_id"`
-	Weekday   int `json:"weekday"`
+	Weekday   int   `json:"weekday"`
 }
 
 type reestrException struct {

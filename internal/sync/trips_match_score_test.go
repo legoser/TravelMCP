@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 
 	"travelmcp/internal/model"
@@ -28,7 +29,7 @@ func TestPersistMatchScoreMethodRoundTrip(t *testing.T) {
 			},
 		}},
 	}
-	if _, err := PersistAttachReport(ctx, ms, rep, "mintrans"); err != nil {
+	if _, err := PersistAttachReport(ctx, ms, rep, "mintrans", slog.Default()); err != nil {
 		t.Fatalf("persist: %v", err)
 	}
 
@@ -85,7 +86,7 @@ func TestMatchStopsFillsScoreMethod(t *testing.T) {
 	}}
 	idx := buildMatchIndex(terms)
 	matched, _, _, unmatched := matchStops(trips[0], idx, "mintrans",
-		func(string) model.DensityClass { return model.DensityRural }, attachParamsFor)
+		func(string) model.DensityClass { return model.DensityRural }, attachParamsFor, slog.Default())
 	if len(unmatched) != 0 || len(matched) != 2 {
 		t.Fatalf("matched=%d unmatched=%v", len(matched), unmatched)
 	}

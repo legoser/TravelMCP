@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
 
 	store "travelmcp/internal/store"
@@ -69,7 +70,7 @@ func HandleTripsAttachJob(ctx context.Context, db store.Store, job store.JobRow,
 	if err != nil {
 		return sum, err
 	}
-	return PersistAttachReport(ctx, db, rep, p.Source)
+	return PersistAttachReport(ctx, db, rep, p.Source, slog.Default())
 }
 
 func CheckAttachBarrier(skeletonDone map[string]bool, regions []string) (bool, []string) {

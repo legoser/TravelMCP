@@ -11,8 +11,9 @@ import (
 
 var (
 	PlannerDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name: "travelmcp_planner_duration_seconds",
-		Help: "Planner duration",
+		Name:    "travelmcp_planner_duration_seconds",
+		Help:    "Planner duration",
+		Buckets: prometheus.DefBuckets,
 	}, []string{"engine"})
 
 	ProviderHealth = promauto.NewGaugeVec(prometheus.GaugeOpts{
@@ -23,7 +24,13 @@ var (
 	HTTPRequests = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "travelmcp_http_requests_total",
 		Help: "HTTP requests",
-	}, []string{"code", "path"})
+	}, []string{"code", "handler"})
+
+	HTTPRequestDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "travelmcp_http_request_duration_seconds",
+		Help:    "HTTP request latency",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"code", "handler"})
 
 	ExternalRequests = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "travelmcp_external_requests_total",

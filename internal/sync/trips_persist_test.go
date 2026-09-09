@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 
 	"travelmcp/internal/store"
@@ -35,7 +36,7 @@ func persistFixture(t *testing.T) (AttachReport, *memory.MemoryStore) {
 	}
 	ms := memory.NewMemoryStore()
 	seedAttachTerminals(t, ms, terms)
-	if _, err := PersistAttachReport(context.Background(), ms, rep, "mintrans"); err != nil {
+	if _, err := PersistAttachReport(context.Background(), ms, rep, "mintrans", slog.Default()); err != nil {
 		t.Fatalf("persist: %v", err)
 	}
 	return rep, ms
@@ -97,11 +98,11 @@ func TestPersistIdempotentRerun(t *testing.T) {
 	ms := memory.NewMemoryStore()
 	seedAttachTerminals(t, ms, terms)
 	ctx := context.Background()
-	if _, err := PersistAttachReport(ctx, ms, rep, "mintrans"); err != nil {
+	if _, err := PersistAttachReport(ctx, ms, rep, "mintrans", slog.Default()); err != nil {
 		t.Fatalf("persist1: %v", err)
 	}
 	staged1, _ := ms.ListStagingTrips(ctx, "", 100)
-	if _, err := PersistAttachReport(ctx, ms, rep, "mintrans"); err != nil {
+	if _, err := PersistAttachReport(ctx, ms, rep, "mintrans", slog.Default()); err != nil {
 		t.Fatalf("persist2: %v", err)
 	}
 	staged2, _ := ms.ListStagingTrips(ctx, "", 100)
@@ -123,7 +124,7 @@ func TestPersistTombstoneAndResurrect(t *testing.T) {
 	routeID, _ := ms.FindRouteID(ctx, "mintrans", p.RouteNK)
 	code := SplitTripNK(p.TripNK)
 	tomb := AttachReport{Tombstoned: []TombstonedTrip{{RouteNK: p.RouteNK, TripNK: p.TripNK}}}
-	if _, err := PersistAttachReport(ctx, ms, tomb, "mintrans"); err != nil {
+	if _, err := PersistAttachReport(ctx, ms, tomb, "mintrans", slog.Default()); err != nil {
 		t.Fatalf("tombstone: %v", err)
 	}
 	tr, ok := ms.FindTrip(ctx, routeID, code)
@@ -133,7 +134,7 @@ func TestPersistTombstoneAndResurrect(t *testing.T) {
 	if tr.ValidTo == nil {
 		t.Fatal("tombstone не проставил valid_to")
 	}
-	if _, err := PersistAttachReport(ctx, ms, rep, "mintrans"); err != nil {
+	if _, err := PersistAttachReport(ctx, ms, rep, "mintrans", slog.Default()); err != nil {
 		t.Fatalf("repromote: %v", err)
 	}
 	tr, _ = ms.FindTrip(ctx, routeID, code)
@@ -155,7 +156,7 @@ func TestPersistOutboxAutopromote(t *testing.T) {
 	ms := memory.NewMemoryStore()
 	seedAttachTerminals(t, ms, full)
 	ctx := context.Background()
-	if _, err := PersistAttachReport(ctx, ms, rep, "mintrans"); err != nil {
+	if _, err := PersistAttachReport(ctx, ms, rep, "mintrans", slog.Default()); err != nil {
 		t.Fatalf("persist: %v", err)
 	}
 	stagedBefore, _ := ms.ListStagingTrips(ctx, "", 100)
@@ -171,7 +172,7 @@ func TestPersistOutboxAutopromote(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		_, err = PersistAttachReport(ctx, ms, fullRep, "mintrans")
+		_, err = PersistAttachReport(ctx, ms, fullRep, "mintrans", slog.Default())
 		return err
 	})
 	if err != nil {
