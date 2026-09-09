@@ -82,7 +82,7 @@ func (g *Gazetteer) Resolve(query string) (model.Coords, bool) {
 		p := &g.places[i]
 		for _, a := range append(p.Aliases, p.Name) {
 			n := normQuery(a)
-			if n == q {
+			if n == q || exactMatch(n, q) {
 				return model.Coords{Lat: p.Lat, Lon: p.Lon}, true
 			}
 			if strings.Contains(n, q) {
@@ -97,4 +97,21 @@ func (g *Gazetteer) Resolve(query string) (model.Coords, bool) {
 		return model.Coords{Lat: short.Lat, Lon: short.Lon}, true
 	}
 	return model.Coords{}, false
+}
+
+// exactMatch checks if the stop name contains the query as a whole word/token,
+// not as a substring of a longer word. This prevents "омск" from matching "томск".
+func exactMatch(stopName, query string) bool {
+	ln := strings.ToLower(stopName)
+	q := strings.ToLower(query)
+	if ln == q {
+		return true
+	}
+	qTokens := strings.Fields(q)
+	for _, tok := range qTokens {
+		if ln == tok || strings.HasSuffix(ln, " "+tok) || strings.HasPrefix(ln, tok+" ") || strings.Contains(ln, " "+tok+" ") {
+			return true
+		}
+	}
+	return false
 }

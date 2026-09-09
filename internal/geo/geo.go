@@ -35,8 +35,13 @@ func WalkTimeMinutes(distKm float64) int {
 	return int(math.Ceil(minutes))
 }
 
+// WalkRadiusKm — максимальный пешеходный радиус (км) для заданного лимита минут.
+func WalkRadiusKm(maxWalkMinutes int) float64 {
+	return walkSpeedKmH * float64(maxWalkMinutes) / 60.0
+}
+
 func NearestStops(stops map[string]*model.Stop, p model.Coords, maxWalkMinutes, limit int) []*model.Stop {
-	maxKm := walkSpeedKmH * float64(maxWalkMinutes) / 60.0
+	maxKm := WalkRadiusKm(maxWalkMinutes)
 	res := make([]*model.Stop, 0, len(stops))
 	for _, s := range stops {
 		if Haversine(p, s.Coordinates()) <= maxKm {

@@ -100,6 +100,15 @@ log:
 | `planArrival` | `internal/planner/planner.go:planArrival` | `planArrival: found`/`no route` (departure, arrival, legs) |
 | `paretoAlternatives` | `internal/planner/planner.go:paretoAlternatives` | `pareto alternatives` (best_arrival, alternatives count) |
 
+### Disambiguation of place names (Омск vs Томск)
+
+`findStopByPlace` (`internal/planner/planner.go:511`) использует двухпроходный поиск:
+
+1. **Exact token match** (`exactMatch`) — ищет стопы, где имя места является отдельным словом/токеном. `Омск` не совпадает с `Томск`, потому что `"омск"` ≠ `"томск"` как токен.
+2. **Substring fallback** (`substringMatch`) — fallback на `strings.Contains`, но с **координатной фильтрацией**: если расстояние от геокодированных координат до стопа > 0.3 км (≈3 мин пешком), substring match отклоняется. Это предотвращает `"омск" → "Автовокзал Томск"` (Томск ~1300 км от Омска).
+
+`Gazetteer.Resolve` (`internal/geo/places.go:73`) применяет ту же `exactMatch` логику для токенов перед substring fallback.
+
 ### Форматеры `internal/logger/factory.go:35`
 
 - `log.format=json` — прод/ELK, `time RFC3339Nano`, `level INFO`, `module` атрибут, `add_source` опционально.

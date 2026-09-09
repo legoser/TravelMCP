@@ -76,6 +76,28 @@ func TestResolveUnknown(t *testing.T) {
 	}
 }
 
+func TestResolveDisambiguatesOmskFromTomsk(t *testing.T) {
+	g, err := DefaultGazetteer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	omsk, ok := g.Resolve("Омск")
+	if !ok {
+		t.Fatal("Resolve(Омск) = not found")
+	}
+	near(t, omsk, 54.9986, 73.2812, 0.02)
+
+	tomsk, ok := g.Resolve("Томск")
+	if !ok {
+		t.Fatal("Resolve(Томск) = not found")
+	}
+	near(t, tomsk, 56.4613, 84.9914, 0.02)
+
+	if omsk.Lat == tomsk.Lat && omsk.Lon == tomsk.Lon {
+		t.Fatal("Омск и Томск резолвятся в одинаковые координаты — подстроковое совпадение 'омск' в 'томск' не отфильтровано")
+	}
+}
+
 func TestDefaultGazetteerLoadsStable(t *testing.T) {
 	g1, err := DefaultGazetteer()
 	if err != nil {

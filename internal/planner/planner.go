@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"runtime"
 	"sort"
 	"strings"
@@ -182,13 +183,7 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 	}
 
 	if fromPlace != nil {
-		if p.logger != nil {
-			p.logger.Debug("matchStops: georesolve place", "place", fromPlace.Name, "coords", from, "maxWalk", maxWalk)
-		}
-		fromStop, foundFrom = findStopByPlace(net.Stops, fromPlace.Name, from, maxWalk, originStops)
-		if p.logger != nil {
-			p.logger.Debug("matchStops: place resolved", "place", fromPlace.Name, "found", foundFrom, "stop", fromStop.ID, "stop_name", fromStop.Name, "via_place", foundFrom)
-		}
+		fromStop, foundFrom = findStopByPlace(net.Stops, fromPlace.Name, from, maxWalk, originStops, p.logger)
 	}
 	idx := geo.NewSpatialIndex(net.Stops)
 	if !foundFrom {
@@ -212,13 +207,7 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 	}
 
 	if toPlace != nil {
-		if p.logger != nil {
-			p.logger.Debug("matchStops: georesolve place", "place", toPlace.Name, "coords", to, "maxWalk", maxWalk)
-		}
-		toStop, foundTo = findStopByPlace(net.Stops, toPlace.Name, to, maxWalk, nil)
-		if p.logger != nil {
-			p.logger.Debug("matchStops: place resolved", "place", toPlace.Name, "found", foundTo, "stop", toStop.ID, "stop_name", toStop.Name, "via_place", foundTo)
-		}
+		toStop, foundTo = findStopByPlace(net.Stops, toPlace.Name, to, maxWalk, nil, p.logger)
 	}
 	if !foundTo {
 		if p.logger != nil {
@@ -254,6 +243,13 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 			}
 			distKm := geo.Haversine(fromStop.Coordinates(), toStop.Coordinates())
 			mins := geo.WalkTimeMinutes(distKm)
+			if mins > maxWalk {
+				if p.logger != nil {
+					p.logger.Debug("planArrival: gap too long, rejecting", "from_stop", fromStop.ID, "to_stop", toStop.ID, "walk_min", mins, "max_walk", maxWalk, "dist_km", math.Round(distKm*10)/10)
+				}
+				return nil, fmt.Errorf("planner: маршрут между %s (%s) и %s (%s) не найден: прямого пешего перехода %d мин нет (лимит %d мин), транзитных рейсов до %s тоже",
+					fromStop.ID, fromStop.Name, toStop.ID, toStop.Name, mins, maxWalk, params.Arrival.Format(time.RFC3339))
+			}
 			departAtStop = latestArrivalAtStop.Add(-time.Duration(mins) * time.Minute)
 			transitLegs = []model.Leg{{
 				Mode: model.ModeWalk, ProviderID: fromStop.ProviderID,
@@ -338,13 +334,25 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 		if !params.AllowGap {
 			return nil, err
 		}
+		// Gap-перемножка ограничена пешим лимитом запроса: маршрут
+		// «5 дней пешком до Омска» — не маршрут, а отсутствие данных.
 		distKm := geo.Haversine(fromStop.Coordinates(), toStop.Coordinates())
 		mins := geo.WalkTimeMinutes(distKm)
+		if mins > maxWalk {
+			if p.logger != nil {
+				p.logger.Debug("csa: gap too long, rejecting", "from_stop", fromStop.ID, "to_stop", toStop.ID, "walk_min", mins, "max_walk", maxWalk, "dist_km", math.Round(distKm*10)/10)
+			}
+			return nil, fmt.Errorf("planner: маршрут между %s (%s) и %s (%s) не найден: прямого пешего перехода %d мин нет (лимит %d мин), транзитных рейсов тоже",
+				fromStop.ID, fromStop.Name, toStop.ID, toStop.Name, mins, maxWalk)
+		}
 		gapLeg := model.Leg{
 			Mode: model.ModeWalk, ProviderID: fromStop.ProviderID,
 			From: legPoint(fromStop), To: legPoint(toStop),
 			Departure: departAtStop, Arrival: departAtStop.Add(time.Duration(mins) * time.Minute),
 			SelfProvided: true,
+		}
+		if p.logger != nil {
+			p.logger.Debug("csa: gap leg used", "from_stop", fromStop.ID, "to_stop", toStop.ID, "walk_min", mins, "dist_km", math.Round(distKm*10)/10)
 		}
 		transitLegs = []model.Leg{gapLeg}
 	}
@@ -508,42 +516,71 @@ func legPoint(stop *model.Stop) model.LegPoint {
 // Деревенские остановки (ОП, пов.) штрафуются: среди равных по смыслу
 // предпочитаются не-деревенские, а деревня выбирается только если
 // альтернатив в радиусе пешей доступности нет.
-func findStopByPlace(stops map[string]*model.Stop, placeName string, coords model.Coords, maxWalkMinutes int, origin map[string]bool) (*model.Stop, bool) {
+func findStopByPlace(stops map[string]*model.Stop, placeName string, coords model.Coords, maxWalkMinutes int, origin map[string]bool, logger *slog.Logger) (*model.Stop, bool) {
 	lowerPlace := strings.ToLower(placeName)
+	placeTokens := strings.Fields(lowerPlace)
+	walkRadius := geo.WalkRadiusKm(maxWalkMinutes)
 
-	var nameMatch, nameAV, nameOrigin *model.Stop
-	var nameAVNonVillage, nameOriginNonVillage *model.Stop
-	nameDist := 1e9
-	avDist, originDist := 1e9, 1e9
-	avNonVillageDist, originNonVillageDist := 1e9, 1e9
-	for _, s := range stops {
-		if !(strings.Contains(strings.ToLower(s.Name), lowerPlace) ||
-			strings.Contains(lowerPlace, strings.ToLower(s.Name))) {
-			continue
+	// tokenMatch: имя места — отдельное слово в названии стопа
+	// ("Омск" ≠ "Томск", но "Омск" == "г. Омск").
+	tokenMatch := func(stopName string) bool {
+		ln := strings.ToLower(stopName)
+		for _, tok := range placeTokens {
+			if ln == tok || strings.HasSuffix(ln, " "+tok) || strings.HasPrefix(ln, tok+" ") || strings.Contains(ln, " "+tok+" ") {
+				return true
+			}
 		}
-		d := geo.Haversine(coords, s.Coordinates())
-		if s.IsHub() && d < avDist {
-			avDist = d
-			nameAV = s
-		}
-		if s.IsHub() && !isVillageStop(s) && d < avNonVillageDist {
-			avNonVillageDist = d
-			nameAVNonVillage = s
-		}
-		if origin != nil && origin[s.ID] && d < originDist {
-			originDist = d
-			nameOrigin = s
-		}
-		if origin != nil && origin[s.ID] && !isVillageStop(s) && d < originNonVillageDist {
-			originNonVillageDist = d
-			nameOriginNonVillage = s
-		}
-		if d < nameDist {
-			nameDist = d
-			nameMatch = s
-		}
+		return false
 	}
 
+	// Оба прохода ограничены пешей доступностью от геокодированных координат:
+	// именной стоп, до которого не дойти пешком, бесполезен (и часто это
+	// необслуживаемая точка вроде терминала «Красноярск» без рейсов).
+	inRange := func(s *model.Stop) bool {
+		return geo.Haversine(coords, s.Coordinates()) <= walkRadius
+	}
+
+	var tokenCands, subCands []*model.Stop
+	for _, s := range stops {
+		if !inRange(s) {
+			continue
+		}
+		switch {
+		case tokenMatch(s.Name):
+			tokenCands = append(tokenCands, s)
+		case strings.Contains(strings.ToLower(s.Name), lowerPlace):
+			subCands = append(subCands, s)
+		}
+	}
+	if logger != nil {
+		logger.Debug("matchStops: place candidates", "place", placeName, "walk_radius_km", math.Round(walkRadius*10)/10, "token_matches", len(tokenCands), "substring_matches", len(subCands))
+	}
+
+	if len(tokenCands) > 0 {
+		st := pickBest(tokenCands, origin, coords, maxWalkMinutes, stops)
+		if st != nil {
+			if logger != nil {
+				logger.Debug("matchStops: place resolved via token", "place", placeName, "stop", st.ID, "stop_name", st.Name)
+			}
+			return st, true
+		}
+	}
+	if len(subCands) > 0 {
+		st := pickBest(subCands, origin, coords, maxWalkMinutes, stops)
+		if st != nil {
+			if logger != nil {
+				logger.Debug("matchStops: place resolved via substring", "place", placeName, "stop", st.ID, "stop_name", st.Name)
+			}
+			return st, true
+		}
+	}
+	if logger != nil {
+		logger.Debug("matchStops: place not resolved (no stop in walk radius)", "place", placeName)
+	}
+	return nil, false
+}
+
+func pickBest(candidates []*model.Stop, origin map[string]bool, coords model.Coords, maxWalkMinutes int, stops map[string]*model.Stop) *model.Stop {
 	nearestWith := func(pred func(*model.Stop) bool) *model.Stop {
 		for _, s := range geo.NearestStops(stops, coords, maxWalkMinutes, 0) {
 			if pred(s) {
@@ -553,87 +590,71 @@ func findStopByPlace(stops map[string]*model.Stop, placeName string, coords mode
 		return nil
 	}
 
-	if nameMatch != nil {
-		if nameAVNonVillage != nil {
-			return nameAVNonVillage, true
-		}
-		if nameOriginNonVillage != nil {
-			return nameOriginNonVillage, true
-		}
-		if nameAV != nil {
-			if av := nearestWith(func(s *model.Stop) bool { return s.IsHub() && !isVillageStop(s) }); av != nil {
-				return av, true
-			}
-			return nameAV, true
-		}
-		if nameOrigin != nil {
-			if o := nearestWith(func(s *model.Stop) bool { return origin[s.ID] && !isVillageStop(s) }); o != nil {
-				return o, true
-			}
-			return nameOrigin, true
-		}
-		if isVillageStop(nameMatch) {
-			if av := nearestWith(func(s *model.Stop) bool { return s.IsHub() && !isVillageStop(s) }); av != nil {
-				return av, true
-			}
-			if origin != nil {
-				if o := nearestWith(func(s *model.Stop) bool { return origin[s.ID] && !isVillageStop(s) }); o != nil {
-					return o, true
-				}
-			}
-			for _, s := range geo.NearestStops(stops, coords, maxWalkMinutes, 0) {
-				if !isVillageStop(s) {
-					return s, true
-				}
-			}
-		}
-		if !nameMatch.IsHub() {
-			if av := nearestWith(func(s *model.Stop) bool { return s.IsHub() && !isVillageStop(s) }); av != nil {
-				return av, true
-			}
-			if av := nearestWith(func(s *model.Stop) bool { return s.IsHub() }); av != nil {
-				return av, true
-			}
-		}
-		if origin != nil && !origin[nameMatch.ID] {
-			if o := nearestWith(func(s *model.Stop) bool { return origin[s.ID] && !isVillageStop(s) }); o != nil {
-				return o, true
-			}
-			if o := nearestWith(func(s *model.Stop) bool { return origin[s.ID] }); o != nil {
-				return o, true
-			}
-		}
-		return nameMatch, true
+	nameMatch := nearestOf(candidates, coords)
+	if nameMatch == nil {
+		return nil
 	}
 
-	best := geo.NearestStops(stops, coords, maxWalkMinutes, 0)
-	if len(best) > 0 {
+	// Приоритеты среди кандидатов: терминал-автовокзал (не деревня) →
+	// терминал отправления рейса (не деревня) → просто хаб → origin.
+	if best := nearestWhere(candidates, coords, func(s *model.Stop) bool { return s.IsHub() && !isVillageStop(s) }); best != nil {
+		return best
+	}
+	if origin != nil {
+		if best := nearestWhere(candidates, coords, func(s *model.Stop) bool { return origin[s.ID] && !isVillageStop(s) }); best != nil {
+			return best
+		}
+		if best := nearestWhere(candidates, coords, func(s *model.Stop) bool { return origin[s.ID] }); best != nil {
+			return best
+		}
+	}
+	if best := nearestWhere(candidates, coords, func(s *model.Stop) bool { return s.IsHub() }); best != nil {
+		return best
+	}
+
+	// Кандидат — деревенская остановка или не-хаб: пробуем заменить на
+	// автовокзал/не-деревенский стоп в пешей доступности.
+	if isVillageStop(nameMatch) || !nameMatch.IsHub() {
 		if av := nearestWith(func(s *model.Stop) bool { return s.IsHub() && !isVillageStop(s) }); av != nil {
-			return av, true
+			return av
 		}
 		if av := nearestWith(func(s *model.Stop) bool { return s.IsHub() }); av != nil {
-			return av, true
+			return av
 		}
 		if origin != nil {
-			for _, s := range best {
-				if origin[s.ID] && !isVillageStop(s) {
-					return s, true
-				}
+			if o := nearestWith(func(s *model.Stop) bool { return origin[s.ID] && !isVillageStop(s) }); o != nil {
+				return o
 			}
-			for _, s := range best {
-				if origin[s.ID] {
-					return s, true
-				}
+			if o := nearestWith(func(s *model.Stop) bool { return origin[s.ID] }); o != nil {
+				return o
 			}
 		}
-		for _, s := range best {
+		for _, s := range geo.NearestStops(stops, coords, maxWalkMinutes, 0) {
 			if !isVillageStop(s) {
-				return s, true
+				return s
 			}
 		}
-		return best[0], true
 	}
-	return nil, false
+	return nameMatch
+}
+
+func nearestWhere(candidates []*model.Stop, coords model.Coords, pred func(*model.Stop) bool) *model.Stop {
+	var best *model.Stop
+	bestDist := 1e9
+	for _, s := range candidates {
+		if !pred(s) {
+			continue
+		}
+		if d := geo.Haversine(coords, s.Coordinates()); d < bestDist {
+			bestDist = d
+			best = s
+		}
+	}
+	return best
+}
+
+func nearestOf(candidates []*model.Stop, coords model.Coords) *model.Stop {
+	return nearestWhere(candidates, coords, func(*model.Stop) bool { return true })
 }
 
 type prev struct {
@@ -709,30 +730,45 @@ func (p *Planner) csa(net *model.Network, fromStop, toStop string, depart time.T
 	}
 	relax(fromStop)
 
+	skippedMode, skippedImplausible, skippedNotReached, skippedLate, skippedWorse := 0, 0, 0, 0, 0
+	boarded := 0
 	for i := range conns {
 		c := &conns[i]
 		if len(allowed) > 0 && !allowed[c.Mode] {
+			skippedMode++
 			continue
 		}
 		if isImplausibleConnection(c, net) {
+			skippedImplausible++
 			continue
 		}
 		atFrom, ok := arr[c.From]
 		if !ok {
+			skippedNotReached++
 			continue
 		}
 		if c.Departure.Before(atFrom) {
+			skippedLate++
 			continue
 		}
 		if atTo, ok := arr[c.To]; ok && !c.Arrival.Before(atTo) {
+			skippedWorse++
 			continue
 		}
 		arr[c.To] = c.Arrival
 		pred[c.To] = &prev{conn: c}
+		boarded++
 		relax(c.To)
 	}
 
+	if p.logger != nil {
+		p.logger.Debug("csa scan done", "from", fromStop, "to", toStop, "connections", len(conns), "boarded", boarded, "skipped_mode", skippedMode, "skipped_implausible", skippedImplausible, "skipped_stop_not_reached", skippedNotReached, "skipped_departed_before_arrival", skippedLate, "skipped_not_improving", skippedWorse, "reached_stops", len(arr))
+	}
+
 	if pred[toStop] == nil {
+		if p.logger != nil {
+			p.logger.Debug("csa: target not reached", "from", fromStop, "to", toStop, "reached_stops", len(arr), "boarded", boarded)
+		}
 		return nil, fmt.Errorf("planner: маршрут между %s и %s не найден (нет покрытия или расписаний)", fromStop, toStop)
 	}
 

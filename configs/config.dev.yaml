@@ -59,7 +59,7 @@ log:
   add_source: false
   # per-модуль override: TRAVELMCP__LOG__LEVELS__STORE=debug
   levels:
-    planner: "info"
+    planner: "debug"
     # http: "info"
     # providers.intercity: "debug"
     # httpx: "debug"

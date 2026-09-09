@@ -2,6 +2,7 @@ package planner
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -198,7 +199,7 @@ func TestFindStopByPlacePrefersAutoStation(t *testing.T) {
 	}
 
 	nsk := model.Coords{Lat: 55.0410573, Lon: 83.0273816}
-	st, ok := findStopByPlace(net.Stops, "Новосибирск", nsk, 30, origin)
+	st, ok := findStopByPlace(net.Stops, "Новосибирск", nsk, 30, origin, nil)
 	if !ok {
 		t.Fatal("findStopByPlace failed for Новосибирск")
 	}
@@ -232,5 +233,125 @@ func TestPlaceJourneyStartsAtAutoStation(t *testing.T) {
 	}
 	if first := journey.Legs[0]; first.To.StopID != "op:54:54099" {
 		t.Fatalf("first leg To = %s (%q), want автовокзал op:54:54099", first.To.StopID, first.To.Name)
+	}
+}
+
+func TestFindStopByPlaceDisambiguatesOmskFromTomsk(t *testing.T) {
+	// "Омск" не должен матчить "Томск" ни по подстроке, ни по токену;
+	// стоп обязан быть в пешей доступности от геокоординат места.
+	omskCity := model.Coords{Lat: 54.998, Lon: 73.281}    // реальный центр Омска
+	tomskCity := model.Coords{Lat: 56.4613, Lon: 84.9914} // реальный центр Томска
+	stops := map[string]*model.Stop{
+		"omsk":  {ID: "omsk", Name: "Омск", Lat: 54.998, Lon: 73.281, Type: model.StopTypeHub},
+		"tomsk": {ID: "tomsk", Name: "Томск", Lat: 56.4613, Lon: 84.9914, Type: model.StopTypeHub},
+	}
+
+	st, ok := findStopByPlace(stops, "Омск", omskCity, 30, nil, nil)
+	if !ok {
+		t.Fatal("findStopByPlace failed for Омск")
+	}
+	if st.ID != "omsk" {
+		t.Fatalf("expected stop 'omsk' for query 'Омск', got '%s' (%q)", st.ID, st.Name)
+	}
+
+	st, ok = findStopByPlace(stops, "Томск", tomskCity, 30, nil, nil)
+	if !ok {
+		t.Fatal("findStopByPlace failed for Томск")
+	}
+	if st.ID != "tomsk" {
+		t.Fatalf("expected stop 'tomsk' for query 'Томск', got '%s' (%q)", st.ID, st.Name)
+	}
+}
+
+func TestFindStopByPlaceSubstringFallbackForCompoundNames(t *testing.T) {
+	// "Омск" матчит "Автовокзал Омск" по подстроке (нет токен-совпадения),
+	// при условии что стоп в пешой доступности от геокоординат.
+	stops := map[string]*model.Stop{
+		"omsk-av": {ID: "omsk-av", Name: "Автовокзал Омск", Lat: 54.998, Lon: 73.281, Type: model.StopTypeHub},
+	}
+
+	omskCity := model.Coords{Lat: 54.998, Lon: 73.281}
+	st, ok := findStopByPlace(stops, "Омск", omskCity, 30, nil, nil)
+	if !ok {
+		t.Fatal("findStopByPlace failed for Омск")
+	}
+	if st.ID != "omsk-av" {
+		t.Fatalf("expected 'omsk-av' for query 'Омск', got '%s' (%q)", st.ID, st.Name)
+	}
+}
+
+func TestFindStopByPlaceRejectsFarSubstringMatch(t *testing.T) {
+	// "Омск" coords are (54.998, 73.281). "Автовокзал Томск" coords are (56.461, 84.991) — ~1300km away.
+	// Substring match "омск" in "автовокзал томск" should be rejected by coordinate check.
+	stops := map[string]*model.Stop{
+		"tomsk-av": {ID: "tomsk-av", Name: "Автовокзал Томск", Lat: 56.4613, Lon: 84.9914, Type: model.StopTypeHub},
+	}
+	omskCoords := model.Coords{Lat: 54.998, Lon: 73.281}
+	_, ok := findStopByPlace(stops, "Омск", omskCoords, 130, nil, nil)
+	if ok {
+		t.Fatal("findStopByPlace should NOT match 'Автовокзал Томск' for query 'Омск' when coords are 1300km apart")
+	}
+}
+
+func TestFindStopByPlaceRejectsFarTokenMatch(t *testing.T) {
+	// Токен-совпадение тоже ограничено пешей доступностью: терминал
+	// «Красноярск» (стоит на координатах аэропорта, 0 рейсов) не должен
+	// матчиться на запрос центра Красноярска в 37 км.
+	stops := map[string]*model.Stop{
+		"krk-dead": {ID: "krk-dead", Name: "Красноярск", Lat: 56.1806, Lon: 92.4864, Type: model.StopTypeHub},
+	}
+	krasnoyarskCenter := model.Coords{Lat: 56.033, Lon: 92.906}
+	_, ok := findStopByPlace(stops, "Красноярск", krasnoyarskCenter, 130, nil, nil)
+	if ok {
+		t.Fatal("findStopByPlace should NOT match far-away stop even with token match")
+	}
+}
+
+func TestPlanGapLegBoundedByMaxWalk(t *testing.T) {
+	// Gap-переможка ограничена maxWalk: маршрут «5 дней пешком» не строится,
+	// вместо него — явная ошибка «не найден».
+	day := time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC)
+	p := New(nil)
+	net := model.NewNetwork()
+	net.Stops["x-bus"] = &model.Stop{ID: "x-bus", Name: "X, Автовокзал", Lat: 55.0, Lon: 83.0, Type: model.StopTypeHub}
+	net.Stops["y-bus"] = &model.Stop{ID: "y-bus", Name: "Y, Автовокзал", Lat: 56.5, Lon: 89.0, Type: model.StopTypeHub}
+	net.BuildIndexes()
+
+	_, err := p.Plan(net,
+		model.Coords{Lat: 55.0, Lon: 83.0},
+		model.Coords{Lat: 56.5, Lon: 89.0},
+		model.SearchParams{Departure: day.Add(10 * time.Hour), MaxTransfers: -1, AllowGap: true},
+	)
+	if err == nil {
+		t.Fatal("expected error for unreachable destination with huge gap, got route")
+	}
+	if !strings.Contains(err.Error(), "не найден") && !strings.Contains(err.Error(), "нет остановок") {
+		t.Fatalf("expected bounded-gap error, got: %v", err)
+	}
+}
+
+func TestPlanPlaceNotFoundReturnsNoRoute(t *testing.T) {
+	// Регрессия на панику: если место не резолвится в стоп (нет покрытия),
+	// PlanWithPlaces должен вернуть ошибку «нет остановок», а не падать
+	// nil-pointer разыменованием в debug-логе (planner.go:220).
+	day := time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC)
+	p := New(nil)
+	net, err := providers.NewSynth(day).Network()
+	if err != nil {
+		t.Fatalf("synth network: %v", err)
+	}
+
+	_, err = p.PlanWithPlaces(net,
+		model.Coords{Lat: 55.7132, Lon: 84.9023},
+		model.Coords{Lat: 54.9986, Lon: 73.2812},
+		model.SearchParams{Departure: day.Add(10 * time.Hour), MaxTransfers: -1, AllowGap: true},
+		&PlaceHint{Name: "Юрга"},
+		&PlaceHint{Name: "Омск"},
+	)
+	if err == nil {
+		t.Fatal("expected error for destination without stop coverage, got nil")
+	}
+	if !strings.Contains(err.Error(), "нет остановок") {
+		t.Fatalf("expected 'нет остановок' error, got: %v", err)
 	}
 }
