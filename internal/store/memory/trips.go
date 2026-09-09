@@ -111,6 +111,9 @@ func (m *MemoryStore) UpsertStagingTrip(ctx context.Context, s store.StagingTrip
 		m.stagingTrips = map[string]store.StagingTripRow{}
 	}
 	key := stagingKey(s.Source, s.ExternalRouteCode, s.ExternalTripCode)
+	if s.LastAttemptAt.IsZero() {
+		s.LastAttemptAt = time.Now()
+	}
 	if prev, ok := m.stagingTrips[key]; ok {
 		s.ID = prev.ID
 		s.RetryCount = prev.RetryCount + 1
@@ -195,6 +198,58 @@ func (m *MemoryStore) DeleteStagingTrip(ctx context.Context, source, routeCode, 
 	defer m.mu.Unlock()
 	delete(m.stagingTrips, stagingKey(source, routeCode, tripCode))
 	return nil
+}
+
+// ResolveTripReviewsByFingerprint закрывает открытые trip-review по fingerprint
+// (memory-зеркало postgres-семантики для тестов persist-конвейера).
+func (m *MemoryStore) ResolveTripReviewsByFingerprint(ctx context.Context, fingerprint string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	closed := 0
+	for i := range m.reviewQueue {
+		r := &m.reviewQueue[i]
+		if r.EntityType == "trip" && r.Fingerprint == fingerprint && (r.State == "" || r.State == "open") {
+			r.State = "resolved"
+			closed++
+		}
+	}
+	return closed, nil
+}
+
+// ExpireStagingTripsOlderThan — memory-зеркало postgres-механики (§5.3):
+// незавершённые состояния старше cutoff → expired; идемпотентно.
+func (m *MemoryStore) ExpireStagingTripsOlderThan(ctx context.Context, cutoff time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	expired := 0
+	for k, s := range m.stagingTrips {
+		switch s.State {
+		case "incomplete_trip", "awaiting_times", "needs_review", "skeleton_gap":
+		default:
+			continue
+		}
+		at := s.LastAttemptAt
+		if at.IsZero() {
+			at = time.Unix(0, 1)
+		}
+		if at.Before(cutoff) {
+			s.State = "expired"
+			m.stagingTrips[k] = s
+			expired++
+		}
+	}
+	return expired, nil
+}
+
+// CountStagingByState — memory-зеркало (KPI §8).
+func (m *MemoryStore) CountStagingByState(ctx context.Context) (map[string]int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := map[string]int{}
+	for _, s := range m.stagingTrips {
+		out[s.State]++
+	}
+	return out, nil
 }
 
 func (m *MemoryStore) PublishOutbox(ctx context.Context, aggregate, aggregateID, event, payload string) error {

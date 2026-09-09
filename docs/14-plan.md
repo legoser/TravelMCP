@@ -565,6 +565,18 @@ availability-метриках здоровья коннектора.
   ручная проверка (вероятно, реестр перенумеровал коды или сломал выгрузку), не
   тихая перезапись всего диапазона.
 - Протухшие `staging_trips` (старше порога) — dead-letter + alert (expiry job).
+  **Реализовано (2026-09-09):** `internal/sync/staging_expiry.go` —
+  `ExpireStaleStagingTrips` (незавершённые состояния старше порога →
+  `state='expired'`, данные остаются для оператора; идемпотентно),
+  `HandleCleanupJob` для `jobs{type=cleanup}` (порог — payload
+  `staging_expiry_days` или конфиг `sync.staging_expiry_days`, env
+  `SYNC_STAGING_EXPIRY_DAYS`, дефолт 14). Store-методы:
+  `ExpireStagingTripsOlderThan`/`CountStagingByState` (postgres + memory).
+  Смежная гигиена review: `SaveReviewQueue`-апсерт бампает
+  `observed_at`/`count` (пере-детекция = живое наблюдение, expiry видит
+  актуальный возраст); промоушен трипа закрывает его открытые review
+  (`ResolveTripReviewsByFingerprint` по fingerprint NK —
+  `persistPromotedTrip`, счётчик `reviews_resolved` в сводке).
 
 ### 5.4 Coverage-gate скелета и операторский флоу новых терминалов
 

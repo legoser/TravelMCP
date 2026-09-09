@@ -1086,10 +1086,13 @@ func (m *MemoryStore) SaveReviewQueue(ctx context.Context, e model.ReviewQueueEn
 			if e.Fingerprint != "" {
 				m.reviewQueue[i].Fingerprint = e.Fingerprint
 			}
+			// пере-детекция той же причины — живое наблюдение, а не возраст
+			// (зеркало postgres-апсерта: observed_at=now(), count=count+1)
+			m.reviewQueue[i].Count++
 			return nil
 		}
 	}
-	m.reviewQueue = append(m.reviewQueue, store.ReviewQueueRow{EntityType: e.EntityType, EntityID: e.EntityID, Reason: e.Reason, Score: e.Score, CreatedAt: time.Now().Unix(), Fingerprint: e.Fingerprint})
+	m.reviewQueue = append(m.reviewQueue, store.ReviewQueueRow{EntityType: e.EntityType, EntityID: e.EntityID, Reason: e.Reason, Score: e.Score, CreatedAt: time.Now().Unix(), Fingerprint: e.Fingerprint, State: "open", Count: 1})
 	return nil
 }
 func (m *MemoryStore) ListReviewQueue(ctx context.Context, limit int) ([]store.ReviewQueueRow, error) {

@@ -407,7 +407,7 @@ func (p *PostgresStore) SaveReviewQueue(ctx context.Context, e model.ReviewQueue
 	if p.pool == nil {
 		return nil
 	}
-	_, err := p.pool.Exec(ctx, `INSERT INTO review_queue(entity_type, entity_id, reason, score, fingerprint) VALUES($1,$2,$3,$4,$5) ON CONFLICT(entity_type, entity_id, reason) DO UPDATE SET score=EXCLUDED.score, fingerprint=CASE WHEN EXCLUDED.fingerprint<>'' THEN EXCLUDED.fingerprint ELSE review_queue.fingerprint END`, e.EntityType, e.EntityID, e.Reason, e.Score, e.Fingerprint)
+	_, err := p.pool.Exec(ctx, `INSERT INTO review_queue(entity_type, entity_id, reason, score, fingerprint) VALUES($1,$2,$3,$4,$5) ON CONFLICT(entity_type, entity_id, reason) DO UPDATE SET score=EXCLUDED.score, fingerprint=CASE WHEN EXCLUDED.fingerprint<>'' THEN EXCLUDED.fingerprint ELSE review_queue.fingerprint END, observed_at=now(), count=review_queue.count+1`, e.EntityType, e.EntityID, e.Reason, e.Score, e.Fingerprint)
 	return err
 }
 func (p *PostgresStore) ListReviewQueue(ctx context.Context, limit int) ([]store.ReviewQueueRow, error) {
@@ -1259,7 +1259,7 @@ func (t *pgTxStore) SaveProvenance(ctx context.Context, p model.Provenance) erro
 	return err
 }
 func (t *pgTxStore) SaveReviewQueue(ctx context.Context, e model.ReviewQueueEntry) error {
-	_, err := t.tx.Exec(ctx, `INSERT INTO review_queue(entity_type, entity_id, reason, score, fingerprint) VALUES($1,$2,$3,$4,$5) ON CONFLICT(entity_type, entity_id, reason) DO UPDATE SET score=EXCLUDED.score, fingerprint=CASE WHEN EXCLUDED.fingerprint<>'' THEN EXCLUDED.fingerprint ELSE review_queue.fingerprint END`, e.EntityType, e.EntityID, e.Reason, e.Score, e.Fingerprint)
+	_, err := t.tx.Exec(ctx, `INSERT INTO review_queue(entity_type, entity_id, reason, score, fingerprint) VALUES($1,$2,$3,$4,$5) ON CONFLICT(entity_type, entity_id, reason) DO UPDATE SET score=EXCLUDED.score, fingerprint=CASE WHEN EXCLUDED.fingerprint<>'' THEN EXCLUDED.fingerprint ELSE review_queue.fingerprint END, observed_at=now(), count=review_queue.count+1`, e.EntityType, e.EntityID, e.Reason, e.Score, e.Fingerprint)
 	return err
 }
 func (t *pgTxStore) ListReviewQueue(ctx context.Context, limit int) ([]store.ReviewQueueRow, error) {

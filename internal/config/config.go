@@ -208,6 +208,7 @@ type Sync struct {
 	TripsChurnThreshold float64 `yaml:"trips_churn_threshold"`
 	TripsMaxSpeedKmh    float64 `yaml:"trips_max_speed_kmh"`
 	OverpassMax         int     `yaml:"overpass_max"`
+	StagingExpiryDays   int     `yaml:"staging_expiry_days"`
 }
 
 type Config struct {
@@ -276,7 +277,7 @@ func Defaults() *Config {
 		Deduplication: Deduplication{DistanceM: 200},
 		Pricing:       Pricing{DefaultCurrency: "RUB"},
 		GTFS:          GTFS{TmpDir: "data/tmp/gtfs"},
-		Sync:          Sync{LogDir: "data/logs", CoverageGate: 0, SkeletonChunkSize: 100, OsmPath: "data/osm/stations.json", YandexDumpPath: "data/yandex/cache/global_stations_list.json", SkeletonRegion: "Кемеровская область - Кузбасс", Bbox: "53.5,84.0,57.0,88.5", LegacyThreshold: 0.6, CoverageSoftScore: 0.4, TripsChurnThreshold: 0.2, TripsMaxSpeedKmh: 200, OverpassMax: 200},
+		Sync:          Sync{LogDir: "data/logs", CoverageGate: 0, SkeletonChunkSize: 100, OsmPath: "data/osm/stations.json", YandexDumpPath: "data/yandex/cache/global_stations_list.json", SkeletonRegion: "Кемеровская область - Кузбасс", Bbox: "53.5,84.0,57.0,88.5", LegacyThreshold: 0.6, CoverageSoftScore: 0.4, TripsChurnThreshold: 0.2, TripsMaxSpeedKmh: 200, OverpassMax: 200, StagingExpiryDays: 14},
 	}
 }
 
@@ -687,6 +688,11 @@ func applyEnv(cfg *Config) {
 			cfg.Sync.TripsMaxSpeedKmh = f
 		}
 	}
+	if v := os.Getenv("SYNC_STAGING_EXPIRY_DAYS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.Sync.StagingExpiryDays = n
+		}
+	}
 	if v := os.Getenv("SYNC_SKELETON_CHUNK_SIZE"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			cfg.Sync.SkeletonChunkSize = n
@@ -892,6 +898,11 @@ func setByPath(cfg *Config, parts []string, v string) {
 				if cfg.Sync.SkeletonChunkSize > 100 {
 					cfg.Sync.SkeletonChunkSize = 100
 				}
+			}
+		}
+		if len(parts) == 2 && parts[1] == "staging_expiry_days" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				cfg.Sync.StagingExpiryDays = n
 			}
 		}
 	case "yandex":

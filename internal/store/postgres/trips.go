@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"time"
 
 	"travelmcp/internal/model"
 	store "travelmcp/internal/store"
@@ -236,6 +237,21 @@ func (p *PostgresStore) DeleteStagingTrip(ctx context.Context, source, routeCode
 	return err
 }
 
+// ResolveTripReviewsByFingerprint закрывает (state='resolved') открытые
+// review-записи трипов по fingerprint внешнего NK (source:routeNK|tripNK).
+// Вызывается в промоушен-транзакции трипа: причина low_confidence/
+// incomplete_trip снята фактом промоушена. Возвращает число закрытых.
+func (p *PostgresStore) ResolveTripReviewsByFingerprint(ctx context.Context, fingerprint string) (int, error) {
+	if p.pool == nil {
+		return 0, errNotImplemented
+	}
+	tag, err := p.pool.Exec(ctx, `UPDATE review_queue SET state='resolved' WHERE entity_type='trip' AND fingerprint=$1 AND state='open'`, fingerprint)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 func (p *PostgresStore) PublishOutbox(ctx context.Context, aggregate, aggregateID, event, payload string) error {
 	if p.pool == nil {
 		return errNotImplemented
@@ -425,6 +441,51 @@ func (t *pgTxStore) AttachTerminalIdentifier(ctx context.Context, terminalID int
 func (t *pgTxStore) DeleteStagingTrip(ctx context.Context, source, routeCode, tripCode string) error {
 	_, err := t.tx.Exec(ctx, `DELETE FROM staging_trips WHERE source=$1 AND external_route_code=$2 AND external_trip_code=$3`, source, routeCode, tripCode)
 	return err
+}
+
+// ResolveTripReviewsByFingerprint — tx-вариант (см. PostgresStore).
+func (t *pgTxStore) ResolveTripReviewsByFingerprint(ctx context.Context, fingerprint string) (int, error) {
+	tag, err := t.tx.Exec(ctx, `UPDATE review_queue SET state='resolved' WHERE entity_type='trip' AND fingerprint=$1 AND state='open'`, fingerprint)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
+// ExpireStagingTripsOlderThan — dead-letter протухших staging-строк (§5.3):
+// незавершённые состояния старше cutoff → state='expired', данные остаются
+// для операторского разбора. Идемпотентно: expired не входит в выборку.
+func (p *PostgresStore) ExpireStagingTripsOlderThan(ctx context.Context, cutoff time.Time) (int, error) {
+	if p.pool == nil {
+		return 0, errNotImplemented
+	}
+	tag, err := p.pool.Exec(ctx, `UPDATE staging_trips SET state='expired' WHERE state IN ('incomplete_trip','awaiting_times','needs_review','skeleton_gap') AND last_attempt_at < $1`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
+// CountStagingByState — счётчики staging-очереди по состояниям (KPI §8).
+func (p *PostgresStore) CountStagingByState(ctx context.Context) (map[string]int, error) {
+	if p.pool == nil {
+		return map[string]int{}, errNotImplemented
+	}
+	rows, err := p.pool.Query(ctx, `SELECT state, count(*) FROM staging_trips GROUP BY state`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var st string
+		var n int
+		if err := rows.Scan(&st, &n); err != nil {
+			return nil, err
+		}
+		out[st] = n
+	}
+	return out, rows.Err()
 }
 
 func (t *pgTxStore) PublishOutbox(ctx context.Context, aggregate, aggregateID, event, payload string) error {

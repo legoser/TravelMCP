@@ -64,6 +64,8 @@ type ReviewQueueRow struct {
 	Score       float64
 	CreatedAt   int64
 	Fingerprint string
+	State       string
+	Count       int
 }
 
 type ProvenanceStore interface {

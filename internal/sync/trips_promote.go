@@ -40,21 +40,23 @@ type TripsStore interface {
 	ListOutbox(ctx context.Context, limit int) ([]store.OutboxEvent, error)
 	DeleteOutbox(ctx context.Context, id int64) error
 	SaveReviewQueue(ctx context.Context, e model.ReviewQueueEntry) error
+	ResolveTripReviewsByFingerprint(ctx context.Context, fingerprint string) (int, error)
 }
 
 type PersistSummary struct {
-	Routes      int `json:"routes"`
-	Trips       int `json:"trips"`
-	StopTimes   int `json:"stop_times"`
-	Staged      int `json:"staged"`
-	SkeletonGap int `json:"skeleton_gap"`
-	Tombstoned  int `json:"tombstoned"`
-	Reviews     int `json:"reviews"`
-	Dead        int `json:"dead"`
-	Restricted  int `json:"restricted"`
-	Codes       int `json:"codes_attached"`
-	CodeClash   int `json:"code_conflicts"`
-	MidGaps     int `json:"mid_gaps"`
+	Routes          int `json:"routes"`
+	Trips           int `json:"trips"`
+	StopTimes       int `json:"stop_times"`
+	Staged          int `json:"staged"`
+	SkeletonGap     int `json:"skeleton_gap"`
+	Tombstoned      int `json:"tombstoned"`
+	Reviews         int `json:"reviews"`
+	ReviewsResolved int `json:"reviews_resolved"`
+	Dead            int `json:"dead"`
+	Restricted      int `json:"restricted"`
+	Codes           int `json:"codes_attached"`
+	CodeClash       int `json:"code_conflicts"`
+	MidGaps         int `json:"mid_gaps"`
 }
 
 func SplitTripNK(tripNK string) string {
@@ -143,6 +145,7 @@ func PersistAttachReport(ctx context.Context, db store.Store, rep AttachReport, 
 		}
 		sum.Codes += n.codesAttached
 		sum.CodeClash += n.codeClash
+		sum.ReviewsResolved += n.reviewsResolved
 	}
 	for _, s := range rep.Staged {
 		if err := ctx.Err(); err != nil {
@@ -184,16 +187,17 @@ func PersistAttachReport(ctx context.Context, db store.Store, rep AttachReport, 
 			rep.In, len(rep.Promoted), len(rep.Staged), len(rep.Dead))
 	}
 	slog.Info("sync trips: отчёт записан", "routes", sum.Routes, "trips", sum.Trips,
-		"stop_times", sum.StopTimes, "staged", sum.Staged, "tombstoned", sum.Tombstoned)
+		"stop_times", sum.StopTimes, "staged", sum.Staged, "tombstoned", sum.Tombstoned, "reviews_resolved", sum.ReviewsResolved)
 	return sum, nil
 }
 
 type promotedCounts struct {
-	routes        int
-	stopTimes     int
-	restricted    bool
-	codesAttached int
-	codeClash     int
+	routes          int
+	stopTimes       int
+	restricted      bool
+	codesAttached   int
+	codeClash       int
+	reviewsResolved int
 }
 
 func persistPromotedTrip(ctx context.Context, db store.Store, ts TripsStore, p PromotableTrip, source string, runCodes map[int64]map[string]bool) (promotedCounts, error) {
@@ -318,6 +322,14 @@ func persistPromotedTrip(ctx context.Context, db store.Store, ts TripsStore, p P
 		}
 		if err := tts.DeleteStagingTrip(ctx, source, p.RouteNK, tripCode); err != nil {
 			return err
+		}
+		// Автозакрытие review при промоушене трипа: причина low_confidence/
+		// incomplete_trip снята самим фактом промоушена (тот же NK). Без этого
+		// решённые записи висят в очереди открытыми (§5.3 гигиена review).
+		if n, err := tts.ResolveTripReviewsByFingerprint(ctx, source+":"+p.RouteNK+"|"+p.TripNK); err != nil {
+			return err
+		} else if n > 0 {
+			out.reviewsResolved += n
 		}
 		out.restricted = serviceDays != ""
 		return nil

@@ -24,6 +24,7 @@ import (
 	"travelmcp/internal/store"
 	_ "travelmcp/internal/store/memory"
 	_ "travelmcp/internal/store/postgres"
+	syncpkg "travelmcp/internal/sync"
 	"travelmcp/internal/telemetry"
 
 	_ "travelmcp/internal/adapters/nominatim"
@@ -239,6 +240,21 @@ func newJobsWorker(st store.Store, l *slog.Logger) *jobs.Worker {
 	w.Register("sync_rail", func(ctx context.Context, job store.JobRow) error {
 		l.Info("handling sync_rail", "id", job.ID)
 		return nil
+	})
+	w.Register("cleanup", func(ctx context.Context, job store.JobRow) error {
+		l.Info("handling cleanup (staging expiry §5.3)", "id", job.ID)
+		days := 14
+		var p map[string]any
+		if json.Unmarshal([]byte(job.Payload), &p) == nil {
+			if d, ok := p["staging_expiry_days"].(float64); ok && d > 0 {
+				days = int(d)
+			}
+		}
+		ex, ok := st.(syncpkg.StagingExpirer)
+		if !ok {
+			return errors.New("cleanup: стор не поддерживает staging expiry")
+		}
+		return syncpkg.HandleCleanupJob(ctx, ex, days, l)
 	})
 	return w
 }

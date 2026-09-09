@@ -1,6 +1,10 @@
 package store
 
-import "travelmcp/internal/model"
+import (
+	"time"
+
+	"travelmcp/internal/model"
+)
 
 // Deprecated: CityRow/StationRow/StationCodeRow — legacy, удалить вместе с MemoryStore legacy методами (UpsertCity/Station/StationCode, FindStation).
 type CityRow struct {
@@ -355,6 +359,9 @@ type StagingTripRow struct {
 	MatchedStopTimes  string
 	UnmatchedStops    string
 	RetryCount        int
+	// LastAttemptAt — для memory-тестов expiry (postgres-колонка
+	// last_attempt_at существует в DDL, читается только SQL-механизмом).
+	LastAttemptAt time.Time
 }
 
 type TripSourceRow struct {
