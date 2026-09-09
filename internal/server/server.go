@@ -124,10 +124,6 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 		if logger == nil {
 			s.logger = lf.For("http")
 		}
-		if cfg.Log.Loki.URL != "" {
-			plannerLogger = telemetry.NewLokiHandler(cfg.Log.Loki, plannerLogger)
-			mcpLogger = telemetry.NewLokiHandler(cfg.Log.Loki, mcpLogger)
-		}
 	}
 	app := mcp.NewWithStore(planner.NewWithConfig(metrics, cfg.Planner.Engine, plannerLogger, cfg.Planner.SemaphoreSize, cfg.Planner.SemaphoreEnable), registry, st, mcpLogger)
 	mcpHandler := mcpserver.NewStreamableHTTPServer(app.Server(), mcpserver.WithStateLess(true))
@@ -175,7 +171,13 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 	mux.Handle("GET /api/v1/admin/logs", s.auth(http.HandlerFunc(s.handleAdminImportLogs), "admin"))
 	mux.Handle("GET /api/v1/admin/audit", s.auth(http.HandlerFunc(s.handleAdminAudit), "admin"))
 	mux.Handle("GET /api/v1/admin/terminals", s.auth(http.HandlerFunc(s.handleAdminListTerminals), "admin"))
+	mux.Handle("GET /api/v1/admin/terminals/liveness", s.auth(http.HandlerFunc(s.handleAdminListTerminalsLiveness), "admin"))
+	mux.Handle("GET /api/v1/admin/terminals/{id}/card", s.auth(http.HandlerFunc(s.handleAdminTerminalCard), "admin"))
+	mux.Handle("GET /api/v1/admin/terminals/{id}/schedule", s.auth(http.HandlerFunc(s.handleAdminTerminalSchedule), "admin"))
 	mux.Handle("PUT /api/v1/admin/terminals/{id}", s.auth(http.HandlerFunc(s.handleAdminUpdateTerminal), "admin"))
+	mux.Handle("GET /api/v1/admin/routes", s.auth(http.HandlerFunc(s.handleAdminListRoutes), "admin"))
+	mux.Handle("GET /api/v1/admin/trips", s.auth(http.HandlerFunc(s.handleAdminListTrips), "admin"))
+	mux.Handle("GET /api/v1/admin/trips/{id}", s.auth(http.HandlerFunc(s.handleAdminGetTrip), "admin"))
 	mux.Handle("POST /api/v1/admin/external-call", s.auth(http.HandlerFunc(s.handleAdminExternalCall), "admin"))
 	mux.Handle("POST /api/v1/route", s.auth(http.HandlerFunc(s.handleRoute), "mcp:read"))
 	adminFS, _ := fs.Sub(webFS, "web")
@@ -756,6 +758,7 @@ func (s *Server) handleAdminUpdateTerminal(w http.ResponseWriter, r *http.Reques
 		Lon        float64           `json:"lon"`
 		Names      map[string]string `json:"names"`
 		Settlement string            `json:"settlement"`
+		Approve    bool              `json:"approve"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSONDecodeError(w, err, s.logger, r.URL.Path)
@@ -771,6 +774,40 @@ func (s *Server) handleAdminUpdateTerminal(w http.ResponseWriter, r *http.Reques
 	}
 	if req.Name != "" {
 		names["ru"] = req.Name
+	}
+	if req.Approve {
+		approver, ok := s.store.(interface {
+			ApproveTerminal(ctx context.Context, terminalID int64, tr store.TerminalRow, names map[string]string) error
+		})
+		if !ok {
+			writeJSONResponse(w, http.StatusNotImplemented, map[string]any{"error": "approve not supported by store"})
+			return
+		}
+		now := time.Now().Unix()
+		if err := approver.ApproveTerminal(r.Context(), tid, store.TerminalRow{ID: tid, Lat: req.Lat, Lon: req.Lon, LastVerifiedAt: &now}, names); err != nil {
+			writeJSONResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+		_ = s.store.SaveProvenance(r.Context(), model.Provenance{EntityType: "terminal", EntityID: tid, Source: "manual", Confidence: 1.0, ObservedAt: time.Now(), ActorID: actorID})
+		if req.Settlement != "" {
+			if tagger, ok := s.store.(interface {
+				SetTerminalTag(ctx context.Context, id int64, key, value string) error
+			}); ok {
+				_ = tagger.SetTerminalTag(r.Context(), tid, "settlement", strings.TrimSpace(req.Settlement))
+			}
+		}
+		if resolver, ok := s.store.(interface {
+			DeleteReviewQueue(ctx context.Context, entityType string, entityID int64, reason string) error
+		}); ok {
+			if entries, err := s.listTerminalReviewReasons(r.Context(), tid); err == nil {
+				for _, reason := range entries {
+					_ = resolver.DeleteReviewQueue(r.Context(), "terminal", tid, reason)
+				}
+			}
+		}
+		_ = s.store.WriteAuditLog(r.Context(), actorID, "approve_terminal", "terminal", &tid, fmt.Sprintf(`{"name":%q,"lat":%f,"lon":%f}`, req.Name, req.Lat, req.Lon))
+		writeJSONResponse(w, http.StatusOK, map[string]any{"id": tid, "is_locked": true, "approved": true, "last_verified_at": now})
+		return
 	}
 	now := time.Now().Unix()
 	tr := store.TerminalRow{ID: tid, Lat: req.Lat, Lon: req.Lon, IsLocked: true, LastVerifiedAt: &now}
@@ -789,6 +826,28 @@ func (s *Server) handleAdminUpdateTerminal(w http.ResponseWriter, r *http.Reques
 	_ = s.store.SaveReviewQueue(r.Context(), model.ReviewQueueEntry{EntityType: "terminal", EntityID: tid, Reason: "conflicts_with_confirmed", Score: 1.0})
 	_ = s.store.WriteAuditLog(r.Context(), actorID, "update_terminal", "terminal", &tid, fmt.Sprintf(`{"name":%q,"lat":%f,"lon":%f}`, req.Name, req.Lat, req.Lon))
 	writeJSONResponse(w, http.StatusOK, map[string]any{"id": tid, "is_locked": true})
+}
+
+func (s *Server) listTerminalReviewReasons(ctx context.Context, terminalID int64) ([]string, error) {
+	lister, ok := s.store.(interface {
+		ListTerminalReviewEntries(ctx context.Context, terminalID int64) ([]store.ReviewQueueRow, error)
+	})
+	if !ok {
+		return nil, nil
+	}
+	entries, err := lister.ListTerminalReviewEntries(ctx, terminalID)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	out := []string{}
+	for _, e := range entries {
+		if !seen[e.Reason] {
+			seen[e.Reason] = true
+			out = append(out, e.Reason)
+		}
+	}
+	return out, nil
 }
 
 func (s *Server) handleAdminExternalCall(w http.ResponseWriter, r *http.Request) {

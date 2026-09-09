@@ -42,6 +42,21 @@ type TerminalStore interface {
 	SetTerminalTag(ctx context.Context, id int64, key, value string) error
 }
 
+type TerminalApproveStore interface {
+	ApproveTerminal(ctx context.Context, terminalID int64, tr TerminalRow, names map[string]string) error
+}
+
+type BrowserStore interface {
+	ListRoutesAdmin(ctx context.Context, limit, offset int, q string) ([]map[string]any, int, error)
+	ListTripsAdmin(ctx context.Context, routeID int64, limit, offset int) ([]map[string]any, int, error)
+	GetTripStopTimes(ctx context.Context, tripID int64) ([]map[string]any, error)
+	GetTerminalStats(ctx context.Context, terminalID int64) (map[string]any, error)
+	GetTerminalSchedule(ctx context.Context, terminalID int64, date time.Time, limit int) ([]map[string]any, error)
+	ListTerminalAliases(ctx context.Context, terminalID int64) ([]TerminalAliasRow, error)
+	ListTerminalReviewEntries(ctx context.Context, terminalID int64) ([]ReviewQueueRow, error)
+	ListTerminalsByLiveness(ctx context.Context, limit, offset int, dead string) ([]map[string]any, int, error)
+}
+
 type ReviewQueueRow struct {
 	EntityType  string
 	EntityID    int64

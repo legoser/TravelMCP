@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,7 +23,8 @@ type LokiHandler struct {
 	batch     []lokiStreamEntry
 	batchMax  int
 	batchWait time.Duration
-	labels    string
+	errs      *slog.Logger
+	failed    int
 }
 
 type lokiPushRequest struct {
@@ -34,12 +37,12 @@ type lokiStream struct {
 }
 
 type lokiStreamEntry struct {
-	Timestamp string
+	Timestamp int64
 	Line      string
 }
 
 func (e lokiStreamEntry) MarshalJSON() ([]byte, error) {
-	return json.Marshal([2]string{e.Timestamp, e.Line})
+	return json.Marshal([2]any{strconv.FormatInt(e.Timestamp, 10), e.Line})
 }
 
 func NewLokiHandler(cfg config.LokiLog, base *slog.Logger) *slog.Logger {
@@ -51,7 +54,7 @@ func NewLokiHandler(cfg config.LokiLog, base *slog.Logger) *slog.Logger {
 		client:    &http.Client{Timeout: 10 * time.Second},
 		batchMax:  cfg.BatchSize,
 		batchWait: parseDur(cfg.BatchWait, 1*time.Second),
-		labels:    "service=travelmcp",
+		errs:      base.With("module", "loki"),
 	}
 	if h.batchMax <= 0 {
 		h.batchMax = 100
@@ -93,11 +96,38 @@ func (h *LokiHandler) flush() {
 	req := lokiPushRequest{Streams: []lokiStream{stream}}
 	data, err := json.Marshal(req)
 	if err != nil {
+		h.reportError("loki marshal", err, 0)
 		return
 	}
-	httpReq, _ := http.NewRequest("POST", h.url, bytes.NewReader(data))
+	httpReq, err := http.NewRequest("POST", h.url, bytes.NewReader(data))
+	if err != nil {
+		h.reportError("loki request build", err, 0)
+		return
+	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	_, _ = h.client.Do(httpReq)
+	resp, err := h.client.Do(httpReq)
+	if err != nil {
+		h.reportError("loki push", err, len(batch))
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		h.reportError(fmt.Sprintf("loki push status %d: %s", resp.StatusCode, strings.TrimSpace(string(body))), nil, len(batch))
+	}
+}
+
+func (h *LokiHandler) reportError(msg string, err error, dropped int) {
+	h.mu.Lock()
+	h.failed++
+	h.mu.Unlock()
+	if h.errs != nil {
+		if err != nil {
+			h.errs.Error(msg, "error", err, "dropped", dropped)
+		} else {
+			h.errs.Error(msg, "dropped", dropped)
+		}
+	}
 }
 
 func (h *LokiHandler) Write(level slog.Level, msg string, attrs []slog.Attr) {
@@ -106,15 +136,16 @@ func (h *LokiHandler) Write(level slog.Level, msg string, attrs []slog.Attr) {
 		parts = append(parts, fmt.Sprintf("%s=%v", a.Key, a.Value.Any()))
 	}
 	entry := lokiStreamEntry{
-		Timestamp: time.Now().Format(time.RFC3339Nano),
+		Timestamp: time.Now().UnixNano(),
 		Line:      strings.Join(parts, " "),
 	}
 	h.mu.Lock()
 	h.batch = append(h.batch, entry)
-	if len(h.batch) >= h.batchMax {
-		go h.flush()
-	}
+	flushNow := len(h.batch) >= h.batchMax
 	h.mu.Unlock()
+	if flushNow {
+		h.flush()
+	}
 }
 
 type lokiSlogHandler struct {

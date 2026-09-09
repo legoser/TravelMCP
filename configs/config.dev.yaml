@@ -65,7 +65,7 @@ log:
     # httpx: "debug"
   # Loki push: LOG_LOKI_URL=http://localhost:3100 (отключено если пусто)
   loki:
-    url: "${LOG_LOKI_URL:-}"
+    url: "${LOG_LOKI_URL:-http://192.168.57.1:3100}"
     enabled: false # вкл: LOG_LOKI_ENABLED=true
     batch_size: 100
     batch_wait: "1s"

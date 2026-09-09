@@ -252,6 +252,7 @@ type TerminalAliasRow struct {
 	Alias      string
 	Lang       string
 	Source     string
+	ObservedAt int64
 }
 
 type AttributeStateRow struct {

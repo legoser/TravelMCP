@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"travelmcp/internal/config"
+	"travelmcp/internal/telemetry"
 )
 
 type Factory struct {
@@ -20,6 +21,7 @@ type Factory struct {
 	overrides map[string]slog.Level
 	addSource bool
 	format    string
+	lokiCfg   *config.LokiLog
 }
 
 func NewFactory(cfg config.Log) *Factory {
@@ -28,6 +30,10 @@ func NewFactory(cfg config.Log) *Factory {
 		overrides: map[string]slog.Level{},
 		addSource: cfg.AddSource,
 		format:    cfg.Format,
+	}
+	if cfg.Loki.URL != "" && (cfg.Loki.Enabled == nil || *cfg.Loki.Enabled) {
+		lk := cfg.Loki
+		f.lokiCfg = &lk
 	}
 	for k, v := range cfg.Levels {
 		key := strings.ToLower(strings.ReplaceAll(k, ".", "_"))
@@ -62,6 +68,9 @@ func (f *Factory) For(module string) *slog.Logger {
 	lg := slog.New(h)
 	if module != "" {
 		lg = lg.With("module", module)
+	}
+	if f.lokiCfg != nil {
+		lg = telemetry.NewLokiHandler(*f.lokiCfg, lg)
 	}
 	return lg
 }

@@ -29,9 +29,9 @@ async function updateWho(){
 }
 function setTabsDisabled(dis){
   document.querySelectorAll('.tab').forEach(el=>{el.style.opacity=dis?'0.45':'';el.style.pointerEvents=dis?'none':''});
-  document.querySelectorAll('#tab-users button, #tab-keys button, #tab-config button, #tab-dash button, #tab-imports button, #tab-terminals button, #tab-review button, #tab-external button, #tab-quotas button').forEach(b=>{b.disabled=dis});
+  document.querySelectorAll('#tab-users button, #tab-keys button, #tab-config button, #tab-dash button, #tab-imports button, #tab-terminals button, #tab-schedules button, #tab-review button, #tab-external button, #tab-quotas button').forEach(b=>{b.disabled=dis});
 }
-function showTab(name){const all=['users','keys','config','dash','imports','terminals','review','external','quotas'];document.querySelectorAll('.tab').forEach(el=>el.classList.toggle('active', el.getAttribute('onclick').includes("'"+name+"'")));all.forEach(n=>{const e=$('tab-'+n);if(e) e.classList.toggle('hidden', n!==name)});if(name==='dash')loadDash();if(name==='config')loadConfig();if(name==='imports')loadImports();if(name==='review')loadReview();if(name==='quotas'){loadQuotas();loadAudit()} if(name==='terminals')loadTerminals();}
+function showTab(name){const all=['users','keys','config','dash','imports','terminals','schedules','review','external','quotas'];document.querySelectorAll('.tab').forEach(el=>el.classList.toggle('active', el.getAttribute('onclick').includes("'"+name+"'")));all.forEach(n=>{const e=$('tab-'+n);if(e) e.classList.toggle('hidden', n!==name)});if(name==='dash')loadDash();if(name==='config')loadConfig();if(name==='imports')loadImports();if(name==='review')loadReview();if(name==='quotas'){loadQuotas();loadAudit()} if(name==='terminals')loadTerminals(); if(name==='schedules')loadRoutes();}
 async function api(path,opts={}){opts.headers=authHeaders(opts.headers||{});const r=await fetch(path,opts);let j;try{j=await r.json()}catch(e){j={raw:await r.text()}};if(!r.ok) throw new Error((j.error||j.message||r.status)+' '+(j.status||''));return j}
 async function doLogin(){try{const j=await api('/api/v1/login',{method:'POST',body:JSON.stringify({email:$('loginEmail').value,password:$('loginPass').value})});localStorage.setItem('travelmcp_token',j.token);await updateWho();$('loginMsg').textContent='Вход OK, token '+j.token.slice(0,16)+'…';toast('Вход выполнен');loadUsers()}catch(e){$('loginMsg').textContent='Ошибка: '+e.message;toast(e.message,true)}}
 async function doRegister(){try{const j=await api('/api/v1/register',{method:'POST',body:JSON.stringify({email:$('loginEmail').value,password:$('loginPass').value})});$('loginMsg').textContent='Регистрация: '+j.status+' id='+j.id;toast('Зарегистрирован '+j.email);loadUsers()}catch(e){$('loginMsg').textContent='Ошибка: '+e.message;toast(e.message,true)}}
@@ -125,7 +125,7 @@ async function resolveReview(etype,eid,reason,action){
   if(action==='dismiss' && !confirm('Снять с ревью '+etype+':'+eid+' ('+reason+')?')) return;
   try{await api('/api/v1/review/resolve',{method:'POST',body:JSON.stringify({entity_type:etype,entity_id:eid,reason,action})});toast(action==='approve'?'Подтверждено (locked)':'Снято с ревью');loadReview()}catch(e){toast(e.message,true)}
 }
-function openReviewTerminal(id){showTab('terminals');const s=$('termSearch');if(s){s.value='';}termPage=1;loadTerminals();$('termId').value=id;toast('Терминал '+id+' — подставлен в форму ниже')}
+function openReviewTerminal(id){showTab('terminals');const s=$('termSearch');if(s){s.value='';}termPage=1;loadTerminals().then(()=>openTermCard(id));$('termId').value=id;toast('Терминал '+id+' — карточка открыта')}
 async function exportReview(){window.open('/api/v1/review/export.csv','_blank')}
 let termPage=1, termLimit=20, termSort='id', termOrder='asc';
 function updateSortIndicators(){
@@ -155,27 +155,121 @@ function clearTermSearch(){
 }
 async function loadTerminals(){
   const q=($('termSearch')?$('termSearch').value.trim():'');
+  const dead=($('termDead')?$('termDead').value:'');
   const off=(termPage-1)*termLimit;
   try{
+    if(dead==='yes'||dead==='no'){
+      const data=await api('/api/v1/admin/terminals/liveness?limit='+termLimit+'&offset='+off+'&dead='+dead);
+      renderTerminals(data);
+      return;
+    }
     const qs='limit='+termLimit+'&offset='+off+'&sort='+encodeURIComponent(termSort)+'&order='+encodeURIComponent(termOrder)+'&q='+encodeURIComponent(q);
     const data=await api('/api/v1/admin/terminals?'+qs);
+    renderTerminals(data);
+  }catch(e){ $('terminalsBody').innerHTML='<tr><td colspan="7" class="muted">'+e.message+'</td></tr>'}
+}
+function renderTerminals(data){
     const tb=$('terminalsBody'); tb.innerHTML='';
     updateSortIndicators();
     (data.items||data||[]).forEach(t=>{
       const tr=document.createElement('tr');
       const locked=t.is_locked? '<span class="badge blocked">locked</span>':'<span class="muted">—</span>';
       const stl=(t.settlement||'')+(t.settlement_manual?' ✓':'');
-      tr.innerHTML='<td>'+t.id+'</td><td>'+(t.name||t.osm_compatible_name||'—')+'</td><td>'+(stl||'<span class="muted">—</span>')+'</td><td>'+(t.lat||'')+','+(t.lon||'')+'</td><td>'+locked+'</td><td>'+(t.place_id||'—')+'</td><td><button class="secondary" onclick="fillTerm('+t.id+',\''+(t.name||'').replace(/\'/g,"\\'")+'\',\''+(t.settlement||'').replace(/\'/g,"\\'")+'\','+(t.lat||0)+','+(t.lon||0)+')">→</button></td>';
+      const dead=t.dead? '<span class="badge pending" title="нет ни одного stop_times">dead</span>':(t.trips_served!=null?'<span class="badge active">'+t.trips_served+'</span>':'<span class="muted">—</span>');
+      tr.innerHTML='<td>'+t.id+'</td><td>'+(t.name||t.osm_compatible_name||'—')+'</td><td>'+(stl||'<span class="muted">—</span>')+'</td><td>'+(t.lat||'')+','+(t.lon||'')+'</td><td>'+locked+'</td><td>'+dead+'</td><td><div class="row" style="gap:4px"><button class="secondary" onclick="openTermCard('+t.id+')" title="Карточка и табло">▣</button><button class="secondary" onclick="fillTerm('+t.id+',\''+(t.name||'').replace(/\'/g,"\\'")+'\',\''+(t.settlement||'').replace(/\'/g,"\\'")+'\','+(t.lat||0)+','+(t.lon||0)+')">→</button></div></td>';
       tb.appendChild(tr);
     });
     if((data.items||data||[]).length===0) tb.innerHTML='<tr><td colspan="7" class="muted">терминалов нет</td></tr>';
     $('termPage').textContent=termPage;
-  }catch(e){ $('terminalsBody').innerHTML='<tr><td colspan="7" class="muted">'+e.message+'</td></tr>'}
 }
 function fillTerm(id,name,settlement,lat,lon){$('termId').value=id; $('termName').value=name; $('termSettlement').value=settlement||''; $('termLat').value=lat; $('termLon').value=lon;}
 function prevTermPage(){ if(termPage>1){termPage--; loadTerminals();}}
 function nextTermPage(){ termPage++; loadTerminals();}
-async function updateTerminal(){const id=$('termId').value;if(!id) return toast('ID терминала?',true);const body={name:$('termName').value, settlement:$('termSettlement').value.trim(), lat: parseFloat($('termLat').value)||0, lon: parseFloat($('termLon').value)||0};try{const j=await api('/api/v1/admin/terminals/'+id,{method:'PUT',body:JSON.stringify(body)});$('termMsg').textContent='Сохранено is_locked=true, provenance.actor_id проставлен';toast('Терминал '+j.id+' сохранён'); loadTerminals()}catch(e){$('termMsg').textContent='Ошибка: '+e.message;toast(e.message,true)}}
+async function updateTerminal(){const id=$('termId').value;if(!id) return toast('ID терминала?',true);const body={name:$('termName').value, settlement:$('termSettlement').value.trim(), lat: parseFloat($('termLat').value)||0, lon: parseFloat($('termLon').value)||0, approve:false};try{const j=await api('/api/v1/admin/terminals/'+id,{method:'PUT',body:JSON.stringify(body)});$('termMsg').textContent='Сохранено is_locked=true, provenance.actor_id проставлен';toast('Терминал '+j.id+' сохранён'); loadTerminals()}catch(e){$('termMsg').textContent='Ошибка: '+e.message;toast(e.message,true)}}
+async function approveTerminal(){const id=$('termId').value;if(!id) return toast('ID терминала?',true);if(!confirm('Апрувнуть терминал '+id+'? Ставит last_verified_at, снимает записи ревью.')) return;const body={name:$('termName').value, settlement:$('termSettlement').value.trim(), lat: parseFloat($('termLat').value)||0, lon: parseFloat($('termLon').value)||0, approve:true};try{const j=await api('/api/v1/admin/terminals/'+id,{method:'PUT',body:JSON.stringify(body)});$('termMsg').textContent='Апрувнуто: is_locked=true, last_verified_at='+j.last_verified_at+', записи ревью сняты';toast('Терминал '+j.id+' апрувнут'); loadTerminals(); loadReview()}catch(e){$('termMsg').textContent='Ошибка: '+e.message;toast(e.message,true)}}
+async function openTermCard(id){
+  const box=$('termCard'); box.classList.remove('hidden');
+  box.innerHTML='<span class="muted">загрузка…</span>';
+  try{
+    const c=await api('/api/v1/admin/terminals/'+id+'/card');
+    const st=c.stats||{};
+    let h='<div class="row" style="justify-content:space-between"><h3 style="font-size:15px;margin:0">Терминал '+c.id+': '+(c.name||'—')+'</h3><button class="secondary" onclick="$(\'termCard\').classList.add(\'hidden\')">✕</button></div>';
+    h+='<div class="row" style="gap:16px;margin-top:8px;flex-wrap:wrap"><span>lat/lon: <b>'+(c.lat||'')+','+(c.lon||'')+'</b></span><span>place: '+(c.place_id||'—')+'</span><span>locked: <b>'+(c.is_locked?'да':'нет')+'</b></span><span>НП: <b>'+(c.settlement||(c.tags&&c.tags.settlement)||'—')+'</b></span></div>';
+    h+='<div class="row" style="gap:16px;margin-top:6px;flex-wrap:wrap"><span>stop_times: <b>'+((st.stop_times!=null)?st.stop_times:'—')+'</b></span><span>живых рейсов: <b>'+((st.live_trips!=null)?st.live_trips:'—')+'</b></span><span>provisional: <b>'+((st.provisional_stop_times!=null)?st.provisional_stop_times:'—')+'</b></span>'+(st.dead?'<span class="badge pending">мёртвый терминал</span>':'')+'</div>';
+    if(c.aliases&&c.aliases.length){h+='<div style="margin-top:8px"><span class="muted">Алиасы:</span> '+c.aliases.map(a=>'<code>'+a.alias+'</code> ('+a.lang+(a.source?','+a.source:'')+')').join(' ')+'</div>'}
+    if(c.identifiers&&c.identifiers.length){h+='<div style="margin-top:4px"><span class="muted">Идентификаторы:</span> '+c.identifiers.map(i=>'<code>'+i.system+':'+i.code_type+'='+i.code+'</code>').join(' ')+'</div>'}
+    if(c.tags&&Object.keys(c.tags).length){h+='<div style="margin-top:4px"><span class="muted">Теги:</span> '+Object.entries(c.tags).map(([k,v])=>'<code>'+k+'='+v+'</code>').join(' ')+'</div>'}
+    if(c.review&&c.review.length){h+='<div style="margin-top:4px"><span class="muted">Ревью:</span> '+c.review.map(r=>'<span class="badge pending">'+r.reason+'</span>').join(' ')+'</div>'}
+    h+='<div class="row" style="margin-top:12px;gap:8px"><input id="termSchedDate" type="date" style="width:160px"><button onclick="loadTermSchedule('+id+')">Табло на дату</button></div><div id="termSchedOut" style="margin-top:8px"></div>';
+    box.innerHTML=h;
+    const d=new Date(); box.querySelector('#termSchedDate').value=d.toISOString().slice(0,10);
+  }catch(e){box.innerHTML='<span class="muted">Ошибка: '+e.message+'</span>'}
+}
+async function loadTermSchedule(id){
+  const d=($('termSchedDate')?$('termSchedDate').value:'');
+  const out=$('termSchedOut'); out.innerHTML='<span class="muted">загрузка…</span>';
+  try{
+    const j=await api('/api/v1/admin/terminals/'+id+'/schedule?date='+d);
+    if(!(j.items||[]).length){out.innerHTML='<span class="muted">на '+d+' отправлений нет (или терминал мёртвый)</span>';return}
+    let h='<div style="overflow:auto;max-height:320px"><table><thead><tr><th>отпр. (сек)</th><th>отпр.</th><th>куда</th><th>mode</th><th>код рейса</th><th>дни</th><th></th></tr></thead><tbody>';
+    (j.items).forEach(it=>{
+      const mm=Math.floor((it.departure%86400)/60), hh=Math.floor(mm/60), t=('0'+hh).slice(-2)+':'+('0'+(mm%60)).slice(-2);
+      h+='<tr><td>'+it.departure+'</td><td><b>'+t+'</b></td><td style="max-width:280px">'+(it.destination||'—')+'</td><td>'+(it.mode||'')+'</td><td>'+it.external_trip_code+'</td><td class="muted">'+(it.service_days||'')+'</td><td><button class="secondary" onclick="toast(\'trip '+it.trip_id+'\')">→</button></td></tr>';
+    });
+    h+='</tbody></table></div>';
+    out.innerHTML=h;
+  }catch(e){out.innerHTML='<span class="muted">Ошибка: '+e.message+'</span>'}
+}
+let routesPage=1;
+async function loadRoutes(){
+  const q=($('routesSearch')?$('routesSearch').value.trim():'');
+  const off=(routesPage-1)*20;
+  try{
+    const j=await api('/api/v1/admin/routes?limit=20&offset='+off+'&q='+encodeURIComponent(q));
+    const tb=$('routesBody'); tb.innerHTML='';
+    (j.items||[]).forEach(r=>{
+      const tr=document.createElement('tr');
+      tr.innerHTML='<td>'+r.id+'</td><td><code>'+r.external_route_code+'</code></td><td style="max-width:280px">'+(r.long_name||r.short_name||'—')+'</td><td>'+r.mode+'</td><td style="max-width:200px">'+(r.carrier||'—')+'</td><td>'+(r.live_trips!=null?('<b'+(r.live_trips===0?' style="color:#b45309"':'')+'>'+r.live_trips+'</b>'):'—')+'</td><td><button class="secondary" onclick="loadTrips('+r.id+',\''+(r.external_route_code||'').replace(/\'/g,"\\'")+'\')">рейсы →</button></td>';
+      tb.appendChild(tr);
+    });
+    if((j.items||[]).length===0) tb.innerHTML='<tr><td colspan="7" class="muted">маршрутов нет</td></tr>';
+    $('routesPage').textContent=routesPage;
+    $('tripsTitle').style.display='none'; $('tripsTable').style.display='none'; $('stTitle').style.display='none'; $('stTable').style.display='none';
+  }catch(e){$('routesBody').innerHTML='<tr><td colspan="7" class="muted">'+e.message+'</td></tr>'}
+}
+async function loadTrips(routeID,routeCode){
+  try{
+    const j=await api('/api/v1/admin/trips?route_id='+routeID+'&limit=50');
+    const tb=$('tripsBody'); tb.innerHTML='';
+    (j.items||[]).forEach(t=>{
+      const tr=document.createElement('tr');
+      const live=t.is_live?'<span class="badge active">live</span>':'<span class="badge blocked">tomb</span>';
+      const prov=t.provisional_count>0?'<span class="badge pending" title="provisional stop_times">'+t.provisional_count+'</span>':'<span class="muted">0</span>';
+      tr.innerHTML='<td>'+t.id+'</td><td><code>'+t.external_trip_code+'</code></td><td class="muted">'+(t.service_days||'ежедн.')+'</td><td>'+t.stop_times_count+'</td><td>'+prov+'</td><td>'+live+'</td><td><button class="secondary" onclick="loadTripStops('+t.id+')">стопы →</button></td>';
+      tb.appendChild(tr);
+    });
+    if((j.items||[]).length===0) tb.innerHTML='<tr><td colspan="7" class="muted">рейсов нет</td></tr>';
+    $('tripsTitle').style.display=''; $('tripsTitle').textContent='Рейсы маршрута '+routeCode+' ('+(j.total||0)+')';
+    $('tripsTable').style.display='';
+    $('stTitle').style.display='none'; $('stTable').style.display='none';
+  }catch(e){toast(e.message,true)}
+}
+async function loadTripStops(tripID){
+  try{
+    const j=await api('/api/v1/admin/trips/'+tripID);
+    const tb=$('stBody'); tb.innerHTML='';
+    const fmt=s=>{if(s==null) return '—'; const mm=Math.floor((s%86400)/60), hh=Math.floor(mm/60); return ('0'+hh).slice(-2)+':'+('0'+(mm%60)).slice(-2)};
+    (j.items||[]).forEach(st=>{
+      const tr=document.createElement('tr');
+      const prov=st.is_provisional?'<span class="badge pending" title="provisional">P</span>':'';
+      tr.innerHTML='<td>'+st.seq+'</td><td>'+fmt(st.arrival)+'</td><td>'+fmt(st.departure)+'</td><td style="max-width:320px">'+(st.name||'—')+'</td><td>'+prov+'</td><td>'+(st.match_score!=null?(Math.round(st.match_score*100)/100):'—')+'</td><td class="muted">'+(st.match_method||'')+'</td>';
+      tb.appendChild(tr);
+    });
+    if((j.items||[]).length===0) tb.innerHTML='<tr><td colspan="7" class="muted">стопов нет</td></tr>';
+    $('stTitle').style.display=''; $('stTitle').textContent='Стопы рейса '+tripID;
+    $('stTable').style.display='';
+  }catch(e){toast(e.message,true)}
+}
 async function settlementFromApi(){const lat=parseFloat($('termLat').value), lon=parseFloat($('termLon').value);if(!lat||!lon) return toast('Нужны lat/lon',true);try{const j=await api('/api/v1/admin/external-call',{method:'POST',body:JSON.stringify({provider:'nominatim',lat,lon})});if(j.settlement){$('termSettlement').value=j.settlement;toast('НП из API: '+j.settlement)}else{$('termMsg').textContent='НП не определён: '+(j.address||j.error||'');toast('НП не определён',true)}}catch(e){$('termMsg').textContent='Ошибка: '+e.message;toast(e.message,true)}}
 async function callExternal(){
   const body={provider:$('extProvider').value, query:$('extQuery').value, lat: $('extLat').value?parseFloat($('extLat').value):undefined, lon: $('extLon').value?parseFloat($('extLon').value):undefined};

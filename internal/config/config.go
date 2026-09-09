@@ -291,7 +291,7 @@ func Load(path string) (*Config, error) {
 			return nil, fmt.Errorf("config: read %s: %w", path, err)
 		}
 		if err == nil {
-			expanded := os.ExpandEnv(string(data))
+			expanded := os.ExpandEnv(expandEnvDefaults(string(data)))
 			if err := yaml.Unmarshal([]byte(expanded), cfg); err != nil {
 				return nil, fmt.Errorf("config: parse %s: %w", path, err)
 			}
@@ -302,6 +302,37 @@ func Load(path string) (*Config, error) {
 	applyPrefixedEnv(cfg)
 	syncLegacy(cfg)
 	return cfg, nil
+}
+
+// expandEnvDefaults раскрывает bash-подобные дефолты ${VAR:-default} и
+// ${VAR-default}, которые os.ExpandEnv не понимает (молча даёт "").
+// Вызывать ДО os.ExpandEnv: существующее значение переменной имеет
+// приоритет над YAML-дефолтом.
+func expandEnvDefaults(s string) string {
+	for {
+		open := strings.LastIndex(s, "${")
+		if open < 0 {
+			return s
+		}
+		closeIdx := strings.IndexByte(s[open:], '}')
+		if closeIdx < 0 {
+			return s
+		}
+		closeIdx += open
+		name := s[open+2 : closeIdx]
+		replacement := ""
+		if sep := strings.Index(name, ":-"); sep >= 0 {
+			replacement = name[sep+2:]
+			name = name[:sep]
+		} else if sep := strings.IndexByte(name, '-'); sep >= 0 {
+			replacement = name[sep+1:]
+			name = name[:sep]
+		}
+		if v, ok := os.LookupEnv(name); ok && v != "" {
+			replacement = v
+		}
+		s = s[:open] + replacement + s[closeIdx+1:]
+	}
 }
 
 func syncLegacy(cfg *Config) {

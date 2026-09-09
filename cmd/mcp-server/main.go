@@ -44,9 +44,6 @@ func main() {
 	}
 	factory := logger.NewFactory(cfg.Log)
 	logger := factory.For("main")
-	if cfg.Log.Loki.URL != "" {
-		logger = telemetry.NewLokiHandler(cfg.Log.Loki, logger)
-	}
 	slog.SetDefault(logger)
 	pricing.Configure(cfg.Pricing.DefaultCurrency)
 	logger.Info("config loaded", "path", configPath, "addr", cfg.HTTP.Addr, "providers", strings.Join(cfg.Providers.Enabled, ","), "dsn", maskDSN(cfg.Database.DSN), "reestr", cfg.Providers.Intercity.ReestrPath, "log_level", cfg.Log.Level, "log_format", cfg.Log.Format, "log_levels", cfg.Log.Levels, "pricing_currency", cfg.Pricing.DefaultCurrency)
