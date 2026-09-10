@@ -179,7 +179,10 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 	if maxWalk <= 0 {
 		maxWalk = p.defaultMaxWalk
 		if maxWalk <= 0 {
-			maxWalk = 30
+			// fallbackMaxWalkMinutes — последний рубеж (= planner.max_walk_minutes):
+			// без дефолта планировщика пеший радиус схлопнулся бы в 0.
+			const fallbackMaxWalkMinutes = 30
+			maxWalk = fallbackMaxWalkMinutes
 		}
 	}
 	if p.logger != nil {
@@ -423,8 +426,13 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 
 func (p *Planner) paretoAlternatives(net *model.Network, from, to model.Coords, params model.SearchParams, fromStop, toStop *model.Stop, best *model.Journey) []model.Journey {
 	candidates := []*model.Journey{best}
-	// Generate alternative departures within 6h window
-	for offset := 60; offset <= 360; offset += 60 {
+	// Альтернативные отправления в окне 6ч шагом 1ч: поздние рейсы
+	// для «не успел»-сценариев агента.
+	const (
+		altWindowMin = 360
+		altStepMin   = 60
+	)
+	for offset := altStepMin; offset <= altWindowMin; offset += altStepMin {
 		var candParams model.SearchParams = params
 		if params.Arrival != nil {
 			altArrival := params.Arrival.Add(time.Duration(offset) * time.Minute)

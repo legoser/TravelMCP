@@ -11,6 +11,15 @@ import (
 
 const defaultCellSize = 0.01
 
+// Локальные значения индекса (не конфиг): fallbackMaxWalkMinutes — пеший
+// лимит, когда запрос не задал (совпадает с planner.max_walk_minutes);
+// bruteForceThreshold — ниже этого числа стопов полный перебор дешевле
+// индексного (меньше накладных на ячейки).
+const (
+	fallbackMaxWalkMinutes = 30
+	bruteForceThreshold    = 500
+)
+
 type SpatialIndex struct {
 	cellSize float64
 	cells    map[int64][]*model.Stop
@@ -34,12 +43,17 @@ func cellKey(lat, lon, cellSize float64) int64 {
 	return (x << 32) ^ (y & 0xffffffff)
 }
 
+// cellKm — размер ячейки в км (cellSize в градусах × MetersPerDegree).
+func cellKm(cellSize float64) float64 {
+	return cellSize * MetersPerDegree / 1000
+}
+
 func (idx *SpatialIndex) Nearest(p model.Coords, maxWalkMinutes, limit int) []*model.Stop {
 	maxKm := walkSpeedKmH * float64(maxWalkMinutes) / 60.0
 	if maxKm <= 0 {
-		maxKm = walkSpeedKmH * 30 / 60
+		maxKm = walkSpeedKmH * fallbackMaxWalkMinutes / 60
 	}
-	cellRadius := int(math.Ceil(maxKm/1.11)) + 1
+	cellRadius := int(math.Ceil(maxKm/cellKm(idx.cellSize))) + 1
 	cx := int(math.Floor(p.Lon / idx.cellSize))
 	cy := int(math.Floor(p.Lat / idx.cellSize))
 	candidates := make([]*model.Stop, 0, 64)
@@ -74,7 +88,7 @@ func (idx *SpatialIndex) Nearest(p model.Coords, maxWalkMinutes, limit int) []*m
 
 func NearbyPairs(stops map[string]*model.Stop, maxKm float64) [][2]*model.Stop {
 	idx := NewSpatialIndex(stops)
-	if len(stops) < 500 {
+	if len(stops) < bruteForceThreshold {
 		var pairs [][2]*model.Stop
 		seen := make(map[string]bool)
 		for _, a := range stops {
@@ -83,7 +97,7 @@ func NearbyPairs(stops map[string]*model.Stop, maxKm float64) [][2]*model.Stop {
 			}
 			cx := int(math.Floor(a.Lon / idx.cellSize))
 			cy := int(math.Floor(a.Lat / idx.cellSize))
-			r := int(math.Ceil(maxKm/1.11)) + 1
+			r := int(math.Ceil(maxKm/cellKm(idx.cellSize))) + 1
 			for dx := -r; dx <= r; dx++ {
 				for dy := -r; dy <= r; dy++ {
 					key := (int64(cx+dx) << 32) ^ int64(int32(cy+dy))
@@ -126,7 +140,7 @@ func NearbyPairs(stops map[string]*model.Stop, maxKm float64) [][2]*model.Stop {
 			}
 			cx := int(math.Floor(a.Lon / idx.cellSize))
 			cy := int(math.Floor(a.Lat / idx.cellSize))
-			r := int(math.Ceil(maxKm/1.11)) + 1
+			r := int(math.Ceil(maxKm/cellKm(idx.cellSize))) + 1
 			var local [][2]*model.Stop
 			seenLocal := make(map[string]bool)
 			for dx := -r; dx <= r; dx++ {

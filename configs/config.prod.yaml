@@ -10,7 +10,6 @@ http:
 store:
   kind: "postgres" # postgres|sqlite|memory — prod: postgres (pgx/PostGIS)
   dsn: "${DATABASE_DSN}" # postgres://user:***@db:5432/travelmcp?sslmode=disable
-  max_open_conns: 20
 
 cache:
   kind: "redis" # memory|redis

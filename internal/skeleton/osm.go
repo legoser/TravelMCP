@@ -86,6 +86,8 @@ func osmObjectType(tags map[string]string) string {
 	return "stop"
 }
 
+// collapseMaxM — радиус схлопывания одноимённых OSM-точек в stop_area:
+// платформы/остановки одного вокзала в пределах 300 м — один терминал.
 const collapseMaxM = 300
 
 func CollapseStopArea(records []model.AdaptedRecord) []model.AdaptedRecord {

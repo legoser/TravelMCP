@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	"travelmcp/internal/geo"
 	"travelmcp/internal/model"
 	"travelmcp/internal/verification"
 )
@@ -122,7 +123,7 @@ func CalibrateAttach(
 		Margin:      margin,
 		Clean:       SweepAttachThreshold(stops, terms, thresholds, margin, paramsFor, classFor, source),
 		Noisy:       SweepAttachThreshold(stops, NoisyTerms(terms, noisyShiftDeg, noisyShiftDeg), thresholds, margin, paramsFor, classFor, source),
-		NoisyShiftM: noisyShiftDeg * 111000,
+		NoisyShiftM: noisyShiftDeg * geo.MetersPerDegree,
 	}
 }
 

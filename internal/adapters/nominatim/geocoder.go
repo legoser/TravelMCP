@@ -19,10 +19,20 @@ type Geocoder struct {
 	url    string
 }
 
+// Локальные значения (не конфиг): протокол Nominatim search API.
+// defaultResultsLimit — кандидатов при limit<=0, если geocoder.limit не задан;
+// maxResultsLimit — потолок (больше API всё равно режет).
+const (
+	defaultNominatimURL = "https://nominatim.openstreetmap.org"
+	defaultResultsLimit = 5
+	maxResultsLimit     = 10
+	acceptLanguage      = "ru"
+)
+
 func New(cfg config.Config, client *httpx.Client) *Geocoder {
 	u := cfg.Nominatim.URL
 	if u == "" {
-		u = "https://nominatim.openstreetmap.org"
+		u = defaultNominatimURL
 	}
 	return &Geocoder{cfg: cfg, client: client, url: u}
 }
@@ -49,10 +59,13 @@ func (g *Geocoder) Geocode(ctx context.Context, query string) (*geocoder.Result,
 
 func (g *Geocoder) GeocodeCandidates(ctx context.Context, query string, limit int) ([]geocoder.Candidate, error) {
 	if limit <= 0 {
-		limit = 5
+		limit = g.cfg.Geocoder.Limit
 	}
-	if limit > 10 {
-		limit = 10
+	if limit <= 0 {
+		limit = defaultResultsLimit
+	}
+	if limit > maxResultsLimit {
+		limit = maxResultsLimit
 	}
 	base, err := url.Parse(g.url + "/search")
 	if err != nil {
@@ -62,11 +75,11 @@ func (g *Geocoder) GeocodeCandidates(ctx context.Context, query string, limit in
 	q.Set("q", query)
 	q.Set("format", "json")
 	q.Set("limit", fmt.Sprintf("%d", limit))
-	q.Set("accept-language", "ru")
+	q.Set("accept-language", acceptLanguage)
 	q.Set("addressdetails", "0")
 	base.RawQuery = q.Encode()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base.String(), nil)
-	req.Header.Set("User-Agent", "travelmcp/1.0 (https://github.com/anomalyco/travelmcp)")
+	req.Header.Set("User-Agent", geocoder.DefaultUserAgent)
 	resp, err := g.client.Do(ctx, req)
 	if err != nil {
 		return nil, err
@@ -115,10 +128,10 @@ func (g *Geocoder) Reverse(ctx context.Context, lat, lon float64) (string, error
 	q.Set("lat", strconv.FormatFloat(lat, 'f', 6, 64))
 	q.Set("lon", strconv.FormatFloat(lon, 'f', 6, 64))
 	q.Set("format", "json")
-	q.Set("accept-language", "ru")
+	q.Set("accept-language", acceptLanguage)
 	base.RawQuery = q.Encode()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base.String(), nil)
-	req.Header.Set("User-Agent", "travelmcp/1.0 (https://github.com/anomalyco/travelmcp)")
+	req.Header.Set("User-Agent", geocoder.DefaultUserAgent)
 	resp, err := g.client.Do(ctx, req)
 	if err != nil {
 		return "", err
@@ -148,11 +161,11 @@ func (g *Geocoder) ReverseSettlement(ctx context.Context, lat, lon float64) (str
 	q.Set("lat", strconv.FormatFloat(lat, 'f', 6, 64))
 	q.Set("lon", strconv.FormatFloat(lon, 'f', 6, 64))
 	q.Set("format", "json")
-	q.Set("accept-language", "ru")
+	q.Set("accept-language", acceptLanguage)
 	q.Set("addressdetails", "1")
 	base.RawQuery = q.Encode()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base.String(), nil)
-	req.Header.Set("User-Agent", "travelmcp/1.0 (https://github.com/anomalyco/travelmcp)")
+	req.Header.Set("User-Agent", geocoder.DefaultUserAgent)
 	resp, err := g.client.Do(ctx, req)
 	if err != nil {
 		return "", err

@@ -49,7 +49,10 @@ func ElectField(cands []AttributeCandidate) (AttributeCandidate, bool) {
 func scoreOf(c AttributeCandidate) float64 {
 	s := c.Confidence
 	if c.Field == "geom" && IsSkeletonSource(c.Source) {
-		s += 0.15
+		// skeletonGeomBonus — повышенный вес скелета/OSM для geom (§5.4):
+		// скелетная геометрия перекрывает живые источники.
+		const skeletonGeomBonus = 0.15
+		s += skeletonGeomBonus
 		if s > 1 {
 			s = 1
 		}

@@ -10,20 +10,16 @@ import (
 	"sync"
 	"time"
 
-	"travelmcp/internal/config"
 	"travelmcp/internal/geo"
 	"travelmcp/internal/model"
 	"travelmcp/internal/support/classifier"
 	"travelmcp/internal/support/timeutil"
 )
 
-func dedupDistanceKm() float64 {
-	cfg, _ := config.Load("")
-	if cfg != nil && cfg.Deduplication.DistanceM > 0 {
-		return float64(cfg.Deduplication.DistanceM) / 1000.0
-	}
-	return 0.2
-}
+// defaultDedupKm — порог схлопывания дублей остановок (км),
+// = deduplication.distance_m (200 м). Переопределяется WithDedupKm
+// из конфига (реестр собирается через Registry.WithDedupKm в main).
+const defaultDedupKm = 0.2
 
 const IntercityID = "intercity"
 
@@ -103,6 +99,20 @@ type reestrBlock struct {
 type Intercity struct {
 	reestrPath string
 	logger     *slog.Logger
+	dedupKm    float64
+}
+
+// WithDedupKm задаёт порог схлопывания дублей (км); 0 = defaultDedupKm.
+func (p *Intercity) WithDedupKm(km float64) *Intercity {
+	p.dedupKm = km
+	return p
+}
+
+func (p *Intercity) dedupDistanceKm() float64 {
+	if p.dedupKm > 0 {
+		return p.dedupKm
+	}
+	return defaultDedupKm
 }
 
 func NewIntercity(reestrPath string, now time.Time) *Intercity {
@@ -275,7 +285,7 @@ func (p *Intercity) build(ds *reestrDataset, day time.Time) *model.Network {
 // addTransferLinks строит пешие стыковки между географически близкими
 // остановками (разные терминалы одного узла: вокзал/автостанция).
 func (p *Intercity) addTransferLinks(net *model.Network) {
-	maxKm := dedupDistanceKm()
+	maxKm := p.dedupDistanceKm()
 	for _, pair := range geo.NearbyPairs(net.Stops, maxKm) {
 		a, b := pair[0], pair[1]
 		d := geo.Haversine(a.Coordinates(), b.Coordinates())

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"travelmcp/internal/config"
+	"travelmcp/internal/geo"
 	"travelmcp/internal/model"
 	"travelmcp/internal/support/namesim"
 )
@@ -60,28 +61,67 @@ type Params struct {
 	GeoThresholdM    float64
 }
 
+// Веса фичей и дефолты порогов ScorePair. Пороговые дефолты повторяют
+// verification.* конфига (confidence_threshold, score_margin,
+// score_ambiguity, distance_m); явные значения Params имеют приоритет.
+// Веса (name 0.45 / geom 0.3 / settlement 0.15 / transport 0.1) —
+// калибровочные, меняются только с прогоном калибровки (calibrate.go).
+const (
+	defaultWeightName       = 0.45
+	defaultWeightGeom       = 0.3
+	defaultWeightSettlement = 0.15
+	defaultWeightTransport  = 0.1
+	defaultThreshold        = 0.6
+	defaultMargin           = 0.1
+	defaultAmbiguity        = 0.05
+	defaultGeoThresholdM    = 500.0
+)
+
+// Доверие источникам (множитель Trust): seed/shadow-источники голосуют
+// слабо, ручные правки и консенсус — в полную силу.
+const (
+	trustSeed       = 0.4
+	trustManual     = 1.0
+	trustLegacy     = 0.7
+	trustSameSource = 0.6
+	trustDefault    = 1.0
+)
+
+// nonUrbanNameGate — порог nameSim для негородского guard без геометрии
+// (= verification.name_similarity).
+const nonUrbanNameGate = 0.8
+
+// Полосы geom-фичи: ближняя (≤threshold/nearBand → 1), средняя
+// (≤threshold → midScore), дальняя (≤threshold·farBand → farScore).
+const (
+	geomNearBand = 5.0
+	geomFarBand  = 4.0
+	geomMidScore = 0.6
+	geomFarScore = 0.25
+)
+
 func DefaultStopTerminalParams(cfg config.Verification, class model.DensityClass) Params {
 	p := Params{
-		WeightName:       0.45,
-		WeightGeom:       0.3,
-		WeightSettlement: 0.15,
-		WeightTransport:  0.1,
+		WeightName:       defaultWeightName,
+		WeightGeom:       defaultWeightGeom,
+		WeightSettlement: defaultWeightSettlement,
+		WeightTransport:  defaultWeightTransport,
 		Threshold:        cfg.ConfidenceThreshold,
 		Margin:           cfg.ScoreMargin,
 		Ambiguity:        cfg.ScoreAmbiguity,
 		GeoThresholdM:    float64(cfg.DistanceM),
 	}
 	if p.Threshold == 0 {
-		p.Threshold = 0.6
+		p.Threshold = defaultThreshold
 	}
 	if p.Margin == 0 {
-		p.Margin = 0.1
+		p.Margin = defaultMargin
 	}
 	if p.Ambiguity == 0 {
-		p.Ambiguity = 0.05
+		p.Ambiguity = defaultAmbiguity
 	}
 	if p.GeoThresholdM == 0 {
-		p.GeoThresholdM = 500
+		p.GeoThresholdM = defaultGeoThresholdM
 	}
 	if dt, ok := cfg.DensityThresholds[string(class)]; ok {
 		if dt.DistanceM != nil {
@@ -113,18 +153,18 @@ func normSource(s string) string {
 func Trust(a, b string) float64 {
 	na, nb := voiceOf(a), voiceOf(b)
 	if na == "seed" || nb == "seed" {
-		return 0.4
+		return trustSeed
 	}
 	if na == "manual" || nb == "manual" {
-		return 1
+		return trustManual
 	}
 	if na == "legacy" || nb == "legacy" {
-		return 0.7
+		return trustLegacy
 	}
 	if na == nb {
-		return 0.6
+		return trustSameSource
 	}
-	return 1
+	return trustDefault
 }
 
 type PairScore struct {
@@ -151,26 +191,18 @@ func codesEqual(a, b []model.AdaptedIdentifier) bool {
 	return false
 }
 
-func haversineMeters(lat1, lon1, lat2, lon2 float64) float64 {
-	const R = 6371000
-	dLat := (lat2 - lat1) * math.Pi / 180
-	dLon := (lon2 - lon1) * math.Pi / 180
-	a := math.Sin(dLat/2)*math.Sin(dLat/2) + math.Cos(lat1*math.Pi/180)*math.Cos(lat2*math.Pi/180)*math.Sin(dLon/2)*math.Sin(dLon/2)
-	return 2 * R * math.Asin(math.Sqrt(a))
-}
-
 func geomFeature(a, b PairItem, geoThresholdM float64) (float64, bool, float64) {
 	if a.Lat == nil || a.Lon == nil || b.Lat == nil || b.Lon == nil {
 		return 0, false, 0
 	}
-	d := haversineMeters(*a.Lat, *a.Lon, *b.Lat, *b.Lon)
+	d := geo.HaversineM(*a.Lat, *a.Lon, *b.Lat, *b.Lon)
 	switch {
-	case d <= geoThresholdM/5:
+	case d <= geoThresholdM/geomNearBand:
 		return 1, true, d
 	case d <= geoThresholdM:
-		return 0.6, true, d
-	case d <= geoThresholdM*4:
-		return 0.25, true, d
+		return geomMidScore, true, d
+	case d <= geoThresholdM*geomFarBand:
+		return geomFarScore, true, d
 	default:
 		return 0, true, d
 	}
@@ -243,7 +275,7 @@ func ScorePair(a, b PairItem, class model.DensityClass, p Params) PairScore {
 	switch {
 	case hasGeom && dist <= p.GeoThresholdM:
 		guard = true
-	case isNonUrban(class) && nameSim >= 0.8 && hasSettle && settle == 1 && t >= 1:
+	case isNonUrban(class) && nameSim >= nonUrbanNameGate && hasSettle && settle == 1 && t >= 1:
 		guard = true
 	}
 	return PairScore{Value: v, Trust: t, HasGeom: hasGeom, DistanceM: dist, NameSim: nameSim, GuardOK: guard}

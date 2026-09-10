@@ -2,17 +2,22 @@ package model
 
 import (
 	"fmt"
-	"math"
 	"strings"
 )
 
-func haversine(lat1, lon1, lat2, lon2 float64) float64 {
-	const R = 6371
-	dLat := (lat2 - lat1) * math.Pi / 180
-	dLon := (lon2 - lon1) * math.Pi / 180
-	a := math.Sin(dLat/2)*math.Sin(dLat/2) + math.Cos(lat1*math.Pi/180)*math.Cos(lat2*math.Pi/180)*math.Sin(dLon/2)*math.Sin(dLon/2)
-	return 2 * R * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
-}
+// Пороги hard-валидатора сети: maxImplausibleKm — дистанция связи, выше
+// которой координаты почти наверняка битые (РФ целиком ~9 000 км, плечо
+// 800 км покрывает любой регион); minSpeedCheckKm — короткие плечи не
+// проверяем на скорость (погрешность геометрии даёт ложные срабатывания);
+// speedTolerance — допуск сверх MaxSpeed (расписания округляют времена).
+const (
+	maxImplausibleKm = 800.0
+	minSpeedCheckKm  = 10.0
+	speedTolerance   = 1.5
+)
+
+// entityPrefix — префикс Entity для стопов ("stop:<id>").
+const entityPrefix = "stop:"
 
 type IssueLevel string
 
@@ -82,16 +87,16 @@ func ValidateNetwork(net *Network) []Issue {
 				if IsVillageName(fromS.Name) || IsVillageName(toS.Name) {
 					continue
 				}
-				distKm := haversine(fromS.Lat, fromS.Lon, toS.Lat, toS.Lon)
+				distKm := haversineKm(fromS.Lat, fromS.Lon, toS.Lat, toS.Lon)
 				durMin := c.Arrival.Sub(c.Departure).Minutes()
-				if distKm > 800 {
+				if distKm > maxImplausibleKm {
 					issues = append(issues, Issue{Level: IssueWarn, ProviderID: c.ProviderID, Entity: fmt.Sprintf("connection:%d:%s", i, c.TripID), Code: "out_of_bounds", Message: fmt.Sprintf("дистанция %.0fкм %s→%s превышает 800км, вероятно ошибка координат", distKm, fromS.Name, toS.Name)})
 					continue
 				}
-				if durMin > 0 && distKm > 10 {
+				if durMin > 0 && distKm > minSpeedCheckKm {
 					limit := MaxSpeed(c.Mode)
 					speed := distKm / (durMin / 60)
-					if speed > limit*1.5 {
+					if speed > limit*speedTolerance {
 						issues = append(issues, Issue{Level: IssueWarn, ProviderID: c.ProviderID, Entity: fmt.Sprintf("connection:%d:%s", i, c.TripID), Code: "implausible_speed", Message: fmt.Sprintf("скорость %.0f км/ч %.1fкм за %.0f мин %s→%s лимит %.0f", speed, distKm, durMin, fromS.Name, toS.Name, limit)})
 					}
 				}
@@ -115,8 +120,8 @@ func FilterExcludedStops(net *Network, issues []Issue) map[string]bool {
 		if is.Level != IssueWarn {
 			continue
 		}
-		if len(is.Entity) > 5 && is.Entity[:5] == "stop:" {
-			id := is.Entity[5:]
+		if len(is.Entity) > len(entityPrefix) && is.Entity[:len(entityPrefix)] == entityPrefix {
+			id := is.Entity[len(entityPrefix):]
 			if is.Code == "zero_coords" || is.Code == "invalid_coords" || is.Code == "out_of_bounds" || strings.Contains(is.Message, "координаты") {
 				excluded[id] = true
 			}

@@ -2,6 +2,14 @@ package geocoder
 
 import "context"
 
+// DefaultUserAgent — единый User-Agent для всех внешних гео-API
+// (Nominatim требует идентифицируемый UA, иначе 403).
+const DefaultUserAgent = "travelmcp/1.0 (https://github.com/anomalyco/travelmcp)"
+
+// defaultAttempts — попыток перебора провайдеров, если geocoder.attempts
+// не задан (env GEOCODER_ATTEMPTS).
+const defaultAttempts = 3
+
 type Result struct {
 	Lat  float64
 	Lon  float64

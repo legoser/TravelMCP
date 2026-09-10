@@ -35,6 +35,7 @@ type Registry struct {
 	byID          map[string]Provider
 	order         []string
 	intercityPath string
+	dedupKm       float64
 	snapshot      map[string]HealthStatus
 	snapshotAt    time.Time
 }
@@ -82,8 +83,23 @@ func (r *Registry) Register(p Provider) {
 	if _, ok := r.byID[p.ID()]; ok {
 		return
 	}
+	if ic, ok := p.(*Intercity); ok && r.dedupKm > 0 {
+		ic.WithDedupKm(r.dedupKm)
+	}
 	r.byID[p.ID()] = p
 	r.order = append(r.order, p.ID())
+}
+
+// WithDedupKm задаёт порог схлопывания дублей intercity (км) для уже
+// зарегистрированных и будущих провайдеров; 0 = defaultDedupKm.
+func (r *Registry) WithDedupKm(km float64) *Registry {
+	r.dedupKm = km
+	for _, p := range r.byID {
+		if ic, ok := p.(*Intercity); ok {
+			ic.WithDedupKm(km)
+		}
+	}
+	return r
 }
 
 func (r *Registry) Get(id string) (Provider, bool) {

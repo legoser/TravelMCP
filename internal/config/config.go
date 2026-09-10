@@ -26,9 +26,8 @@ type RateLimit struct {
 }
 
 type Store struct {
-	Kind         string `yaml:"kind"`
-	DSN          string `yaml:"dsn"`
-	MaxOpenConns int    `yaml:"max_open_conns"`
+	Kind string `yaml:"kind"`
+	DSN  string `yaml:"dsn"`
 }
 
 type Cache struct {
@@ -42,10 +41,6 @@ type Queue struct {
 	URL  string `yaml:"url"`
 }
 
-type Database struct {
-	DSN string `yaml:"dsn"`
-}
-
 type Intercity struct {
 	ReestrPath string `yaml:"reestr_path"`
 	Bounds     string `yaml:"bounds"`
@@ -56,9 +51,15 @@ type GTFS struct {
 	TmpDir string `yaml:"tmp_dir"`
 }
 
-type Geocode struct {
-	Enabled *bool `yaml:"enabled"`
-	// Deprecated: in-process лимит вызовов заменён квотой БД (api_quotas) + TTL geocode_cache (Фаза 2).
+// Geocoder — всё про геокодинг в одной секции: выбор провайдера
+// (kind/attempts/limit), лимит квоты api_quotas (max_calls) и TTL
+// geocode_cache (ttl_verified/ttl_disputed).
+type Geocoder struct {
+	Kind     string `yaml:"kind"`
+	Attempts int    `yaml:"attempts"`
+	Limit    int    `yaml:"limit"`
+	// MaxCalls — лимит квоты api_quotas для геокодеров (nominatim reverse,
+	// overpass enrich). 0 = взять дефолт вызывающей стороны.
 	MaxCalls    int    `yaml:"max_calls"`
 	TTLVerified string `yaml:"ttl_verified"`
 	TTLDisputed string `yaml:"ttl_disputed"`
@@ -79,11 +80,10 @@ type Auth struct {
 }
 
 type Yandex struct {
-	RaspKey     string `yaml:"rasp_key"`
-	RaspURL     string `yaml:"rasp_url"`
-	GeocodeKey  string `yaml:"geocode_key"`
-	GeocodeURL  string `yaml:"geocode_url"`
-	GeocodeKind string `yaml:"geocode_kind"`
+	RaspKey    string `yaml:"rasp_key"`
+	RaspURL    string `yaml:"rasp_url"`
+	GeocodeKey string `yaml:"geocode_key"`
+	GeocodeURL string `yaml:"geocode_url"`
 }
 
 type Nominatim struct {
@@ -93,51 +93,6 @@ type Nominatim struct {
 type Overpass struct {
 	URL       string `yaml:"url"`
 	MirrorURL string `yaml:"mirror_url"`
-}
-
-type Geocoder struct {
-	Kind     string `yaml:"kind"`
-	URL      string `yaml:"url"`
-	Key      string `yaml:"key"`
-	ApiKey   string `yaml:"api_key"`
-	Attempts int    `yaml:"attempts"`
-	Limit    int    `yaml:"limit"`
-}
-
-func (g *Geocoder) UnmarshalYAML(node *yaml.Node) error {
-	type raw Geocoder
-	var tmp struct {
-		Kind     string `yaml:"kind"`
-		URL      string `yaml:"url"`
-		BaseURL  string `yaml:"base_url"`
-		Key      string `yaml:"key"`
-		ApiKey   string `yaml:"api_key"`
-		Attempts *int   `yaml:"attempts"`
-		Limit    *int   `yaml:"limit"`
-	}
-	if err := node.Decode(&tmp); err != nil {
-		return err
-	}
-	_ = raw{}
-	g.Kind = tmp.Kind
-	if tmp.URL != "" {
-		g.URL = tmp.URL
-	} else if tmp.BaseURL != "" {
-		g.URL = tmp.BaseURL
-	}
-	if tmp.Key != "" {
-		g.Key = tmp.Key
-	} else if tmp.ApiKey != "" {
-		g.Key = tmp.ApiKey
-	}
-	g.ApiKey = g.Key
-	if tmp.Attempts != nil {
-		g.Attempts = *tmp.Attempts
-	}
-	if tmp.Limit != nil {
-		g.Limit = *tmp.Limit
-	}
-	return nil
 }
 
 type Planner struct {
@@ -216,11 +171,9 @@ type Config struct {
 	Store         Store         `yaml:"store"`
 	Cache         Cache         `yaml:"cache"`
 	Queue         Queue         `yaml:"queue"`
-	Database      Database      `yaml:"database"`
 	Providers     Providers     `yaml:"providers"`
 	Auth          Auth          `yaml:"auth"`
 	Geocoder      Geocoder      `yaml:"geocoder"`
-	Geocode       Geocode       `yaml:"geocode"`
 	Yandex        Yandex        `yaml:"yandex"`
 	Nominatim     Nominatim     `yaml:"nominatim"`
 	Overpass      Overpass      `yaml:"overpass"`
@@ -243,19 +196,17 @@ func Defaults() *Config {
 			ShutdownTimeout:   "10s",
 			RateLimit:         RateLimit{RPS: 100, Burst: 200},
 		},
-		Store:    Store{Kind: "memory"},
-		Cache:    Cache{Kind: "memory", TTL: "5m"},
-		Queue:    Queue{Kind: "memory"},
-		Database: Database{},
+		Store: Store{Kind: "memory"},
+		Cache: Cache{Kind: "memory", TTL: "5m"},
+		Queue: Queue{Kind: "memory"},
 		Providers: Providers{
 			Enabled: []string{},
 			Intercity: Intercity{
 				ReestrPath: "data/reestr/regions.json",
 			},
 		},
-		Geocoder:  Geocoder{Kind: "", URL: "", Key: "", Attempts: 3, Limit: 5},
-		Geocode:   Geocode{Enabled: boolPtr(true), MaxCalls: 0, TTLVerified: "2160h", TTLDisputed: "168h"},
-		Yandex:    Yandex{GeocodeURL: "https://geocode-maps.yandex.ru/1.x", GeocodeKind: ""},
+		Geocoder:  Geocoder{Kind: "", Attempts: 3, Limit: 5, MaxCalls: 0, TTLVerified: "2160h", TTLDisputed: "168h"},
+		Yandex:    Yandex{RaspURL: "https://api.rasp.yandex.net/v3.0", GeocodeURL: "https://geocode-maps.yandex.ru/1.x"},
 		Nominatim: Nominatim{URL: "https://nominatim.openstreetmap.org"},
 		Overpass: Overpass{
 			URL:       "https://overpass-api.de/api/interpreter",
@@ -302,7 +253,7 @@ func Load(path string) (*Config, error) {
 
 	applyEnv(cfg)
 	applyPrefixedEnv(cfg)
-	syncLegacy(cfg)
+	applyDefaults(cfg)
 	return cfg, nil
 }
 
@@ -337,13 +288,10 @@ func expandEnvDefaults(s string) string {
 	}
 }
 
-func syncLegacy(cfg *Config) {
-	if cfg.Store.DSN == "" && cfg.Database.DSN != "" {
-		cfg.Store.DSN = cfg.Database.DSN
-	}
-	if cfg.Database.DSN == "" && cfg.Store.DSN != "" {
-		cfg.Database.DSN = cfg.Store.DSN
-	}
+// applyDefaults подставляет дефолты для пустых значений после YAML и env.
+// Пустые строки/нули означают «не задано»; явный 0 там, где он осмыслен,
+// через YAML задать нельзя — для таких knobs используйте env.
+func applyDefaults(cfg *Config) {
 	if cfg.Nominatim.URL == "" {
 		cfg.Nominatim.URL = "https://nominatim.openstreetmap.org"
 	}
@@ -356,20 +304,8 @@ func syncLegacy(cfg *Config) {
 	if cfg.Yandex.GeocodeURL == "" {
 		cfg.Yandex.GeocodeURL = "https://geocode-maps.yandex.ru/1.x"
 	}
-	if cfg.Geocoder.URL != "" && cfg.Yandex.GeocodeURL == "https://geocode-maps.yandex.ru/1.x" {
-		cfg.Yandex.GeocodeURL = cfg.Geocoder.URL
-	}
-	if cfg.Geocoder.Key != "" && cfg.Yandex.GeocodeKey == "" {
-		cfg.Yandex.GeocodeKey = cfg.Geocoder.Key
-	}
-	if cfg.Geocoder.ApiKey != "" && cfg.Yandex.GeocodeKey == "" {
-		cfg.Yandex.GeocodeKey = cfg.Geocoder.ApiKey
-	}
-	if cfg.Geocoder.ApiKey == "" && cfg.Geocoder.Key != "" {
-		cfg.Geocoder.ApiKey = cfg.Geocoder.Key
-	}
-	if cfg.Geocoder.Key == "" && cfg.Geocoder.ApiKey != "" {
-		cfg.Geocoder.Key = cfg.Geocoder.ApiKey
+	if cfg.Yandex.RaspURL == "" {
+		cfg.Yandex.RaspURL = "https://api.rasp.yandex.net/v3.0"
 	}
 	if cfg.Geocoder.Attempts <= 0 {
 		cfg.Geocoder.Attempts = 3
@@ -407,14 +343,11 @@ func syncLegacy(cfg *Config) {
 	if cfg.Geocoder.Limit > 10 {
 		cfg.Geocoder.Limit = 10
 	}
-	if cfg.Geocode.Enabled == nil {
-		cfg.Geocode.Enabled = boolPtr(true)
+	if cfg.Geocoder.TTLVerified == "" {
+		cfg.Geocoder.TTLVerified = "2160h"
 	}
-	if cfg.Geocode.TTLVerified == "" {
-		cfg.Geocode.TTLVerified = "2160h"
-	}
-	if cfg.Geocode.TTLDisputed == "" {
-		cfg.Geocode.TTLDisputed = "168h"
+	if cfg.Geocoder.TTLDisputed == "" {
+		cfg.Geocoder.TTLDisputed = "168h"
 	}
 	if cfg.GTFS.TmpDir == "" {
 		cfg.GTFS.TmpDir = "data/tmp/gtfs"
@@ -467,7 +400,6 @@ func applyEnv(cfg *Config) {
 		cfg.HTTP.Addr = v
 	}
 	if v := os.Getenv("DATABASE_DSN"); v != "" {
-		cfg.Database.DSN = v
 		cfg.Store.DSN = v
 	}
 	if v := os.Getenv("ADMIN_TOKEN"); v != "" {
@@ -482,19 +414,19 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("YANDEX_RASP_KEY"); v != "" {
 		cfg.Yandex.RaspKey = v
 	}
+	if v := os.Getenv("YANDEX_RASP_URL"); v != "" {
+		cfg.Yandex.RaspURL = v
+	}
 	if v := os.Getenv("YANDEX_GEOCODE_KEY"); v != "" {
 		cfg.Yandex.GeocodeKey = v
 	}
 	if v := os.Getenv("YANDEX_GEOCODE_URL"); v != "" {
 		cfg.Yandex.GeocodeURL = v
 	}
-	if v := os.Getenv("YANDEX_GEOCODE_KIND"); v != "" {
-		cfg.Yandex.GeocodeKind = v
+	if v := os.Getenv("GEOCODER_KIND"); v != "" {
+		cfg.Geocoder.Kind = v
 	}
 	if v := os.Getenv("NOMINATIM_URL"); v != "" {
-		cfg.Nominatim.URL = v
-	}
-	if v := os.Getenv("NOMINATIM_BASE_URL"); v != "" {
 		cfg.Nominatim.URL = v
 	}
 	if v := os.Getenv("OVERPASS_URL"); v != "" {
@@ -502,27 +434,6 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("OVERPASS_MIRROR_URL"); v != "" {
 		cfg.Overpass.MirrorURL = v
-	}
-	if v := os.Getenv("GEOCODER_KIND"); v != "" {
-		cfg.Geocoder.Kind = v
-	}
-	if v := os.Getenv("GEOCODER_URL"); v != "" {
-		cfg.Geocoder.URL = v
-	}
-	if v := os.Getenv("GEOCODER_BASE_URL"); v != "" {
-		cfg.Geocoder.URL = v
-	}
-	if v := os.Getenv("GEOCODER_KEY"); v != "" {
-		cfg.Geocoder.Key = v
-		cfg.Geocoder.ApiKey = v
-	}
-	if v := os.Getenv("GEOCODER_API_KEY"); v != "" {
-		cfg.Geocoder.Key = v
-		cfg.Geocoder.ApiKey = v
-	}
-	if v := os.Getenv("GEOCODER_API-KEY"); v != "" {
-		cfg.Geocoder.Key = v
-		cfg.Geocoder.ApiKey = v
 	}
 	if v := os.Getenv("GEOCODER_ATTEMPTS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -624,20 +535,16 @@ func applyEnv(cfg *Config) {
 			cfg.Geocoder.Limit = n
 		}
 	}
-	if v := os.Getenv("GEOCODE_ENABLED"); v != "" {
-		b := v == "1" || v == "true"
-		cfg.Geocode.Enabled = &b
-	}
-	if v := os.Getenv("GEOCODE_MAX_CALLS"); v != "" {
+	if v := os.Getenv("GEOCODER_MAX_CALLS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-			cfg.Geocode.MaxCalls = n
+			cfg.Geocoder.MaxCalls = n
 		}
 	}
-	if v := os.Getenv("GEOCODE_TTL_VERIFIED"); v != "" {
-		cfg.Geocode.TTLVerified = v
+	if v := os.Getenv("GEOCODER_TTL_VERIFIED"); v != "" {
+		cfg.Geocoder.TTLVerified = v
 	}
-	if v := os.Getenv("GEOCODE_TTL_DISPUTED"); v != "" {
-		cfg.Geocode.TTLDisputed = v
+	if v := os.Getenv("GEOCODER_TTL_DISPUTED"); v != "" {
+		cfg.Geocoder.TTLDisputed = v
 	}
 	if v := os.Getenv("GTFS_TMP_DIR"); v != "" {
 		cfg.GTFS.TmpDir = v
@@ -747,7 +654,6 @@ func setByPath(cfg *Config, parts []string, v string) {
 	case "store":
 		if len(parts) == 2 && parts[1] == "dsn" {
 			cfg.Store.DSN = v
-			cfg.Database.DSN = v
 		}
 		if len(parts) == 2 && parts[1] == "kind" {
 			cfg.Store.Kind = v
@@ -808,13 +714,6 @@ func setByPath(cfg *Config, parts []string, v string) {
 		if len(parts) == 2 && parts[1] == "kind" {
 			cfg.Geocoder.Kind = v
 		}
-		if len(parts) == 2 && (parts[1] == "url" || parts[1] == "base_url") {
-			cfg.Geocoder.URL = v
-		}
-		if len(parts) == 2 && (parts[1] == "key" || parts[1] == "api_key") {
-			cfg.Geocoder.Key = v
-			cfg.Geocoder.ApiKey = v
-		}
 		if len(parts) == 2 && parts[1] == "attempts" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
 				cfg.Geocoder.Attempts = n
@@ -825,20 +724,15 @@ func setByPath(cfg *Config, parts []string, v string) {
 				cfg.Geocoder.Limit = n
 			}
 		}
-	case "geocode":
-		if len(parts) == 2 && parts[1] == "enabled" {
-			b := v == "1" || v == "true"
-			cfg.Geocode.Enabled = &b
-		}
 		if len(parts) == 2 && parts[1] == "ttl_verified" {
-			cfg.Geocode.TTLVerified = v
+			cfg.Geocoder.TTLVerified = v
 		}
 		if len(parts) == 2 && parts[1] == "ttl_disputed" {
-			cfg.Geocode.TTLDisputed = v
+			cfg.Geocoder.TTLDisputed = v
 		}
 		if len(parts) == 2 && parts[1] == "max_calls" {
 			if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-				cfg.Geocode.MaxCalls = n
+				cfg.Geocoder.MaxCalls = n
 			}
 		}
 	case "gtfs":
@@ -909,28 +803,28 @@ func setByPath(cfg *Config, parts []string, v string) {
 		if len(parts) == 2 && parts[1] == "rasp_key" {
 			cfg.Yandex.RaspKey = v
 		}
-		if len(parts) == 2 && (parts[1] == "geocode_key" || parts[1] == "api_key" || parts[1] == "key") {
+		if len(parts) == 2 && parts[1] == "rasp_url" {
+			cfg.Yandex.RaspURL = v
+		}
+		if len(parts) == 2 && parts[1] == "geocode_key" {
 			cfg.Yandex.GeocodeKey = v
 		}
-		if len(parts) == 2 && (parts[1] == "geocode_url" || parts[1] == "url" || parts[1] == "base_url") {
+		if len(parts) == 2 && parts[1] == "geocode_url" {
 			cfg.Yandex.GeocodeURL = v
 		}
-		if len(parts) == 2 && parts[1] == "geocode_kind" {
-			cfg.Yandex.GeocodeKind = v
-		}
 	case "nominatim":
-		if len(parts) == 2 && (parts[1] == "url" || parts[1] == "base_url") {
+		if len(parts) == 2 && parts[1] == "url" {
 			cfg.Nominatim.URL = v
 		}
 	case "overpass":
-		if len(parts) == 2 && (parts[1] == "url" || parts[1] == "base_url") {
+		if len(parts) == 2 && parts[1] == "url" {
 			cfg.Overpass.URL = v
 		}
 		if len(parts) == 2 && parts[1] == "mirror_url" {
 			cfg.Overpass.MirrorURL = v
 		}
 	case "motis":
-		if len(parts) == 2 && (parts[1] == "url" || parts[1] == "base_url") {
+		if len(parts) == 2 && parts[1] == "url" {
 			cfg.Motis.URL = v
 		}
 	case "verification":
@@ -978,7 +872,7 @@ func setByPath(cfg *Config, parts []string, v string) {
 
 func boolPtr(b bool) *bool { return &b }
 
-func (g Geocode) TTL() (verified, disputed time.Duration, err error) {
+func (g Geocoder) TTL() (verified, disputed time.Duration, err error) {
 	verified, err = time.ParseDuration(g.TTLVerified)
 	if err != nil {
 		return 0, 0, fmt.Errorf("config: geocode.ttl_verified: %w", err)

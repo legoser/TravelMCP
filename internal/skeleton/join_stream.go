@@ -3,14 +3,14 @@ package skeleton
 import (
 	"math"
 
+	"travelmcp/internal/geo"
 	"travelmcp/internal/model"
 	"travelmcp/internal/support/namesim"
 )
 
-// joinCellSizeDeg — размер гео-ячейки партиционирования (в градусах).
-// 0.5° ≈ 55км по широте: покрывает GeoThresholdM*4 (2км) с многократным
-// запасом, при этом делит РФ (~20°×170°) на ~13k ячеек.
-const joinCellSizeDeg = 0.5
+// defaultPageSize — OSM-записей на страницу JoinPager (потолок совпадает
+// с sync.skeleton_chunk_size: страница не больше чанка промоушена).
+const defaultPageSize = 100
 
 // JoinPager — пагинированный join OSM×Yandex: избегает O(N×M) на больших
 // датасетах, разбивая обе стороны на гео-ячейки. Страница = до pageSize
@@ -32,10 +32,10 @@ type JoinPager struct {
 // yUsed-флаги глобальны по индексу).
 func NewJoinPager(osm, yandex []model.AdaptedRecord, cfg JoinConfig, pageSize int) *JoinPager {
 	if pageSize <= 0 {
-		pageSize = 100
+		pageSize = defaultPageSize
 	}
 	if cfg.Ambiguity == 0 {
-		cfg.Ambiguity = 0.05
+		cfg.Ambiguity = defaultAmbiguity
 	}
 	p := &JoinPager{
 		cfg:      cfg,
@@ -58,7 +58,7 @@ func NewJoinPager(osm, yandex []model.AdaptedRecord, cfg JoinConfig, pageSize in
 }
 
 func cellOf(lat, lon float64) [2]int {
-	return [2]int{int(math.Floor(lat / joinCellSizeDeg)), int(math.Floor(lon / joinCellSizeDeg))}
+	return [2]int{int(math.Floor(lat / geo.JoinCellSizeDeg)), int(math.Floor(lon / geo.JoinCellSizeDeg))}
 }
 
 // nearbyYandex возвращает индексы Yandex-кандидатов ячейки записи и соседних
@@ -173,7 +173,7 @@ func (p *JoinPager) pairScoreCached(a, b model.AdaptedRecord) float64 {
 	})
 }
 
-// prefilter отсекает кандидатов дальше geoWindowM без код-матча: быстрая
+// prefilter отсекает кандидатов дальше JoinGeoWindowM без код-матча: быстрая
 // планарная оценка (degrees → метры по широте), haversine остаётся внутри
 // PairScore. Код-матч проходит окно всегда (тёзка за 79км — легитимный
 // identity-сигнал). Бескординатные кандидаты проходят всегда.
@@ -189,9 +189,9 @@ func (p *JoinPager) prefilter(o model.AdaptedRecord, candIdx []int) []int {
 			out = append(out, j)
 			continue
 		}
-		dLat := (*y.Lat - oLat) * 111000
-		dLon := (*y.Lon - oLon) * 111000 * cosApprox(oLat)
-		if dLat*dLat+dLon*dLon <= geoWindowM*geoWindowM {
+		dLat := (*y.Lat - oLat) * geo.MetersPerDegree
+		dLon := (*y.Lon - oLon) * geo.MetersPerDegree * geo.CosLatApprox(oLat)
+		if dLat*dLat+dLon*dLon <= geo.JoinGeoWindowM*geo.JoinGeoWindowM {
 			out = append(out, j)
 			continue
 		}
@@ -200,14 +200,6 @@ func (p *JoinPager) prefilter(o model.AdaptedRecord, candIdx []int) []int {
 		}
 	}
 	return out
-}
-
-// geoWindowM — окно pre-filter: 4×GeoThreshold (2км при 500м) — весь
-// диапазон, где geom-фича PairScore ненулевая.
-const geoWindowM = 2000
-
-func cosApprox(latDeg float64) float64 {
-	return 1 - latDeg*latDeg*0.0000152
 }
 
 func (p *JoinPager) allFreeYandex() []int {

@@ -21,6 +21,20 @@ const (
 	DefaultMirrorURL = "https://overpass.openstreetmap.fr/api/interpreter"
 )
 
+// Локальные значения (не конфиг): лимиты протокола Overpass QL.
+// defaultStopsTimeoutS/defaultSearchTimeoutS/defaultAroundTimeoutS — таймауты
+// запросов (публичный API перегружен, короткие таймауты упираются в 429/504);
+// defaultAroundRadiusM — радиус поиска остановок вокруг точки;
+// defaultResultsLimit/maxResultsLimit — потолок кандидатов за запрос.
+const (
+	defaultStopsTimeoutS  = 60
+	defaultSearchTimeoutS = 30
+	defaultAroundTimeoutS = 60
+	defaultAroundRadiusM  = 500
+	defaultResultsLimit   = 5
+	maxResultsLimit       = 10
+)
+
 func init() {
 	geocoder.Register("overpass", func(cfg config.Config, client *httpx.Client) geocoder.Geocoder {
 		return New(cfg, client)
@@ -67,7 +81,7 @@ func (b BBox) String() string {
 
 func BuildStopsQuery(b BBox, timeoutS int) string {
 	if timeoutS <= 0 {
-		timeoutS = 60
+		timeoutS = defaultStopsTimeoutS
 	}
 	return fmt.Sprintf(`[out:json][timeout:%d];
 (
@@ -92,7 +106,7 @@ func EscapeQLString(s string) string {
 // nodes/ways/relations by name in the given bbox or globally if bbox is empty.
 func BuildSearchByNameQuery(name string, b *BBox, timeoutS int) string {
 	if timeoutS <= 0 {
-		timeoutS = 30
+		timeoutS = defaultSearchTimeoutS
 	}
 	escaped := EscapeQLString(name)
 	bboxFilter := ""
@@ -105,11 +119,12 @@ func BuildSearchByNameQuery(name string, b *BBox, timeoutS int) string {
   node["name"="%s"]["public_transport"~"platform|station|stop_position"]%s;
   node["name"="%s"]["railway"~"station|halt"]%s;
 );
-out center 10;`,
+out center %d;`,
 		timeoutS,
 		escaped, bboxFilter,
 		escaped, bboxFilter,
 		escaped, bboxFilter,
+		maxResultsLimit,
 	)
 }
 
@@ -150,13 +165,16 @@ func (a *Adapter) GeocodeCandidates(ctx context.Context, query string, limit int
 		return nil, errors.New("empty query")
 	}
 	if limit <= 0 {
-		limit = 5
+		limit = a.cfg.Geocoder.Limit
 	}
-	if limit > 10 {
-		limit = 10
+	if limit <= 0 {
+		limit = defaultResultsLimit
+	}
+	if limit > maxResultsLimit {
+		limit = maxResultsLimit
 	}
 
-	ql := BuildSearchByNameQuery(query, nil, 30)
+	ql := BuildSearchByNameQuery(query, nil, defaultSearchTimeoutS)
 	respBody, err := a.execQL(ctx, ql)
 	if err != nil {
 		return nil, err
@@ -206,12 +224,12 @@ func (a *Adapter) Reverse(ctx context.Context, lat, lon float64) (string, error)
 }
 
 // BuildAroundQuery constructs an Overpass QL query for public-transport nodes within
-// radiusMeters of the given point. Default radius is 500m when radiusMeters <= 0.
+// radiusMeters of the given point. Default radius is defaultAroundRadiusM when radiusMeters <= 0.
 func BuildAroundQuery(lat, lon float64, radiusMeters int) string {
 	if radiusMeters <= 0 {
-		radiusMeters = 500
+		radiusMeters = defaultAroundRadiusM
 	}
-	return fmt.Sprintf(`[out:json][timeout:60];
+	return fmt.Sprintf(`[out:json][timeout:%d];
 node(around:%d,%.6f,%.6f)
   ["public_transport"~"platform|station|stop_position"];
 node(around:%d,%.6f,%.6f)
@@ -219,6 +237,7 @@ node(around:%d,%.6f,%.6f)
 node(around:%d,%.6f,%.6f)
   ["railway"~"station|halt"];
 out center;`,
+		defaultAroundTimeoutS,
 		radiusMeters, lat, lon,
 		radiusMeters, lat, lon,
 		radiusMeters, lat, lon)
@@ -229,7 +248,7 @@ out center;`,
 // network request with automatic fallback to the mirror endpoint.
 func (a *Adapter) StationsAround(ctx context.Context, lat, lon float64, radiusMeters int) ([]model.AdaptedRecord, error) {
 	if radiusMeters <= 0 {
-		radiusMeters = 500
+		radiusMeters = defaultAroundRadiusM
 	}
 	ql := BuildAroundQuery(lat, lon, radiusMeters)
 	body, err := a.execQL(ctx, ql)
@@ -265,7 +284,7 @@ func (a *Adapter) doPost(ctx context.Context, rawURL, ql string) ([]byte, error)
 		return nil, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", "travelmcp/1.0 (https://github.com/anomalyco/travelmcp)")
+	req.Header.Set("User-Agent", geocoder.DefaultUserAgent)
 
 	var resp *http.Response
 	if a.client != nil {

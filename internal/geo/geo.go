@@ -12,6 +12,30 @@ const (
 	walkSpeedKmH  = 5.0
 )
 
+// Геодезические константы для pre-filter окон и blocking-индексов.
+// Точные дистанции — Haversine/HaversineM; планарная оценка через
+// MetersPerDegree/CosLatApprox — только для дешёвых окон в пару км.
+const (
+	// MetersPerDegree — метров в градусе широты (сферическое приближение).
+	MetersPerDegree = 111000.0
+	// JoinCellSizeDeg — сторона гео-ячейки blocking-индекса (skeleton
+	// JoinPager, sync matchIndex): 0.5° ≈ 55 км — покрывает окно
+	// JoinGeoWindowM с запасом, делит РФ на ~13k ячеек.
+	JoinCellSizeDeg = 0.5
+	// JoinGeoWindowM — планарное pre-filter окно кандидатов: 4×GeoThreshold
+	// (2 км при 500 м) — весь диапазон ненулевой geom-фичи ScorePair.
+	JoinGeoWindowM = 2000
+)
+
+// cosLatFactor — коэффициент параболической аппроксимации cos(широта):
+// cos(lat) ≈ 1 − lat²·cosLatFactor, lat в градусах. Ошибка <1% до 60°.
+const cosLatFactor = 0.0000152
+
+// CosLatApprox — поправка долготы на широту для планарных окон.
+func CosLatApprox(latDeg float64) float64 {
+	return 1 - latDeg*latDeg*cosLatFactor
+}
+
 func Haversine(a, b model.Coords) float64 {
 	lat1 := a.Lat * math.Pi / 180
 	lat2 := b.Lat * math.Pi / 180
@@ -22,6 +46,11 @@ func Haversine(a, b model.Coords) float64 {
 		math.Cos(lat1)*math.Cos(lat2)*math.Sin(dLon/2)*math.Sin(dLon/2)
 
 	return 2 * earthRadiusKm * math.Asin(math.Sqrt(h))
+}
+
+// HaversineM — точное расстояние в метрах по гаверсинусу.
+func HaversineM(lat1, lon1, lat2, lon2 float64) float64 {
+	return Haversine(model.Coords{Lat: lat1, Lon: lon1}, model.Coords{Lat: lat2, Lon: lon2}) * 1000
 }
 
 func WalkTimeMinutes(distKm float64) int {

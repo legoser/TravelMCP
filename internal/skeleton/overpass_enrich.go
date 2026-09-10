@@ -8,14 +8,22 @@ import (
 	"travelmcp/internal/model"
 )
 
-const defaultRadiusM = 500
+// Локальные значения enrich-стадии (не конфиг): радиус поиска остановок
+// вокруг unverified-записи, потолок обрабатываемых точек за прогон и score
+// восстановленных записей (ниже verified-порога 0.6 — такие записи идут
+// в канон как IdentityOnly, а не verified).
+const (
+	defaultRadiusM   = 500
+	defaultMaxPoints = 200
+	enrichedScore    = 0.75
+)
 
 func OverpassEnrich(ctx context.Context, outcome *JoinOutcome, provider *geocoder.CachedStationsProvider, maxPoints int, logger *slog.Logger) int {
 	if provider == nil {
 		return 0
 	}
 	if maxPoints <= 0 {
-		maxPoints = 200
+		maxPoints = defaultMaxPoints
 	}
 	logger = logger.With("step", "overpass_enrich")
 
@@ -70,7 +78,7 @@ func OverpassEnrich(ctx context.Context, outcome *JoinOutcome, provider *geocode
 					"yandex_name":    rec.NameRu,
 				},
 			},
-			Score:      0.75,
+			Score:      enrichedScore,
 			Enrichment: IdentityOnly,
 		})
 		recoveredIdx[i] = true

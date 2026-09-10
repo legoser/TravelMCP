@@ -55,11 +55,15 @@ func (s *Synth) Network() (*model.Network, error) {
 	return s.build(s.day), nil
 }
 
+// synthServiceID — календарь мока: 1 = «ежедневно» (все 7 дней недели,
+// см. build выше). Не путать с ServiceID реальных провайдеров из БД.
+const synthServiceID = 1
+
 func (s *Synth) build(dayBase time.Time) *model.Network {
 	net := model.NewNetwork()
-	net.Services[1] = &model.Service{ID: 1, Name: "ежедневно"}
+	net.Services[synthServiceID] = &model.Service{ID: synthServiceID, Name: "ежедневно"}
 	for wd := 0; wd < 7; wd++ {
-		net.ServiceDays[1] = append(net.ServiceDays[1], model.ServiceDay{ServiceID: 1, Weekday: wd})
+		net.ServiceDays[synthServiceID] = append(net.ServiceDays[synthServiceID], model.ServiceDay{ServiceID: synthServiceID, Weekday: wd})
 	}
 
 	s.addStop(net, "a-cen", "Пермь, Центральная площадь", 58.0135, 56.2495)
@@ -147,7 +151,7 @@ func (s *Synth) addLine(net *model.Network, route model.Route, stops []string, t
 			RouteID:    route.ID,
 			ProviderID: SynthID,
 			Mode:       route.Mode,
-			ServiceID:  1, // Changed from "everyday" to 1 as placeholder
+			ServiceID:  synthServiceID,
 			StopTimes:  stopTimes,
 		}
 		for i := 0; i < len(stops)-1; i++ {

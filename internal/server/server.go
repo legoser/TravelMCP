@@ -876,7 +876,7 @@ func (s *Server) handleAdminExternalCall(w http.ResponseWriter, r *http.Request)
 		req.Provider = "yandex"
 	}
 	s.logger.Debug("external-call request", "provider", req.Provider, "query", req.Query, "lat", req.Lat, "lon", req.Lon, "actor", userEmail(user))
-	ok, used, _ := s.store.TryConsumeQuota(r.Context(), req.Provider, 1000)
+	ok, used, _ := s.store.TryConsumeQuota(r.Context(), req.Provider, store.DefaultQuotaLimit)
 	s.logger.Debug("quota check", "provider", req.Provider, "ok", ok, "used", used)
 	if !ok {
 		s.logger.Warn("quota exhausted", "provider", req.Provider)
@@ -1600,7 +1600,7 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		"planner":       cfg.Planner,
 		"log":           cfg.Log,
 		"telemetry":     cfg.Telemetry,
-		"geocoder":      map[string]any{"kind": cfg.Geocoder.Kind, "url": cfg.Geocoder.URL, "attempts": cfg.Geocoder.Attempts},
+		"geocoder":      map[string]any{"kind": cfg.Geocoder.Kind, "attempts": cfg.Geocoder.Attempts, "limit": cfg.Geocoder.Limit},
 		"yandex":        map[string]any{"rasp_url": cfg.Yandex.RaspURL, "geocode_url": cfg.Yandex.GeocodeURL, "geocode_key": ""},
 		"nominatim":     map[string]any{"url": cfg.Nominatim.URL},
 		"motis":         map[string]any{"url": cfg.Motis.URL},
@@ -1682,7 +1682,6 @@ func (s *Server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 		if m, ok := v.(map[string]any); ok {
 			if dsn, ok := m["dsn"].(string); ok && dsn != "" {
 				s.cfg.Store.DSN = dsn
-				s.cfg.Database.DSN = dsn
 			}
 		}
 	}

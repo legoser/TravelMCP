@@ -12,6 +12,14 @@ import (
 
 type Handler func(ctx context.Context, job store.JobRow) error
 
+// Локальные значения воркера (не конфиг): maxAttempts — попыток до
+// dead-letter (транзиентные ошибки переживают ретраи с Backoff);
+// defaultPollInterval — опрос очереди, когда Run вызван без интервала.
+const (
+	maxAttempts         = 5
+	defaultPollInterval = 5 * time.Second
+)
+
 type Worker struct {
 	store    store.Store
 	handlers map[string]Handler
@@ -47,7 +55,7 @@ func (w *Worker) RunOnce(ctx context.Context) error {
 			_ = w.store.MarkJobRetry(ctx, job.ID, err.Error())
 			return err
 		}
-		if job.Attempts >= 5 {
+		if job.Attempts >= maxAttempts {
 			_ = w.store.MarkJobDead(ctx, job.ID, err.Error())
 		} else {
 			_ = w.store.MarkJobRetry(ctx, job.ID, err.Error())
@@ -66,7 +74,7 @@ func (w *Worker) withQuota(ctx context.Context, job *store.JobRow, h Handler) er
 	}
 	var lastErr error
 	for _, p := range providers {
-		limit := 1000
+		limit := store.DefaultQuotaLimit
 		ok, _, _ := w.store.TryConsumeQuota(ctx, p, limit)
 		if !ok {
 			lastErr = fmt.Errorf("429 quota exhausted for %s", p)
@@ -128,7 +136,7 @@ func contains(s, sub string) bool {
 
 func (w *Worker) Run(ctx context.Context, interval time.Duration) {
 	if interval == 0 {
-		interval = 5 * time.Second
+		interval = defaultPollInterval
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
