@@ -7,11 +7,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"time"
 
 	"travelmcp/internal/config"
+	"travelmcp/internal/logger"
 	"travelmcp/internal/store"
 	_ "travelmcp/internal/store/memory"
 	_ "travelmcp/internal/store/postgres"
@@ -26,16 +28,17 @@ func main() {
 	flag.StringVar(&feedPath, "feed", "", "путь к GTFS zip-фиду")
 	flag.StringVar(&tag, "tag", "gtfs-import", "тег прогона")
 	flag.Parse()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	if feedPath == "" {
 		slog.Error("feed пуст: -feed path/to/gtfs.zip")
 		os.Exit(1)
 	}
 	cfg, err := config.Load(configPath)
 	if err != nil {
-		slog.Error("config load failed", "error", err)
+		fmt.Fprintf(os.Stderr, "config load failed: %v\n", err)
 		os.Exit(1)
 	}
+	factory := logger.NewFactory(cfg.Log)
+	slog.SetDefault(factory.For("main"))
 	ctx := context.Background()
 	st, err := store.New(ctx, cfg.Store.DSN)
 	if err != nil {

@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strconv"
 
@@ -35,6 +36,7 @@ type AttachInput struct {
 	MaxSpeedKmh    float64
 	ParamsFor      func(model.DensityClass) verification.Params
 	ClassForRegion func(string) model.DensityClass
+	Logger         *slog.Logger
 }
 
 type MatchedStopTime struct {
@@ -128,6 +130,11 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 	if in.ParamsFor == nil {
 		return rep, fmt.Errorf("sync attach: нет скоринговых параметров (ParamsFor)")
 	}
+	logger := in.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger = logger.With("step", "attach_trips", "source", in.Source)
 	source := in.Source
 	if source == "" {
 		source = "mintrans"
@@ -181,7 +188,8 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 			})
 			continue
 		}
-		matched, worstReason, worstScore, unmatched := matchStops(ft, mindex, source, classFor, in.ParamsFor)
+		tripTag := logger.With("step", "match_stop", "route_nk", routeNK, "trip_nk", tripNK, "direction", ft.Direction)
+		matched, worstReason, worstScore, unmatched := matchStops(ft, mindex, source, classFor, in.ParamsFor, logger)
 		if len(unmatched) > 0 && !backbonePromotable(matched, len(ft.Stops)) {
 			st := StagedTrip{
 				RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg,
@@ -195,8 +203,10 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 			if worstReason == "incomplete_trip" {
 				st.State = "skeleton_gap"
 				st.Reason = "нет верифицированного терминала в скелете"
+				tripTag.Warn("trip staged: skeleton_gap", "matched_stops", len(matched), "unmatched_stops", len(unmatched))
 			} else {
 				rep.Reviews = append(rep.Reviews, tripReview(source, routeNK, tripNK, worstReason, worstScore))
+				tripTag.Warn("trip staged: needs_review", "reason", worstReason, "worst_score", worstScore, "matched_stops", len(matched), "unmatched_stops", len(unmatched))
 			}
 			rep.Staged = append(rep.Staged, st)
 			continue
@@ -207,15 +217,18 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 			// пропуск валидируются ниже на эффективной последовательности
 			rep.MidGaps += len(unmatched)
 			rep.GappedPromoted++
+			tripTag.Warn("trip backbone-promoted with mid_gaps", "matched_stops", len(matched), "gap_stops", len(unmatched))
 		}
 		collapsed := collapseConsecutive(matched)
 		if bad := checkMonotonic(collapsed); bad != "" {
 			rep.Dead = append(rep.Dead, DeadTrip{RouteNK: routeNK, TripNK: tripNK, Reason: "non-monotonic", Detail: bad})
+			tripTag.Warn("trip dead: non-monotonic", "detail", bad, "matched_stops", len(collapsed))
 			continue
 		}
 		if bad := checkSpeeds(collapsed, in.Terminals, maxSpeed); bad != nil {
 			bad.RouteNK, bad.TripNK = routeNK, tripNK
 			rep.Dead = append(rep.Dead, *bad)
+			tripTag.Warn("trip dead: speed_violation", "reason", bad.Reason, "detail", bad.Detail, "max_speed_kmh", maxSpeed)
 			continue
 		}
 		if soft := softSpeeds(collapsed, in.Terminals, maxSpeed); soft != "" {
@@ -228,8 +241,10 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 				IsSyntheticKey: true, Carrier: ft.Carrier, CarrierINN: ft.CarrierINN, Weekdays: ft.Weekdays,
 			})
 			rep.Reviews = append(rep.Reviews, tripReview(source, routeNK, tripNK, "low_confidence", 0))
+			tripTag.Warn("trip staged: soft_speed_violation", "reason", soft, "matched_stops", len(collapsed))
 			continue
 		}
+		tripTag.Info("trip promoted", "matched_stops", len(collapsed), "transfers", len(collapsed)-1)
 		current[tripNK] = routeNK
 		rep.Promoted = append(rep.Promoted, PromotableTrip{
 			RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg,
@@ -246,12 +261,12 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 	sort.Slice(rep.Dead, func(i, j int) bool { return rep.Dead[i].TripNK < rep.Dead[j].TripNK })
 	tombstone(&rep, in.PrevCanon, current, threshold)
 	if rep.In != len(rep.Promoted)+len(rep.Staged)+len(rep.Dead) {
-		return rep, fmt.Errorf("sync attach: несходимость строк: in=%d promoted=%d staged=%d dead=%d",
-			rep.In, len(rep.Promoted), len(rep.Staged), len(rep.Dead))
+		return rep, fmt.Errorf("sync attach: несходимость строк: in=%d promoted=%d staged=%d dead=%d (source=%s)",
+			rep.In, len(rep.Promoted), len(rep.Staged), len(rep.Dead), source)
 	}
 	if rep.Alert {
-		return rep, fmt.Errorf("sync attach: churn-alert: churn=%.3f disappearance=%.3f выше порога %.3f",
-			rep.Churn, rep.Disappearance, threshold)
+		return rep, fmt.Errorf("sync attach: churn-alert: churn=%.3f disappearance=%.3f выше порога %.3f (source=%s)",
+			rep.Churn, rep.Disappearance, threshold, source)
 	}
 	return rep, nil
 }
@@ -295,7 +310,7 @@ func PairItemFromStop(name string, lat, lon *float64, settlement, source string,
 // (D-1: пул = гео-окно ∪ код-совпадения ∪ no-coords, не вся страна) с greedy
 // exclusivity внутри рейса (D-2: занятый терминал недоступен следующим
 // позициям; кольцевой первый==последний — легитимен, §5.1).
-func matchStops(ft model.FlatTrip, idx *matchIndex, source string, classFor func(string) model.DensityClass, paramsFor func(model.DensityClass) verification.Params) ([]MatchedStopTime, string, float64, []string) {
+func matchStops(ft model.FlatTrip, idx *matchIndex, source string, classFor func(string) model.DensityClass, paramsFor func(model.DensityClass) verification.Params, logger *slog.Logger) ([]MatchedStopTime, string, float64, []string) {
 	terms := idx.terms
 	var matched []MatchedStopTime
 	var unmatched []string
@@ -338,6 +353,12 @@ func matchStops(ft model.FlatTrip, idx *matchIndex, source string, classFor func
 				worstReason = reason
 				worstScore = score.Value
 			}
+			logger.Debug("stop match: not verified",
+				"stop_id", s.StopID, "stop_name", s.Name,
+				"decision", d, "reason", reason, "score", score.Value,
+				"distance_m", score.DistanceM, "name_sim", score.NameSim,
+				"code_match", score.CodeMatch, "trust", score.Trust,
+				"guard_ok", score.GuardOK, "candidates", len(cands))
 			continue
 		}
 		matchedID := terms[poolIdx[idxBest]].ID
@@ -357,6 +378,12 @@ func matchStops(ft model.FlatTrip, idx *matchIndex, source string, classFor func
 		if score.CodeMatch {
 			method = "code"
 		}
+		logger.Debug("stop match: verified",
+			"stop_id", s.StopID, "stop_name", s.Name,
+			"terminal_id", matchedID, "terminal_name", t.Name,
+			"score", score.Value, "distance_m", score.DistanceM,
+			"name_sim", score.NameSim, "code_match", score.CodeMatch,
+			"trust", score.Trust, "guard_ok", score.GuardOK, "method", method)
 		matched = append(matched, MatchedStopTime{
 			Seq: seq, TerminalID: t.ID, StopID: s.StopID,
 			ArrivalS: arr, DepartureS: dep,

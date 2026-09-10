@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 
 	"travelmcp/internal/model"
@@ -84,7 +85,7 @@ func TestPersistAttachesIdentifiers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("attach: %v", err)
 	}
-	sum, err := PersistAttachReport(ctx, ms, rep, "mintrans")
+	sum, err := PersistAttachReport(ctx, ms, rep, "mintrans", slog.Default())
 	if err != nil {
 		t.Fatalf("persist: %v", err)
 	}
@@ -105,7 +106,7 @@ func TestResyncByCodeWithoutGeo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("attach: %v", err)
 	}
-	if _, err := PersistAttachReport(ctx, ms, rep, "mintrans"); err != nil {
+	if _, err := PersistAttachReport(ctx, ms, rep, "mintrans", slog.Default()); err != nil {
 		t.Fatalf("persist: %v", err)
 	}
 	bare := []AttachTerminal{
@@ -161,7 +162,7 @@ func TestPersistStaleCodeDivergenceToReview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("attach: %v", err)
 	}
-	sum, err := PersistAttachReport(ctx, ms, rep, "mintrans")
+	sum, err := PersistAttachReport(ctx, ms, rep, "mintrans", slog.Default())
 	if err != nil {
 		t.Fatalf("persist: %v", err)
 	}
@@ -196,7 +197,7 @@ func TestResyncSameCodesNoDivergence(t *testing.T) {
 		if err != nil {
 			t.Fatalf("attach: %v", err)
 		}
-		sum, err := PersistAttachReport(ctx, ms, rep, "mintrans")
+		sum, err := PersistAttachReport(ctx, ms, rep, "mintrans", slog.Default())
 		if err != nil {
 			t.Fatalf("persist: %v", err)
 		}
@@ -215,7 +216,7 @@ func TestPersistAlertFreezesWriteback(t *testing.T) {
 	ctx := context.Background()
 	rep := AttachReport{In: 1, Alert: true,
 		Promoted: []PromotableTrip{{RouteNK: "42.22.001", TripNK: "42.22.001|forward:1:0"}}}
-	if _, err := PersistAttachReport(ctx, ms, rep, "mintrans"); err == nil {
+	if _, err := PersistAttachReport(ctx, ms, rep, "mintrans", slog.Default()); err == nil {
 		t.Fatal("alerted-отчёт обязан запрещать персист (заморозка накопления кодов)")
 	}
 	if _, ok := ms.FindRouteID(ctx, "mintrans", "42.22.001"); ok {

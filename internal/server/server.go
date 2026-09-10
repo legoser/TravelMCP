@@ -1846,9 +1846,20 @@ func metricsMiddleware(next http.Handler) http.Handler {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: 200}
 		next.ServeHTTP(rec, r)
-		telemetry.HTTPRequests.WithLabelValues(fmt.Sprint(rec.status), r.URL.Path).Inc()
-		_ = time.Since(start)
+		handler := normalizeRoute(r.URL.Path)
+		telemetry.HTTPRequests.WithLabelValues(fmt.Sprint(rec.status), handler).Inc()
+		telemetry.HTTPRequestDuration.WithLabelValues(fmt.Sprint(rec.status), handler).Observe(time.Since(start).Seconds())
 	})
+}
+
+func normalizeRoute(path string) string {
+	segs := strings.Split(path, "/")
+	for i, s := range segs {
+		if _, err := strconv.Atoi(s); err == nil {
+			segs[i] = "{id}"
+		}
+	}
+	return strings.Join(segs, "/")
 }
 
 func (s *Server) loggingMiddleware(next http.Handler) http.Handler {

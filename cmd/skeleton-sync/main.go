@@ -19,6 +19,7 @@ import (
 	"travelmcp/internal/adapters/overpass"
 	"travelmcp/internal/config"
 	"travelmcp/internal/geocoder"
+	"travelmcp/internal/logger"
 	"travelmcp/internal/model"
 	"travelmcp/internal/skeleton"
 	"travelmcp/internal/store"
@@ -47,14 +48,15 @@ func main() {
 	flag.BoolVar(&noOverpass, "no-overpass", false, "не обогащать через Overpass StationsAround")
 	flag.Parse()
 
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	ctx := context.Background()
 
 	cfg, err := config.Load(configPath)
 	if err != nil {
-		slog.Error("config load failed", "error", err)
+		fmt.Fprintf(os.Stderr, "config load failed: %v\n", err)
 		os.Exit(1)
 	}
+	factory := logger.NewFactory(cfg.Log)
+	slog.SetDefault(factory.For("main"))
 	sc := cfg.Sync
 	if osmOverride != "" {
 		sc.OsmPath = osmOverride
