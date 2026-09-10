@@ -46,6 +46,26 @@ type TerminalApproveStore interface {
 	ApproveTerminal(ctx context.Context, terminalID int64, tr TerminalRow, names map[string]string) error
 }
 
+// IdentifierSchemeRow — строка справочника identifier_schemes: типы внешних
+// кодов терминалов/перевозчиков, редактируются через админку, а не миграцией.
+type IdentifierSchemeRow struct {
+	Code         string `json:"code"`
+	System       string `json:"system"`
+	DisplayName  string `json:"display_name"`
+	Priority     int    `json:"priority"`
+	IsResolvable bool   `json:"is_resolvable"`
+	IsMergeKey   bool   `json:"is_merge_key"`
+}
+
+// IdentifierSchemeStore — CRUD справочника identifier_schemes. Delete
+// возвращает человекочитаемую ошибку, если тип кода уже используется.
+type IdentifierSchemeStore interface {
+	ListIdentifierSchemes(ctx context.Context) ([]IdentifierSchemeRow, error)
+	UpsertIdentifierScheme(ctx context.Context, s IdentifierSchemeRow) error
+	DeleteIdentifierScheme(ctx context.Context, code string) error
+	ListIdentifierSystems(ctx context.Context) ([]string, error)
+}
+
 type BrowserStore interface {
 	ListRoutesAdmin(ctx context.Context, limit, offset int, q string) ([]map[string]any, int, error)
 	ListTripsAdmin(ctx context.Context, routeID int64, limit, offset int) ([]map[string]any, int, error)

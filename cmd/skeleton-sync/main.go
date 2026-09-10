@@ -26,7 +26,6 @@ import (
 	_ "travelmcp/internal/store/memory"
 	_ "travelmcp/internal/store/postgres"
 	"travelmcp/internal/support/httpx"
-	"travelmcp/internal/support/namesim"
 	"travelmcp/internal/sync"
 )
 
@@ -42,14 +41,14 @@ const (
 )
 
 func main() {
-	var configPath, tag, osmOverride, yandexOverride, reestrOverride, regionOverride string
+	var configPath, tag, osmOverride, yandexOverride, flatOverride, regionOverride string
 	var resumeRun int64
 	var dryRun, noReverse, noOverpass bool
 	flag.StringVar(&configPath, "config", "configs/config.dev.yaml", "путь к YAML-конфигу")
 	flag.StringVar(&tag, "tag", "pilot-kuzbass", "тег прогона")
 	flag.StringVar(&osmOverride, "osm", "", "переопределить sync.osm_path")
 	flag.StringVar(&yandexOverride, "yandex", "", "переопределить sync.yandex_dump_path")
-	flag.StringVar(&reestrOverride, "reestr", "", "переопределить sync.reestr_path")
+	flag.StringVar(&flatOverride, "flat", "", "переопределить sync.flat_trips_path")
 	flag.StringVar(&regionOverride, "region", "", "переопределить sync.skeleton_region")
 	flag.Int64Var(&resumeRun, "run", 0, "продолжить незавершённый прогон с этим sync_runs.id")
 	flag.BoolVar(&dryRun, "dry-run", false, "построить join и coverage без записи в БД")
@@ -73,8 +72,8 @@ func main() {
 	if yandexOverride != "" {
 		sc.YandexDumpPath = yandexOverride
 	}
-	if reestrOverride != "" {
-		sc.ReestrPath = reestrOverride
+	if flatOverride != "" {
+		sc.FlatTripsPath = flatOverride
 	}
 	if regionOverride != "" {
 		sc.SkeletonRegion = regionOverride
@@ -146,7 +145,7 @@ func main() {
 	outcome := joinPaged(osm, yan)
 	slog.Info("join done", "canon", len(outcome.Canon), "unverified", len(outcome.Unverified), "ambiguous", len(outcome.DuplicateAmbiguous))
 
-	inputSHA, err := hashInputs(sc.OsmPath, sc.YandexDumpPath, sc.ReestrPath)
+	inputSHA, err := hashInputs(sc.OsmPath, sc.YandexDumpPath, sc.FlatTripsPath)
 	if err != nil {
 		slog.Error("hash inputs failed", "error", err)
 		os.Exit(1)
@@ -263,7 +262,7 @@ func main() {
 	}
 	slog.Info("phase0 done", "run_id", phase0ID, "matched", legacySum.Matched, "updated", legacySum.Updated, "review", legacySum.Review)
 
-	if sc.ReestrPath != "" {
+	if sc.FlatTripsPath != "" {
 		if err := runCoverage(ctx, st, sc, tag); err != nil {
 			slog.Error("coverage failed", "error", err)
 			os.Exit(1)
@@ -551,9 +550,9 @@ func runDryCoverage(sc config.Sync, outcome skeleton.JoinOutcome) {
 		}
 		skels = append(skels, store.SkeletonTerminalRow{NameRu: j.Record.NameRu, Lat: lat, Lon: lon, Settlement: j.Record.Extra["settlement"]})
 	}
-	stops, err := loadRegistryStops(sc.ReestrPath)
+	stops, err := loadFlatStops(sc.FlatTripsPath)
 	if err != nil {
-		slog.Error("reestr load failed", "error", err)
+		slog.Error("flat_trips load failed", "error", err)
 		os.Exit(1)
 	}
 	cov := sync.MeasureCoverage(stops, skels, sc.CoverageSoftScore, skeleton.DefaultJoinConfig())
@@ -566,26 +565,16 @@ func runDryCoverage(sc config.Sync, outcome skeleton.JoinOutcome) {
 	fmt.Println(string(raw))
 }
 
-type reestrStop struct {
-	Name   string `json:"name"`
-	Region string `json:"region"`
-}
-
-func loadRegistryStops(path string) ([]sync.RegistryStop, error) {
+func loadFlatStops(path string) ([]sync.RegistryStop, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	var doc struct {
-		Stops []reestrStop `json:"stops"`
-	}
-	if err := json.Unmarshal(data, &doc); err != nil {
+	var payload model.FlatPayload
+	if err := json.Unmarshal(data, &payload); err != nil {
 		return nil, err
 	}
-	out := make([]sync.RegistryStop, 0, len(doc.Stops))
-	for _, s := range doc.Stops {
-		out = append(out, sync.RegistryStop{Name: s.Name, Region: s.Region, Settlement: namesim.ExtractSettlement(s.Name)})
-	}
+	out := sync.RegistryStopsFromFlatTrips(payload.Trips)
 	return out, nil
 }
 
@@ -598,7 +587,7 @@ func runCoverage(ctx context.Context, st store.Store, sc config.Sync, tag string
 	if err != nil {
 		return err
 	}
-	stops, err := loadRegistryStops(sc.ReestrPath)
+	stops, err := loadFlatStops(sc.FlatTripsPath)
 	if err != nil {
 		return err
 	}

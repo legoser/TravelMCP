@@ -1,10 +1,20 @@
-package model
+package main
 
 import (
 	"sort"
 	"strconv"
 	"strings"
 )
+
+// Flat-контракт (структурно = model.FlatTrip / model.FlatPayload из
+// главного модуля travelmcp; дублируется, чтобы модуль оставался
+// standalone — «минимум импортов и встраиваний»).
+
+type AdaptedIdentifier struct {
+	System   string `json:"system"`
+	CodeType string `json:"code_type"`
+	Code     string `json:"code"`
+}
 
 type FlatStop struct {
 	StopID string              `json:"stop_id"`
@@ -34,8 +44,6 @@ type FlatTrip struct {
 	Weekdays      []int      `json:"weekdays,omitempty"`
 }
 
-// FlattenStats — статистика конвертации исходного формата в flat-рейсы;
-// заполняется коннектором, конвейер только читает.
 type FlattenStats struct {
 	Schedules            int `json:"schedules"`
 	Runs                 int `json:"runs"`
@@ -46,18 +54,16 @@ type FlattenStats struct {
 	ParityTrips          int `json:"parity_trips"`
 }
 
-// FlatPayload — конверт (envelope) flat-формата: файл flat_trips.json,
-// который генерирует коннектор источника и читает cmd/trips-sync.
-type FlatPayload struct {
-	Meta  FlatMeta     `json:"meta"`
-	Stats FlattenStats `json:"stats"`
-	Trips []FlatTrip   `json:"trips"`
-}
-
 type FlatMeta struct {
 	Source    string `json:"source"`
 	Snapshot  string `json:"snapshot,omitempty"`
 	Generator string `json:"generator,omitempty"`
+}
+
+type FlatPayload struct {
+	Meta  FlatMeta     `json:"meta"`
+	Stats FlattenStats `json:"stats"`
+	Trips []FlatTrip   `json:"trips"`
 }
 
 // FormatWeekdays — канонический формат дней недели (вс=0..сб=6):

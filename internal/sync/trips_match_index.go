@@ -50,7 +50,7 @@ func buildMatchIndex(terms []AttachTerminal) *matchIndex {
 // candidates — пул кандидатов для стопа: гео-окно ∪ код-совпадения ∪
 // бескординатные терминалы. Детерминизм: порядок индексов стабильной
 // сортировкой (эквивалентно итерации по terms).
-func (idx *matchIndex) candidates(stop model.FlatStop, source string) []int {
+func (idx *matchIndex) candidates(stop model.FlatStop) []int {
 	seen := map[int]bool{}
 	var out []int
 	add := func(idxs ...[]int) {
@@ -71,7 +71,7 @@ func (idx *matchIndex) candidates(stop model.FlatStop, source string) []int {
 			}
 		}
 	}
-	for _, id := range StopCodes(source, stop.OpCode) {
+	for _, id := range stop.Codes {
 		add(idx.byCode[id.System+"|"+id.Code])
 	}
 	add(idx.noCoords)

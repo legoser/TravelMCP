@@ -12,22 +12,22 @@ import (
 func TestLoadNetworkTombstonedTripsExcluded(t *testing.T) {
 	m := NewMemoryStore()
 	ctx := context.Background()
-	routeID, err := m.UpsertRoute(ctx, store.RouteRow{ProviderID: "mintrans", ExternalRouteCode: "22.42.029", LongName: "Славгород — Белово", Mode: "bus"})
+	routeID, err := m.UpsertRoute(ctx, store.RouteRow{ProviderID: "gov-registry", ExternalRouteCode: "22.42.029", LongName: "Славгород — Белово", Mode: "bus"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	dead := "2026-09-08T00:00:00Z"
-	live, err := m.UpsertTrip(ctx, store.TripRow{RouteID: routeID, ProviderID: "mintrans", ExternalTripCode: "forward:20:0"})
+	live, err := m.UpsertTrip(ctx, store.TripRow{RouteID: routeID, ProviderID: "gov-registry", ExternalTripCode: "forward:20:0"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	tomb, err := m.UpsertTrip(ctx, store.TripRow{RouteID: routeID, ProviderID: "mintrans", ExternalTripCode: "backward:20:0", ValidTo: &dead})
+	tomb, err := m.UpsertTrip(ctx, store.TripRow{RouteID: routeID, ProviderID: "gov-registry", ExternalTripCode: "backward:20:0", ValidTo: &dead})
 	if err != nil {
 		t.Fatal(err)
 	}
 	stops := make([]int64, 2)
 	for i, name := range []string{"Славгород", "Белово"} {
-		id, err := m.UpsertStop(ctx, store.StopRow{ProviderID: "mintrans", ExternalCode: name, Name: name, Lat: 53.5 + float64(i), Lon: 78.0 + float64(i), StopType: "bus_station"})
+		id, err := m.UpsertStop(ctx, store.StopRow{ProviderID: "gov-registry", ExternalCode: name, Name: name, Lat: 53.5 + float64(i), Lon: 78.0 + float64(i), StopType: "bus_station"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -51,7 +51,7 @@ func TestLoadNetworkTombstonedTripsExcluded(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	net, err := m.LoadNetwork(ctx, []string{"mintrans"}, time.Time{})
+	net, err := m.LoadNetwork(ctx, []string{"gov-registry"}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,25 +69,25 @@ func TestLoadNetworkTombstonedTripsExcluded(t *testing.T) {
 func TestLoadNetworkServiceDaysFilter(t *testing.T) {
 	m := NewMemoryStore()
 	ctx := context.Background()
-	routeID, err := m.UpsertRoute(ctx, store.RouteRow{ProviderID: "mintrans", ExternalRouteCode: "24.42.004/3", LongName: "Кемерово — Новосибирск", Mode: "bus"})
+	routeID, err := m.UpsertRoute(ctx, store.RouteRow{ProviderID: "gov-registry", ExternalRouteCode: "24.42.004/3", LongName: "Кемерово — Новосибирск", Mode: "bus"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	tue := "2"
 	weekend := "0,6"
-	idTue, err := m.UpsertTrip(ctx, store.TripRow{RouteID: routeID, ProviderID: "mintrans", ExternalTripCode: "tue-only", ServiceDays: tue})
+	idTue, err := m.UpsertTrip(ctx, store.TripRow{RouteID: routeID, ProviderID: "gov-registry", ExternalTripCode: "tue-only", ServiceDays: tue})
 	if err != nil {
 		t.Fatal(err)
 	}
-	idWeekend, err := m.UpsertTrip(ctx, store.TripRow{RouteID: routeID, ProviderID: "mintrans", ExternalTripCode: "weekend-only", ServiceDays: weekend})
+	idWeekend, err := m.UpsertTrip(ctx, store.TripRow{RouteID: routeID, ProviderID: "gov-registry", ExternalTripCode: "weekend-only", ServiceDays: weekend})
 	if err != nil {
 		t.Fatal(err)
 	}
-	stopID, err := m.UpsertStop(ctx, store.StopRow{ProviderID: "mintrans", ExternalCode: "s1", Name: "Кемерово", Lat: 55.35, Lon: 86.08, StopType: "bus_station"})
+	stopID, err := m.UpsertStop(ctx, store.StopRow{ProviderID: "gov-registry", ExternalCode: "s1", Name: "Кемерово", Lat: 55.35, Lon: 86.08, StopType: "bus_station"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	stopID2, err := m.UpsertStop(ctx, store.StopRow{ProviderID: "mintrans", ExternalCode: "s2", Name: "Новосибирск", Lat: 55.03, Lon: 82.92, StopType: "bus_station"})
+	stopID2, err := m.UpsertStop(ctx, store.StopRow{ProviderID: "gov-registry", ExternalCode: "s2", Name: "Новосибирск", Lat: 55.03, Lon: 82.92, StopType: "bus_station"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestLoadNetworkServiceDaysFilter(t *testing.T) {
 		}
 	}
 	tuesday := time.Date(2026, 9, 8, 8, 0, 0, 0, time.UTC)
-	net, err := m.LoadNetwork(ctx, []string{"mintrans"}, tuesday)
+	net, err := m.LoadNetwork(ctx, []string{"gov-registry"}, tuesday)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestLoadNetworkServiceDaysFilter(t *testing.T) {
 		t.Fatalf("трип с service_days=%q не должен попадать в сеть во вторник", weekend)
 	}
 	saturday := time.Date(2026, 9, 12, 8, 0, 0, 0, time.UTC)
-	net, err = m.LoadNetwork(ctx, []string{"mintrans"}, saturday)
+	net, err = m.LoadNetwork(ctx, []string{"gov-registry"}, saturday)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,19 +134,19 @@ func keys[T any](m map[string]T) []string {
 func TestLoadNetworkNoServiceDaysAlwaysIncluded(t *testing.T) {
 	m := NewMemoryStore()
 	ctx := context.Background()
-	routeID, err := m.UpsertRoute(ctx, store.RouteRow{ProviderID: "mintrans", ExternalRouteCode: "r1", Mode: "bus"})
+	routeID, err := m.UpsertRoute(ctx, store.RouteRow{ProviderID: "gov-registry", ExternalRouteCode: "r1", Mode: "bus"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := m.UpsertTrip(ctx, store.TripRow{RouteID: routeID, ProviderID: "mintrans", ExternalTripCode: "no-cal"})
+	id, err := m.UpsertTrip(ctx, store.TripRow{RouteID: routeID, ProviderID: "gov-registry", ExternalTripCode: "no-cal"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	s1, err := m.UpsertStop(ctx, store.StopRow{ProviderID: "mintrans", ExternalCode: "a", Name: "A", Lat: 1, Lon: 1})
+	s1, err := m.UpsertStop(ctx, store.StopRow{ProviderID: "gov-registry", ExternalCode: "a", Name: "A", Lat: 1, Lon: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	s2, err := m.UpsertStop(ctx, store.StopRow{ProviderID: "mintrans", ExternalCode: "b", Name: "B", Lat: 1.1, Lon: 1.1})
+	s2, err := m.UpsertStop(ctx, store.StopRow{ProviderID: "gov-registry", ExternalCode: "b", Name: "B", Lat: 1.1, Lon: 1.1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestLoadNetworkNoServiceDaysAlwaysIncluded(t *testing.T) {
 		time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC),
 		time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC),
 	} {
-		net, err := m.LoadNetwork(ctx, []string{"mintrans"}, day)
+		net, err := m.LoadNetwork(ctx, []string{"gov-registry"}, day)
 		if err != nil {
 			t.Fatal(err)
 		}

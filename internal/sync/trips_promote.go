@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"travelmcp/internal/adapters/mintrans"
 	"travelmcp/internal/model"
 	store "travelmcp/internal/store"
 )
@@ -119,7 +118,7 @@ func PersistAttachReport(ctx context.Context, db store.Store, rep AttachReport, 
 		return sum, fmt.Errorf("sync trips: стор не умеет персист трипов (нет staging/outbox)")
 	}
 	if source == "" {
-		source = "mintrans"
+		return sum, fmt.Errorf("sync trips: persist: source обязателен")
 	}
 	sum.Dead = len(rep.Dead)
 	sum.MidGaps = rep.MidGaps
@@ -246,7 +245,7 @@ func persistPromotedTrip(ctx context.Context, db store.Store, ts TripsStore, p P
 			}
 		}
 		tripCode := SplitTripNK(p.TripNK)
-		serviceDays := mintrans.FormatWeekdays(p.Weekdays)
+		serviceDays := model.FormatWeekdays(p.Weekdays)
 		tripID, err := tts.UpsertTrip(ctx, store.TripRow{
 			RouteID: routeID, ProviderID: source, ExternalTripCode: tripCode,
 			Direction: p.Direction, DirectionID: DirectionIDOf(p.Direction),

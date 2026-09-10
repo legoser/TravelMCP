@@ -11,7 +11,6 @@ type JobType string
 
 const (
 	JobImportGTFS      JobType = "import_gtfs"
-	JobSyncMintrans    JobType = "sync_mintrans"
 	JobSyncRail        JobType = "sync_rail"
 	JobNotify          JobType = "notify"
 	JobCleanup         JobType = "cleanup"

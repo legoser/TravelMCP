@@ -82,7 +82,7 @@ func (c *Compiler) writeFromStore(ctx context.Context, zw *zip.Writer, st store.
 			return fmt.Errorf("gtfs provenance gate: %d сущностей без пары source/channel (первые 10: %v) — zip не собирается, план §3.3", len(missing), firstN(missing, 10))
 		}
 	}
-	net, err := st.LoadNetwork(ctx, []string{"mintrans", "gtfs"}, snapshot)
+	net, err := st.LoadNetwork(ctx, []string{"gov-registry", "gtfs"}, snapshot)
 	if err != nil {
 		return err
 	}

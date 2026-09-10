@@ -241,7 +241,7 @@ func legacyNameCandidates(leg store.LegacyTerminalRow, now time.Time) []Attribut
 
 func legacyVote(votes []store.ProvenanceVote, now time.Time) (string, float64, time.Time) {
 	if len(votes) == 0 {
-		return "mintrans", 0.5, now
+		return "gov-registry", 0.5, now
 	}
 	best := votes[0]
 	for _, v := range votes[1:] {
@@ -261,7 +261,7 @@ func candidateToRow(entityType string, entityID int64, c AttributeCandidate, syn
 }
 
 func legacyTerminalAdapted(leg store.LegacyTerminalRow) model.AdaptedRecord {
-	r := model.AdaptedRecord{Kind: model.AdaptedTerminal, NameRu: leg.NameRu, NameEn: leg.NameEn, Source: "mintrans", Identifiers: toAdaptedIDs(leg.Identifiers)}
+	r := model.AdaptedRecord{Kind: model.AdaptedTerminal, NameRu: leg.NameRu, NameEn: leg.NameEn, Source: "gov-registry", Identifiers: toAdaptedIDs(leg.Identifiers)}
 	if leg.Lat != 0 || leg.Lon != 0 {
 		la, lo := leg.Lat, leg.Lon
 		r.Lat, r.Lon = &la, &lo
@@ -290,5 +290,5 @@ func legacyFingerprint(leg store.LegacyTerminalRow) string {
 		id := leg.Identifiers[0]
 		return id.System + ":" + id.Code
 	}
-	return "mintrans:" + leg.NameRu
+	return "gov-registry:" + leg.NameRu
 }

@@ -4,7 +4,7 @@
     "task": "stop_terminal",
     "matcher": "scorepair",
     "class": "urban",
-    "stop": {"name": "Кемерово автовокзал", "lat": 55.3416, "lon": 86.061, "source": "mintrans", "settlement": "кемерово"},
+    "stop": {"name": "Кемерово автовокзал", "lat": 55.3416, "lon": 86.061, "source": "gov-registry", "settlement": "кемерово"},
     "terminals": [
       {"name": "Кемерово автовокзал", "lat": 55.3417, "lon": 86.0612, "source": "osm", "settlement": "кемерово", "transport": "bus"}
     ],
@@ -32,7 +32,7 @@
     "task": "stop_terminal",
     "matcher": "scorepair",
     "class": "urban",
-    "stop": {"name": "Кемерово автовокзал", "lat": 55.3416, "lon": 86.061, "source": "mintrans", "settlement": "кемерово"},
+    "stop": {"name": "Кемерово автовокзал", "lat": 55.3416, "lon": 86.061, "source": "gov-registry", "settlement": "кемерово"},
     "terminals": [
       {"name": "Кемерово автовокзал", "lat": 55.3417, "lon": 86.0612, "source": "osm", "settlement": "кемерово", "transport": "bus"},
       {"name": "Новосибирск автовокзал", "lat": 55.0301, "lon": 82.8986, "source": "osm", "settlement": "новосибирск", "transport": "bus"}
@@ -45,7 +45,7 @@
     "task": "stop_terminal",
     "matcher": "scorepair",
     "class": "urban",
-    "stop": {"name": "ОП ЛПК", "source": "mintrans", "codes": [{"system": "yandex", "code_type": "yandex_code", "code": "c999"}]},
+    "stop": {"name": "ОП ЛПК", "source": "gov-registry", "codes": [{"system": "yandex", "code_type": "yandex_code", "code": "c999"}]},
     "terminals": [
       {"name": "Заречная", "lat": 55.0, "lon": 83.0, "source": "yandex", "settlement": "заречная", "codes": [{"system": "yandex", "code_type": "yandex_code", "code": "c999"}]}
     ],
@@ -57,7 +57,7 @@
     "task": "stop_terminal",
     "matcher": "scorepair",
     "class": "urban",
-    "stop": {"name": "Кемерово автовокзал", "lat": 55.3416, "lon": 86.061, "source": "mintrans", "settlement": "кемерово"},
+    "stop": {"name": "Кемерово автовокзал", "lat": 55.3416, "lon": 86.061, "source": "gov-registry", "settlement": "кемерово"},
     "terminals": [
       {"name": "Новосибирск автовокзал", "lat": 55.0301, "lon": 82.8986, "source": "osm", "settlement": "новосибирск", "transport": "bus"}
     ],
@@ -69,7 +69,7 @@
     "task": "stop_terminal",
     "matcher": "scorepair",
     "class": "urban",
-    "stop": {"name": "Кемерово автовокзал", "source": "mintrans", "settlement": "кемерово"},
+    "stop": {"name": "Кемерово автовокзал", "source": "gov-registry", "settlement": "кемерово"},
     "terminals": [
       {"name": "Кемерово автовокзал", "lat": 55.3416, "lon": 86.061, "source": "osm", "settlement": "кемерово", "transport": "bus"}
     ],
@@ -81,7 +81,7 @@
     "task": "stop_terminal",
     "matcher": "scorepair",
     "class": "rural",
-    "stop": {"name": "Кемерово автовокзал", "source": "mintrans", "settlement": "кемерово"},
+    "stop": {"name": "Кемерово автовокзал", "source": "gov-registry", "settlement": "кемерово"},
     "terminals": [
       {"name": "Кемерово автовокзал", "lat": 55.3416, "lon": 86.061, "source": "osm", "settlement": "кемерово", "transport": "bus"}
     ],
@@ -93,7 +93,7 @@
     "task": "stop_terminal",
     "matcher": "scorepair",
     "class": "urban",
-    "stop": {"name": "Кемерово автовокзал", "lat": 55.3416, "lon": 86.061, "source": "mintrans", "settlement": "кемерово"},
+    "stop": {"name": "Кемерово автовокзал", "lat": 55.3416, "lon": 86.061, "source": "gov-registry", "settlement": "кемерово"},
     "terminals": [
       {"name": "Кемерово автовокзал", "lat": 55.3417, "lon": 86.0612, "source": "osm", "settlement": "кемерово", "transport": "bus"},
       {"name": "Кемерово автовокзал", "lat": 55.3417, "lon": 86.0612, "source": "yandex", "settlement": "кемерово", "transport": "bus"}
@@ -106,9 +106,9 @@
     "task": "stop_terminal",
     "matcher": "scorepair",
     "class": "rural",
-    "stop": {"name": "Кемерово автовокзал", "source": "mintrans", "settlement": "кемерово"},
+    "stop": {"name": "Кемерово автовокзал", "source": "gov-registry", "settlement": "кемерово"},
     "terminals": [
-      {"name": "Кемерово автовокзал", "source": "mintrans", "settlement": "кемерово"}
+      {"name": "Кемерово автовокзал", "source": "gov-registry", "settlement": "кемерово"}
     ],
     "expect": "low_confidence",
     "expect_best": 0
@@ -118,7 +118,7 @@
     "task": "stop_terminal",
     "matcher": "scorepair",
     "class": "urban",
-    "stop": {"name": "Автовокзал", "lat": 55.3416, "lon": 86.061, "source": "mintrans"},
+    "stop": {"name": "Автовокзал", "lat": 55.3416, "lon": 86.061, "source": "gov-registry"},
     "terminals": [
       {"name": "Автовокзал", "lat": 55.0301, "lon": 82.8986, "source": "osm"}
     ],

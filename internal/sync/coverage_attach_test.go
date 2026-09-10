@@ -31,7 +31,7 @@ func TestMeasureAttachCoverageFull(t *testing.T) {
 	trips := loadFlatTrips(t)
 	terms := indexFromFixture(t, trips)
 	stops := registryStopsFromTrips(t)
-	cov := MeasureAttachCoverage(stops, terms, 0.4, attachParamsFor, nil, "mintrans")
+	cov := MeasureAttachCoverage(stops, terms, 0.4, attachParamsFor, nil, testSource)
 	if len(cov) == 0 {
 		t.Fatal("пустое покрытие по фикстуре")
 	}
@@ -49,8 +49,8 @@ func TestMeasureAttachCoverageGap(t *testing.T) {
 	trips := loadFlatTrips(t)
 	terms := indexFromFixture(t, trips)
 	stops := registryStopsFromTrips(t)
-	full := MeasureAttachCoverage(stops, terms, 0.4, attachParamsFor, nil, "mintrans")
-	empty := MeasureAttachCoverage(stops, nil, 0.4, attachParamsFor, nil, "mintrans")
+	full := MeasureAttachCoverage(stops, terms, 0.4, attachParamsFor, nil, testSource)
+	empty := MeasureAttachCoverage(stops, nil, 0.4, attachParamsFor, nil, testSource)
 	fullMatched, emptyMatched := 0, 0
 	for _, c := range full {
 		fullMatched += c.Matched

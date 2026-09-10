@@ -27,7 +27,38 @@ CREATE TABLE IF NOT EXISTS providers (
   name text NOT NULL
 );
 INSERT INTO providers(code, name) VALUES
-  ('motis','MOTIS/OSM'), ('mintrans','Минтранс'), ('yandex','Яндекс'), ('osm','OSM'), ('gtfs','GTFS'), ('nominatim','Nominatim'), ('manual','Ручная правка оператора')
+  ('motis','MOTIS/OSM'), ('gov-registry','Реестр Минтранса РФ'), ('yandex','Яндекс'), ('osm','OSM'), ('gtfs','GTFS'), ('nominatim','Nominatim'), ('manual','Ручная правка оператора')
+ON CONFLICT DO NOTHING;
+
+-- Справочник типов внешних кодов (единый для terminal_identifiers и
+-- carrier_identifiers): типы добавляются данными, не правкой CHECK.
+-- system → providers(code): один источник правды об источниках.
+-- priority — ранг системы для выбора primary-идентификатора терминала
+-- (замена хардкода identifierSystemRank в Go): больше = сильнее.
+-- is_resolvable — код пригоден для поиска терминала; is_merge_key —
+-- участвует в решении о слиянии терминалов.
+CREATE TABLE IF NOT EXISTS identifier_schemes (
+  code text PRIMARY KEY,
+  system text NOT NULL REFERENCES providers(code),
+  display_name text NOT NULL,
+  priority int NOT NULL DEFAULT 0,
+  is_resolvable boolean NOT NULL DEFAULT true,
+  is_merge_key boolean NOT NULL DEFAULT false
+);
+INSERT INTO identifier_schemes(code, system, display_name, priority, is_resolvable, is_merge_key) VALUES
+  ('op_reg','gov-registry','Реестр: код остановочного пункта', 1, true, true),
+  ('esr_code','yandex','Яндекс: ESR-код станции', 3, true, false),
+  ('station_code','yandex','Яндекс: код станции', 3, true, false),
+  ('yandex_code','yandex','Яндекс: код объекта', 3, true, false),
+  ('osm_id','osm','OSM: идентификатор объекта', 2, true, true),
+  ('gtfs_stop_id','gtfs','GTFS: stop_id', 0, true, false),
+  ('motis_id','motis','MOTIS: идентификатор', 0, true, false),
+  ('motis_stop_id','motis','MOTIS: идентификатор остановки', 0, true, false),
+  ('area','motis','MOTIS: административная область', 0, true, false),
+  ('inn','gov-registry','Реестр: ИНН перевозчика', 1, true, false),
+  ('ogrn','gov-registry','Реестр: ОГРН перевозчика', 1, true, false),
+  ('code','gov-registry','Реестр: код перевозчика', 1, true, false),
+  ('manual','manual','Ручной код оператора', 4, true, true)
 ON CONFLICT DO NOTHING;
 
 -- users/api_keys — раньше остальных сущностей: provenance/attribute_state/
@@ -70,8 +101,8 @@ SELECT setval('carriers_id_seq', (SELECT GREATEST(MAX(id),0)+1 FROM carriers), f
 
 CREATE TABLE IF NOT EXISTS carrier_identifiers (
   carrier_id bigint NOT NULL REFERENCES carriers(id) ON DELETE CASCADE,
-  system text NOT NULL CHECK (system IN ('mintrans','yandex','gtfs','nominatim')),
-  code_type text NOT NULL CHECK (code_type IN ('inn','ogrn','code','yandex_code')),
+  system text NOT NULL REFERENCES providers(code),
+  code_type text NOT NULL REFERENCES identifier_schemes(code),
   code text NOT NULL,
   PRIMARY KEY (carrier_id, system, code_type),
   UNIQUE (system, code)
@@ -165,8 +196,8 @@ CREATE TABLE IF NOT EXISTS stop_names (
 -- Глобальная уникальность кода — по-прежнему UNIQUE(system, code).
 CREATE TABLE IF NOT EXISTS terminal_identifiers (
   terminal_id bigint NOT NULL REFERENCES terminals(id) ON DELETE CASCADE,
-  system text NOT NULL CHECK (system IN ('mintrans','yandex','osm','gtfs','motis','nominatim')),
-  code_type text NOT NULL CHECK (code_type IN ('op_reg','station_code','osm_id','gtfs_stop_id','motis_id','motis_stop_id','area','yandex_code','esr_code')),
+  system text NOT NULL REFERENCES providers(code),
+  code_type text NOT NULL REFERENCES identifier_schemes(code),
   code text NOT NULL,
   is_primary bool NOT NULL DEFAULT false,
   PRIMARY KEY (terminal_id, system, code_type, code),
@@ -533,7 +564,7 @@ CREATE INDEX IF NOT EXISTS idx_terminals_locked ON terminals(is_locked) WHERE is
 CREATE TABLE IF NOT EXISTS jobs (
   id bigserial PRIMARY KEY,
   type text NOT NULL CHECK (type IN (
-    'import_gtfs','sync_mintrans','sync_rail','notify','cleanup',
+    'import_gtfs','sync_rail','notify','cleanup',
     'sync_stations','sync_refresh','sync_terminals_chunk','sync_trips_attach')),
   payload jsonb NOT NULL DEFAULT '{}'::jsonb,
   region text,

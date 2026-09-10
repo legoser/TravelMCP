@@ -36,7 +36,7 @@ func persistFixture(t *testing.T) (AttachReport, *memory.MemoryStore) {
 	}
 	ms := memory.NewMemoryStore()
 	seedAttachTerminals(t, ms, terms)
-	if _, err := PersistAttachReport(context.Background(), ms, rep, "mintrans", slog.Default()); err != nil {
+	if _, err := PersistAttachReport(context.Background(), ms, rep, testSource, slog.Default()); err != nil {
 		t.Fatalf("persist: %v", err)
 	}
 	return rep, ms
@@ -46,7 +46,7 @@ func TestPersistPromotedAndStaged(t *testing.T) {
 	rep, ms := persistFixture(t)
 	ctx := context.Background()
 	for _, p := range rep.Promoted {
-		routeID, ok := ms.FindRouteID(ctx, "mintrans", p.RouteNK)
+		routeID, ok := ms.FindRouteID(ctx, testSource, p.RouteNK)
 		if !ok {
 			t.Fatalf("route %s не найден", p.RouteNK)
 		}
@@ -98,11 +98,11 @@ func TestPersistIdempotentRerun(t *testing.T) {
 	ms := memory.NewMemoryStore()
 	seedAttachTerminals(t, ms, terms)
 	ctx := context.Background()
-	if _, err := PersistAttachReport(ctx, ms, rep, "mintrans", slog.Default()); err != nil {
+	if _, err := PersistAttachReport(ctx, ms, rep, testSource, slog.Default()); err != nil {
 		t.Fatalf("persist1: %v", err)
 	}
 	staged1, _ := ms.ListStagingTrips(ctx, "", 100)
-	if _, err := PersistAttachReport(ctx, ms, rep, "mintrans", slog.Default()); err != nil {
+	if _, err := PersistAttachReport(ctx, ms, rep, testSource, slog.Default()); err != nil {
 		t.Fatalf("persist2: %v", err)
 	}
 	staged2, _ := ms.ListStagingTrips(ctx, "", 100)
@@ -110,7 +110,7 @@ func TestPersistIdempotentRerun(t *testing.T) {
 		t.Fatalf("ресинк плодит staging: %d != %d", len(staged1), len(staged2))
 	}
 	for _, p := range rep.Promoted {
-		routeID, _ := ms.FindRouteID(ctx, "mintrans", p.RouteNK)
+		routeID, _ := ms.FindRouteID(ctx, testSource, p.RouteNK)
 		if _, ok := ms.FindTrip(ctx, routeID, SplitTripNK(p.TripNK)); !ok {
 			t.Fatalf("trip %s потерян при ресинке", p.TripNK)
 		}
@@ -121,10 +121,10 @@ func TestPersistTombstoneAndResurrect(t *testing.T) {
 	rep, ms := persistFixture(t)
 	ctx := context.Background()
 	p := rep.Promoted[0]
-	routeID, _ := ms.FindRouteID(ctx, "mintrans", p.RouteNK)
+	routeID, _ := ms.FindRouteID(ctx, testSource, p.RouteNK)
 	code := SplitTripNK(p.TripNK)
 	tomb := AttachReport{Tombstoned: []TombstonedTrip{{RouteNK: p.RouteNK, TripNK: p.TripNK}}}
-	if _, err := PersistAttachReport(ctx, ms, tomb, "mintrans", slog.Default()); err != nil {
+	if _, err := PersistAttachReport(ctx, ms, tomb, testSource, slog.Default()); err != nil {
 		t.Fatalf("tombstone: %v", err)
 	}
 	tr, ok := ms.FindTrip(ctx, routeID, code)
@@ -134,7 +134,7 @@ func TestPersistTombstoneAndResurrect(t *testing.T) {
 	if tr.ValidTo == nil {
 		t.Fatal("tombstone не проставил valid_to")
 	}
-	if _, err := PersistAttachReport(ctx, ms, rep, "mintrans", slog.Default()); err != nil {
+	if _, err := PersistAttachReport(ctx, ms, rep, testSource, slog.Default()); err != nil {
 		t.Fatalf("repromote: %v", err)
 	}
 	tr, _ = ms.FindTrip(ctx, routeID, code)
@@ -156,7 +156,7 @@ func TestPersistOutboxAutopromote(t *testing.T) {
 	ms := memory.NewMemoryStore()
 	seedAttachTerminals(t, ms, full)
 	ctx := context.Background()
-	if _, err := PersistAttachReport(ctx, ms, rep, "mintrans", slog.Default()); err != nil {
+	if _, err := PersistAttachReport(ctx, ms, rep, testSource, slog.Default()); err != nil {
 		t.Fatalf("persist: %v", err)
 	}
 	stagedBefore, _ := ms.ListStagingTrips(ctx, "", 100)
@@ -172,7 +172,7 @@ func TestPersistOutboxAutopromote(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		_, err = PersistAttachReport(ctx, ms, fullRep, "mintrans", slog.Default())
+		_, err = PersistAttachReport(ctx, ms, fullRep, testSource, slog.Default())
 		return err
 	})
 	if err != nil {
@@ -193,7 +193,7 @@ func TestTripsAttachJobsRoundtrip(t *testing.T) {
 	ms := memory.NewMemoryStore()
 	seedAttachTerminals(t, ms, full)
 	ctx := context.Background()
-	ids, err := EnqueueTripsAttachJobs(ctx, ms, []string{"54.22.078", "54.70.040"}, TripsAttachPayload{Source: "mintrans", Region: "54"})
+	ids, err := EnqueueTripsAttachJobs(ctx, ms, []string{"54.22.078", "54.70.040"}, TripsAttachPayload{Source: testSource, Region: "54"})
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}

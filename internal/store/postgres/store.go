@@ -41,6 +41,7 @@ type UserRow = store.UserRow
 type ApiKeyRow = store.ApiKeyRow
 type PlaceRow = store.PlaceRow
 type TerminalRow = store.TerminalRow
+type IdentifierSchemeRow = store.IdentifierSchemeRow
 
 type PostgresStore struct {
 	pool *pgxpool.Pool
@@ -156,9 +157,11 @@ func (p *PostgresStore) UpsertCarrier(ctx context.Context, c CarrierRow) (int64,
 	if c.INN != "" {
 		err := p.pool.QueryRow(ctx, `INSERT INTO carriers(inn, name_ru, address, iata, icao, sirena) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(inn) WHERE inn IS NOT NULL DO UPDATE SET name_ru=EXCLUDED.name_ru, address=EXCLUDED.address RETURNING id`, c.INN, c.Name, c.Address, c.IATA, c.ICAO, c.Sirena).Scan(&id)
 		if err == nil {
-			_, _ = p.pool.Exec(ctx, `INSERT INTO carrier_identifiers(carrier_id, system, code_type, code) VALUES($1,'mintrans','inn',$2) ON CONFLICT DO NOTHING`, id, c.INN)
-			if c.Code != "" && c.Code != c.INN {
-				_, _ = p.pool.Exec(ctx, `INSERT INTO carrier_identifiers(carrier_id, system, code_type, code) VALUES($1,'mintrans','code',$2) ON CONFLICT DO NOTHING`, id, c.Code)
+			if c.ProviderID != "" {
+				_, _ = p.pool.Exec(ctx, `INSERT INTO carrier_identifiers(carrier_id, system, code_type, code) VALUES($1,$2,'inn',$3) ON CONFLICT DO NOTHING`, id, c.ProviderID, c.INN)
+				if c.Code != "" && c.Code != c.INN {
+					_, _ = p.pool.Exec(ctx, `INSERT INTO carrier_identifiers(carrier_id, system, code_type, code) VALUES($1,$2,'code',$3) ON CONFLICT DO NOTHING`, id, c.ProviderID, c.Code)
+				}
 			}
 			return id, nil
 		}
@@ -169,8 +172,8 @@ func (p *PostgresStore) UpsertCarrier(ctx context.Context, c CarrierRow) (int64,
 	if err != nil {
 		_ = p.pool.QueryRow(ctx, `SELECT id FROM carriers WHERE name_ru=$1 AND address=$2`, c.Name, c.Address).Scan(&id)
 	}
-	if c.Code != "" {
-		_, _ = p.pool.Exec(ctx, `INSERT INTO carrier_identifiers(carrier_id, system, code_type, code) VALUES($1,'mintrans','code',$2) ON CONFLICT DO NOTHING`, id, c.Code)
+	if c.Code != "" && c.ProviderID != "" {
+		_, _ = p.pool.Exec(ctx, `INSERT INTO carrier_identifiers(carrier_id, system, code_type, code) VALUES($1,$2,'code',$3) ON CONFLICT DO NOTHING`, id, c.ProviderID, c.Code)
 	}
 	return id, err
 }
@@ -178,11 +181,11 @@ func (p *PostgresStore) UpsertRoute(ctx context.Context, r RouteRow) (int64, err
 	if p.pool == nil {
 		return 0, errNotImplemented
 	}
+	if r.ProviderID == "" {
+		return 0, fmt.Errorf("store: UpsertRoute: provider обязателен")
+	}
 	var id int64
 	src := r.ProviderID
-	if src == "" {
-		src = "mintrans"
-	}
 	err := p.pool.QueryRow(ctx, `INSERT INTO routes(carrier_id, external_route_code, short_name, long_name, mode, external_uid, ord, source_provider, valid_to) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NULL) ON CONFLICT(source_provider, external_route_code) DO UPDATE SET long_name=EXCLUDED.long_name, short_name=EXCLUDED.short_name, carrier_id=EXCLUDED.carrier_id, mode=EXCLUDED.mode, valid_to=NULL RETURNING id`, r.CarrierID, r.ExternalRouteCode, r.ShortName, r.LongName, r.Mode, r.ExternalUID, r.Ord, src).Scan(&id)
 	return id, err
 }
@@ -615,7 +618,7 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 			_ = p.pool.QueryRow(ctx, `SELECT ST_Y(geom::geometry), ST_X(geom::geometry) FROM terminals WHERE id=$1`, terminalID).Scan(&la, &lo)
 		}
 		code := fmt.Sprintf("%d", id)
-		net.Stops[code] = &model.Stop{ID: code, ProviderID: "mintrans", Name: name.String, Lat: la, Lon: lo, Type: model.StopType(stopType.String)}
+		net.Stops[code] = &model.Stop{ID: code, ProviderID: "gov-registry", Name: name.String, Lat: la, Lon: lo, Type: model.StopType(stopType.String)}
 		stopIDMap[id] = code
 	}
 	routeRows, err := p.pool.Query(ctx, `SELECT id, source_provider, carrier_id, external_route_code, short_name, long_name, mode FROM routes WHERE valid_to IS NULL`)
@@ -1182,24 +1185,26 @@ func (t *pgTxStore) UpsertCarrier(ctx context.Context, c CarrierRow) (int64, err
 	if c.INN != "" {
 		err := t.tx.QueryRow(ctx, `INSERT INTO carriers(inn, name_ru, address, iata, icao, sirena) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(inn) WHERE inn IS NOT NULL DO UPDATE SET name_ru=EXCLUDED.name_ru, address=EXCLUDED.address RETURNING id`, c.INN, c.Name, c.Address, c.IATA, c.ICAO, c.Sirena).Scan(&id)
 		if err == nil {
-			_, _ = t.tx.Exec(ctx, `INSERT INTO carrier_identifiers(carrier_id, system, code_type, code) VALUES($1,'mintrans','inn',$2) ON CONFLICT DO NOTHING`, id, c.INN)
+			if c.ProviderID != "" {
+				_, _ = t.tx.Exec(ctx, `INSERT INTO carrier_identifiers(carrier_id, system, code_type, code) VALUES($1,$2,'inn',$3) ON CONFLICT DO NOTHING`, id, c.ProviderID, c.INN)
+			}
 			return id, nil
 		}
 		_ = t.tx.QueryRow(ctx, `SELECT id FROM carriers WHERE inn=$1`, c.INN).Scan(&id)
 		return id, err
 	}
 	err := t.tx.QueryRow(ctx, `INSERT INTO carriers(name_ru, address, iata, icao, sirena) VALUES($1,$2,$3,$4,$5) RETURNING id`, c.Name, c.Address, c.IATA, c.ICAO, c.Sirena).Scan(&id)
-	if c.Code != "" {
-		_, _ = t.tx.Exec(ctx, `INSERT INTO carrier_identifiers(carrier_id, system, code_type, code) VALUES($1,'mintrans','code',$2) ON CONFLICT DO NOTHING`, id, c.Code)
+	if c.Code != "" && c.ProviderID != "" {
+		_, _ = t.tx.Exec(ctx, `INSERT INTO carrier_identifiers(carrier_id, system, code_type, code) VALUES($1,$2,'code',$3) ON CONFLICT DO NOTHING`, id, c.ProviderID, c.Code)
 	}
 	return id, err
 }
 func (t *pgTxStore) UpsertRoute(ctx context.Context, r RouteRow) (int64, error) {
+	if r.ProviderID == "" {
+		return 0, fmt.Errorf("store: UpsertRoute: provider обязателен")
+	}
 	var id int64
 	src := r.ProviderID
-	if src == "" {
-		src = "mintrans"
-	}
 	err := t.tx.QueryRow(ctx, `INSERT INTO routes(carrier_id, external_route_code, short_name, long_name, mode, external_uid, ord, source_provider, valid_to) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NULL) ON CONFLICT(source_provider, external_route_code) DO UPDATE SET long_name=EXCLUDED.long_name, short_name=EXCLUDED.short_name, carrier_id=EXCLUDED.carrier_id, mode=EXCLUDED.mode, valid_to=NULL RETURNING id`, r.CarrierID, r.ExternalRouteCode, r.ShortName, r.LongName, r.Mode, r.ExternalUID, r.Ord, src).Scan(&id)
 	return id, err
 }

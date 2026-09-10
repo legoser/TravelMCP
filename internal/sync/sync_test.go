@@ -28,7 +28,7 @@ func TestPlanIDLogicVersion(t *testing.T) {
 	if base != again {
 		t.Fatal("одинаковые входы обязаны давать одинаковый plan_id")
 	}
-	if ComputePlanID("logic/3", "cfg", []string{"sha"}) == base {
+	if ComputePlanID("logic/2", "cfg", []string{"sha"}) == base {
 		t.Fatal("бамп LogicVersion обязан менять plan_id (иначе full-resync не произойдёт там, где нужен)")
 	}
 	if ComputePlanID(LogicVersionID(), "cfg", []string{"sha"}) == ComputePlanID(LogicVersionID(), "other", []string{"sha"}) {

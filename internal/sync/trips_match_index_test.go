@@ -16,7 +16,7 @@ func TestMatchIndexBlocking(t *testing.T) {
 	terms := []AttachTerminal{
 		{ID: 1, Name: "Далёкий терминал", Lat: &farLat, Lon: &farLon, Settlement: "даль", Source: "osm", GeomFinalized: true},
 		{ID: 2, Name: "Далёкий с кодом", Lat: &farLat, Lon: &farLon, Settlement: "даль", Source: "osm", GeomFinalized: true,
-			Codes: []model.AdaptedIdentifier{{System: "mintrans", CodeType: "op_reg", Code: "op123"}}},
+			Codes: []model.AdaptedIdentifier{{System: testSource, CodeType: "op_reg", Code: "op123"}}},
 		{ID: 3, Name: "Ближний терминал", Lat: &nearLat, Lon: &nearLon, Settlement: "близко", Source: "osm", GeomFinalized: true},
 		{ID: 4, Name: "Терминал без координат", Settlement: "где-то", Source: "osm", GeomFinalized: false},
 	}
@@ -24,7 +24,7 @@ func TestMatchIndexBlocking(t *testing.T) {
 
 	stopNear := model.FlatStop{StopID: "s1", Name: "Ближний терминал", Region: "42", Lat: &nearLat, Lon: &nearLon}
 	got := map[int64]bool{}
-	for _, i := range idx.candidates(stopNear, "mintrans") {
+	for _, i := range idx.candidates(stopNear) {
 		got[terms[i].ID] = true
 	}
 	if !got[3] {
@@ -37,9 +37,10 @@ func TestMatchIndexBlocking(t *testing.T) {
 		t.Fatal("терминал за 79км без кода не кандидат (blocking)")
 	}
 
-	stopCoded := model.FlatStop{StopID: "s2", Name: "Совсем другое имя", Region: "42", Lat: &nearLat, Lon: &nearLon, OpCode: "op123"}
+	stopCoded := model.FlatStop{StopID: "s2", Name: "Совсем другое имя", Region: "42", Lat: &nearLat, Lon: &nearLon,
+		Codes: []model.AdaptedIdentifier{{System: testSource, CodeType: "op_reg", Code: "op123"}}}
 	gotCoded := map[int64]bool{}
-	for _, i := range idx.candidates(stopCoded, "mintrans") {
+	for _, i := range idx.candidates(stopCoded) {
 		gotCoded[terms[i].ID] = true
 	}
 	if !gotCoded[2] {
@@ -47,9 +48,9 @@ func TestMatchIndexBlocking(t *testing.T) {
 	}
 
 	// стоп без координат: пул = код-совпадения ∪ no-coords (не вся страна)
-	stopNoCoords := model.FlatStop{StopID: "s3", Name: "Терминал без координат", Region: "42", OpCode: ""}
+	stopNoCoords := model.FlatStop{StopID: "s3", Name: "Терминал без координат", Region: "42"}
 	gotNC := map[int64]bool{}
-	for _, i := range idx.candidates(stopNoCoords, "mintrans") {
+	for _, i := range idx.candidates(stopNoCoords) {
 		gotNC[terms[i].ID] = true
 	}
 	if gotNC[1] || gotNC[2] || gotNC[3] {
@@ -76,7 +77,7 @@ func TestMatchStopsExclusivityWithinTrip(t *testing.T) {
 		},
 	}}
 	idx := buildMatchIndex(terms)
-	matched, reason, _, unmatched := matchStops(trips[0], idx, "mintrans",
+	matched, reason, _, unmatched := matchStops(trips[0], idx, testSource,
 		func(string) model.DensityClass { return model.DensityRural }, attachParamsFor, slog.Default())
 	if len(matched) != 1 {
 		t.Fatalf("только первый стоп берёт терминал: matched=%d", len(matched))
@@ -112,7 +113,7 @@ func TestMatchStopsCircularRouteAllowed(t *testing.T) {
 		},
 	}}
 	idx := buildMatchIndex(terms)
-	matched, _, _, unmatched := matchStops(trips[0], idx, "mintrans",
+	matched, _, _, unmatched := matchStops(trips[0], idx, testSource,
 		func(string) model.DensityClass { return model.DensityRural }, attachParamsFor, slog.Default())
 	if len(unmatched) != 0 {
 		t.Fatalf("кольцевой повторный визит легитимен: unmatched=%v", unmatched)

@@ -10,12 +10,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
-	"travelmcp/internal/adapters/mintrans"
 	"travelmcp/internal/config"
 	"travelmcp/internal/logger"
+	"travelmcp/internal/model"
 	"travelmcp/internal/store"
 	_ "travelmcp/internal/store/memory"
 	_ "travelmcp/internal/store/postgres"
@@ -25,14 +26,13 @@ import (
 // appVersion → sync.LogicVersionID() (plan_id от семантической версии, план §4.3).
 
 func main() {
-	var configPath, tag, reestrOverride, regionsOverride, waitOverride string
-	var trustNK, force, dryRun bool
+	var configPath, tag, flatOverride, regionsOverride, waitOverride string
+	var force, dryRun bool
 	flag.StringVar(&configPath, "config", "configs/config.dev.yaml", "путь к YAML-конфигу")
 	flag.StringVar(&tag, "tag", "pilot-trips", "тег прогона")
-	flag.StringVar(&reestrOverride, "reestr", "", "переопределить sync.reestr_path (JSON-срез реестра)")
+	flag.StringVar(&flatOverride, "flat", "", "переопределить sync.flat_trips_path (flat_trips.json)")
 	flag.StringVar(&regionsOverride, "regions", "", "прикрепить только регионы через запятую (пусто — все)")
 	flag.StringVar(&waitOverride, "wait", "", "переопределить sync.attach_wait (например 5m, пусто — не ждать)")
-	flag.BoolVar(&trustNK, "trust-nk", true, "доверять external_route_code реестра (иначе synthetic-ключ)")
 	flag.BoolVar(&force, "force", false, "эскалация: attach несмотря на заблокированный gate")
 	flag.BoolVar(&dryRun, "dry-run", false, "coverage + gate + attach без записи в БД")
 	flag.Parse()
@@ -47,31 +47,37 @@ func main() {
 	factory := logger.NewFactory(cfg.Log)
 	slog.SetDefault(factory.For("main"))
 	sc := cfg.Sync
-	if reestrOverride != "" {
-		sc.ReestrPath = reestrOverride
+	if flatOverride != "" {
+		sc.FlatTripsPath = flatOverride
 	}
 	if waitOverride != "" {
 		sc.AttachWait = waitOverride
 	}
-	if sc.ReestrPath == "" {
-		slog.Error("sync.reestr_path пуст: нечего прикреплять")
+	if sc.FlatTripsPath == "" {
+		slog.Error("sync.flat_trips_path пуст: нечего прикреплять (сгенерируйте flat_trips.json коннектором tools/registry-parser)")
 		os.Exit(1)
 	}
-	raw, err := os.ReadFile(sc.ReestrPath)
+	raw, err := os.ReadFile(sc.FlatTripsPath)
 	if err != nil {
-		slog.Error("reestr read failed", "error", err)
+		slog.Error("flat_trips read failed", "error", err)
 		os.Exit(1)
 	}
-	ds, err := mintrans.ParseDataset(raw)
-	if err != nil {
-		slog.Error("reestr contract failed", "error", err)
+	var payload model.FlatPayload
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		slog.Error("flat_trips parse failed", "error", err)
 		os.Exit(1)
 	}
-	trips, fstats := mintrans.FlattenTrips(ds)
+	if payload.Meta.Source == "" {
+		slog.Error("flat_trips: meta.source пуст — источник обязан быть задан коннектором")
+		os.Exit(1)
+	}
+	trips := payload.Trips
+	fstats := payload.Stats
 	sum := sha256.Sum256(raw)
 	inputSHA := hex.EncodeToString(sum[:])
-	planID := sync.ComputePlanID(sync.LogicVersionID(), syncConfigHash(sc, trustNK, force), []string{inputSHA})
-	slog.Info("plan", "plan_id", planID, "input_sha", inputSHA, "trips", len(trips),
+	planID := sync.ComputePlanID(sync.LogicVersionID(), syncConfigHash(sc, force), []string{inputSHA})
+	slog.Info("plan", "plan_id", planID, "input_sha", inputSHA, "source", payload.Meta.Source,
+		"snapshot", payload.Meta.Snapshot, "trips", len(trips),
 		"restricted_weekdays", fstats.RestrictedTrips, "parity", fstats.ParityTrips,
 		"dropped_empty_weekdays", fstats.DroppedEmptyWeekdays)
 
@@ -97,7 +103,7 @@ func main() {
 		os.Exit(1)
 	}
 	rcfg := sync.TripsRunConfig{
-		Source: "mintrans", TrustRouteNK: trustNK,
+		Source:         payload.Meta.Source,
 		ChurnThreshold: sc.TripsChurnThreshold, MaxSpeedKmh: sc.TripsMaxSpeedKmh,
 		CoverageGate: sc.CoverageGate, SoftScore: sc.CoverageSoftScore,
 		Margin:      cfg.Verification.ScoreMargin,
@@ -149,15 +155,14 @@ func main() {
 		"full_rate", sumRes.FullTripRate, "blocked", sumRes.Blocked)
 }
 
-func syncConfigHash(sc config.Sync, trustNK, force bool) string {
+func syncConfigHash(sc config.Sync, force bool) string {
 	raw, _ := json.Marshal(struct {
-		Gate    float64 `json:"gate"`
-		Soft    float64 `json:"soft"`
-		Churn   float64 `json:"churn"`
-		MaxSpd  float64 `json:"max_speed"`
-		TrustNK bool    `json:"trust_nk"`
-		Force   bool    `json:"force"`
-	}{sc.CoverageGate, sc.CoverageSoftScore, sc.TripsChurnThreshold, sc.TripsMaxSpeedKmh, trustNK, force})
+		Gate   float64 `json:"gate"`
+		Soft   float64 `json:"soft"`
+		Churn  float64 `json:"churn"`
+		MaxSpd float64 `json:"max_speed"`
+		Force  bool    `json:"force"`
+	}{sc.CoverageGate, sc.CoverageSoftScore, sc.TripsChurnThreshold, sc.TripsMaxSpeedKmh, force})
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
 }
@@ -203,7 +208,7 @@ func appendOps(path string, runID int64, sum sync.TripsRunSummary) error {
 	for _, s := range sum.Skipped {
 		routes = append(routes, "skipped:"+s)
 	}
-	sortStrings(routes)
+	sort.Strings(routes)
 	for _, route := range routes {
 		o := sum.ByRoute[strings.TrimPrefix(route, "skipped:")]
 		if err := enc.Encode(opsLine{RunID: runID, Route: route, In: o.In,
@@ -212,12 +217,4 @@ func appendOps(path string, runID int64, sum sync.TripsRunSummary) error {
 		}
 	}
 	return nil
-}
-
-func sortStrings(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j] < s[j-1]; j-- {
-			s[j], s[j-1] = s[j-1], s[j]
-		}
-	}
 }

@@ -1,0 +1,784 @@
+{
+  "meta": {
+    "source": "gov-registry",
+    "snapshot": "2026-05-10",
+    "generator": "registry-parser(mintrans-ru)"
+  },
+  "stats": {
+    "schedules": 8,
+    "runs": 8,
+    "trips": 8,
+    "frequency_only": 0,
+    "dropped_empty_weekdays": 0,
+    "restricted_trips": 0,
+    "parity_trips": 0
+  },
+  "trips": [
+    {
+      "route_nk": "54.22.078",
+      "route_reg": "54.22.078",
+      "direction": "forward",
+      "service_id": 3,
+      "run": 0,
+      "period": "winter",
+      "carrier": "ООО «СибАвто»",
+      "carrier_inn": "5407476579",
+      "route_from": "op:54:54098",
+      "route_to": "op:22:22165",
+      "stops": [
+        {
+          "stop_id": "op:54:54098",
+          "name": "«ОП «Вокзал «Новосибирск-Главный»",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54098"
+            }
+          ],
+          "lat": 55.03631869523268,
+          "lon": 82.89818682076192,
+          "arr_min": 750,
+          "dep_min": 750
+        },
+        {
+          "stop_id": "op:54:54106",
+          "name": "ОП «Речной»",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54106"
+            }
+          ],
+          "lat": 55.008070590379944,
+          "lon": 82.93647936902936,
+          "arr_min": 760,
+          "dep_min": 765
+        },
+        {
+          "stop_id": "op:54:54019",
+          "name": "ОП г. Бердск",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54019"
+            }
+          ],
+          "lat": 54.761974339161014,
+          "lon": 83.11377310405305,
+          "arr_min": 799,
+          "dep_min": 800
+        },
+        {
+          "stop_id": "op:54:54020",
+          "name": "ДКП г. Искитим",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54020"
+            }
+          ],
+          "lat": 54.6113220952968,
+          "lon": 83.2808032259345,
+          "arr_min": 825,
+          "dep_min": 830
+        },
+        {
+          "stop_id": "op:54:54040",
+          "name": "ОП пгт Линево",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54040"
+            }
+          ],
+          "lat": 54.4545075867456,
+          "lon": 83.3558348379782,
+          "arr_min": 850,
+          "dep_min": 850
+        },
+        {
+          "stop_id": "op:54:54042",
+          "name": "ОП с. Безменово",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54042"
+            }
+          ],
+          "lat": 55.8348014340681,
+          "lon": 84.7491340935174,
+          "arr_min": 885,
+          "dep_min": 885
+        },
+        {
+          "stop_id": "op:22:22165",
+          "name": "АВ г. Барнаул",
+          "region": "22",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "22165"
+            }
+          ],
+          "lat": 53.3517518948,
+          "lon": 83.758644294,
+          "arr_min": 1020,
+          "dep_min": 1020
+        }
+      ],
+      "frequency_only": false
+    },
+    {
+      "route_nk": "54.22.049",
+      "route_reg": "54.22.049",
+      "direction": "forward",
+      "service_id": 3,
+      "run": 0,
+      "period": "winter",
+      "carrier": "ИП Лядусов Алексей Николаевич",
+      "carrier_inn": "545262224140",
+      "route_from": "op:54:54098",
+      "route_to": "op:22:22165",
+      "stops": [
+        {
+          "stop_id": "op:54:54098",
+          "name": "«ОП «Вокзал «Новосибирск-Главный»",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54098"
+            }
+          ],
+          "lat": 55.03631869523268,
+          "lon": 82.89818682076192,
+          "arr_min": 409,
+          "dep_min": 409
+        },
+        {
+          "stop_id": "op:54:54107",
+          "name": "ОП «Речной вокзал»",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54107"
+            }
+          ],
+          "lat": 55.008070590379944,
+          "lon": 82.93647936902936,
+          "arr_min": 417,
+          "dep_min": 419
+        },
+        {
+          "stop_id": "op:22:22165",
+          "name": "АВ г. Барнаул",
+          "region": "22",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "22165"
+            }
+          ],
+          "lat": 53.3517518948,
+          "lon": 83.758644294,
+          "arr_min": 679,
+          "dep_min": 679
+        }
+      ],
+      "untimed": [
+        "op:54:54106"
+      ],
+      "frequency_only": false
+    },
+    {
+      "route_nk": "54.70.040",
+      "route_reg": "54.70.040",
+      "direction": "forward",
+      "service_id": 3,
+      "run": 0,
+      "period": "winter",
+      "carrier": "ООО «ВИМАН»",
+      "carrier_inn": "5410148970",
+      "route_from": "op:54:54099",
+      "route_to": "op:70:70016",
+      "stops": [
+        {
+          "stop_id": "op:54:54099",
+          "name": "АВ «Новосибирский автовокзал-Главный»",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54099"
+            }
+          ],
+          "lat": 55.0409859734935,
+          "lon": 83.0275267575736,
+          "arr_min": 600,
+          "dep_min": 600
+        },
+        {
+          "stop_id": "op:54:54098",
+          "name": "«ОП «Вокзал «Новосибирск-Главный»",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54098"
+            }
+          ],
+          "lat": 55.03631869523268,
+          "lon": 82.89818682076192,
+          "arr_min": 635,
+          "dep_min": 640
+        },
+        {
+          "stop_id": "op:54:54021",
+          "name": "Автостанция г. Болотное",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54021"
+            }
+          ],
+          "lat": 55.66842282171524,
+          "lon": 84.39373020082148,
+          "arr_min": 785,
+          "dep_min": 790
+        },
+        {
+          "stop_id": "op:70:70016",
+          "name": "Автовокзал АО «Томскавтотранс»",
+          "region": "70",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "70016"
+            }
+          ],
+          "lat": 56.4612664816162,
+          "lon": 84.9912958591767,
+          "arr_min": 900,
+          "dep_min": 900
+        }
+      ],
+      "frequency_only": false
+    },
+    {
+      "route_nk": "54.22.030",
+      "route_reg": "54.22.030",
+      "direction": "forward",
+      "service_id": 3,
+      "run": 0,
+      "period": "winter",
+      "carrier": "ООО «Сибирские ресурсосберегающие технологии»",
+      "carrier_inn": "5410134455",
+      "route_from": "op:54:54098",
+      "route_to": "op:22:22007",
+      "stops": [
+        {
+          "stop_id": "op:54:54098",
+          "name": "«ОП «Вокзал «Новосибирск-Главный»",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54098"
+            }
+          ],
+          "lat": 55.03631869523268,
+          "lon": 82.89818682076192,
+          "arr_min": 450,
+          "dep_min": 450
+        },
+        {
+          "stop_id": "op:54:54017",
+          "name": "ДКП «Юго-Западная» г. Новосибирск",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54017"
+            }
+          ],
+          "lat": 54.9714799207,
+          "lon": 82.8728526199,
+          "arr_min": 470,
+          "dep_min": 480
+        },
+        {
+          "stop_id": "op:54:54006",
+          "name": "АС рп Ордынское",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54006"
+            }
+          ],
+          "lat": 54.3635398031301,
+          "lon": 81.9086985848844,
+          "arr_min": 570,
+          "dep_min": 580
+        },
+        {
+          "stop_id": "op:22:22070",
+          "name": "ОП с. Масляха",
+          "region": "22",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "22070"
+            }
+          ],
+          "lat": 54.051414244758725,
+          "lon": 81.26924386247678,
+          "arr_min": 625,
+          "dep_min": 630
+        },
+        {
+          "stop_id": "op:22:22163",
+          "name": "Крутихинский ОП",
+          "region": "22",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "22163"
+            }
+          ],
+          "lat": 53.965376395374825,
+          "lon": 81.2134006640053,
+          "arr_min": 645,
+          "dep_min": 650
+        },
+        {
+          "stop_id": "op:22:22007",
+          "name": "Каменская автостанция",
+          "region": "22",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "22007"
+            }
+          ],
+          "lat": 53.7901957064213,
+          "lon": 81.315934187835,
+          "arr_min": 680,
+          "dep_min": 680
+        }
+      ],
+      "frequency_only": false
+    },
+    {
+      "route_nk": "54.22.078",
+      "route_reg": "54.22.078",
+      "direction": "backward",
+      "service_id": 3,
+      "run": 0,
+      "period": "winter",
+      "carrier": "ООО «СибАвто»",
+      "carrier_inn": "5407476579",
+      "route_from": "op:54:54098",
+      "route_to": "op:22:22165",
+      "stops": [
+        {
+          "stop_id": "op:22:22165",
+          "name": "АВ г. Барнаул",
+          "region": "22",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "22165"
+            }
+          ],
+          "lat": 53.3517518948,
+          "lon": 83.758644294,
+          "arr_min": 1199,
+          "dep_min": 1199
+        },
+        {
+          "stop_id": "op:54:54042",
+          "name": "ОП с. Безменово",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54042"
+            }
+          ],
+          "lat": 55.8348014340681,
+          "lon": 84.7491340935174,
+          "arr_min": 1305,
+          "dep_min": 1305
+        },
+        {
+          "stop_id": "op:54:54040",
+          "name": "ОП пгт Линево",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54040"
+            }
+          ],
+          "lat": 54.4545075867456,
+          "lon": 83.3558348379782,
+          "arr_min": 1345,
+          "dep_min": 1345
+        },
+        {
+          "stop_id": "op:54:54020",
+          "name": "ДКП г. Искитим",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54020"
+            }
+          ],
+          "lat": 54.6113220952968,
+          "lon": 83.2808032259345,
+          "arr_min": 1365,
+          "dep_min": 1370
+        },
+        {
+          "stop_id": "op:54:54019",
+          "name": "ОП г. Бердск",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54019"
+            }
+          ],
+          "lat": 54.761974339161014,
+          "lon": 83.11377310405305,
+          "arr_min": 1390,
+          "dep_min": 1390
+        },
+        {
+          "stop_id": "op:54:54106",
+          "name": "ОП «Речной»",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54106"
+            }
+          ],
+          "lat": 55.008070590379944,
+          "lon": 82.93647936902936,
+          "arr_min": 1425,
+          "dep_min": 1430
+        },
+        {
+          "stop_id": "op:54:54098",
+          "name": "«ОП «Вокзал «Новосибирск-Главный»",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54098"
+            }
+          ],
+          "lat": 55.03631869523268,
+          "lon": 82.89818682076192,
+          "arr_min": 1440,
+          "dep_min": 1440
+        }
+      ],
+      "frequency_only": false
+    },
+    {
+      "route_nk": "54.22.049",
+      "route_reg": "54.22.049",
+      "direction": "backward",
+      "service_id": 3,
+      "run": 0,
+      "period": "winter",
+      "carrier": "ИП Лядусов Алексей Николаевич",
+      "carrier_inn": "545262224140",
+      "route_from": "op:54:54098",
+      "route_to": "op:22:22165",
+      "stops": [
+        {
+          "stop_id": "op:22:22165",
+          "name": "АВ г. Барнаул",
+          "region": "22",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "22165"
+            }
+          ],
+          "lat": 53.3517518948,
+          "lon": 83.758644294,
+          "arr_min": 884,
+          "dep_min": 884
+        },
+        {
+          "stop_id": "op:54:54106",
+          "name": "ОП «Речной»",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54106"
+            }
+          ],
+          "lat": 55.008070590379944,
+          "lon": 82.93647936902936,
+          "arr_min": 1134,
+          "dep_min": 1139
+        },
+        {
+          "stop_id": "op:54:54098",
+          "name": "«ОП «Вокзал «Новосибирск-Главный»",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54098"
+            }
+          ],
+          "lat": 55.03631869523268,
+          "lon": 82.89818682076192,
+          "arr_min": 1154,
+          "dep_min": 1154
+        }
+      ],
+      "untimed": [
+        "op:54:54107"
+      ],
+      "frequency_only": false
+    },
+    {
+      "route_nk": "54.70.040",
+      "route_reg": "54.70.040",
+      "direction": "backward",
+      "service_id": 3,
+      "run": 0,
+      "period": "winter",
+      "carrier": "ООО «ВИМАН»",
+      "carrier_inn": "5410148970",
+      "route_from": "op:54:54099",
+      "route_to": "op:70:70016",
+      "stops": [
+        {
+          "stop_id": "op:70:70016",
+          "name": "Автовокзал АО «Томскавтотранс»",
+          "region": "70",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "70016"
+            }
+          ],
+          "lat": 56.4612664816162,
+          "lon": 84.9912958591767,
+          "arr_min": 1080,
+          "dep_min": 1080
+        },
+        {
+          "stop_id": "op:54:54021",
+          "name": "Автостанция г. Болотное",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54021"
+            }
+          ],
+          "lat": 55.66842282171524,
+          "lon": 84.39373020082148,
+          "arr_min": 1195,
+          "dep_min": 1200
+        },
+        {
+          "stop_id": "op:54:54098",
+          "name": "«ОП «Вокзал «Новосибирск-Главный»",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54098"
+            }
+          ],
+          "lat": 55.03631869523268,
+          "lon": 82.89818682076192,
+          "arr_min": 1320,
+          "dep_min": 1325
+        },
+        {
+          "stop_id": "op:54:54099",
+          "name": "АВ «Новосибирский автовокзал-Главный»",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54099"
+            }
+          ],
+          "lat": 55.0409859734935,
+          "lon": 83.0275267575736,
+          "arr_min": 1345,
+          "dep_min": 1345
+        }
+      ],
+      "frequency_only": false
+    },
+    {
+      "route_nk": "54.22.030",
+      "route_reg": "54.22.030",
+      "direction": "backward",
+      "service_id": 3,
+      "run": 0,
+      "period": "winter",
+      "carrier": "ООО «Сибирские ресурсосберегающие технологии»",
+      "carrier_inn": "5410134455",
+      "route_from": "op:54:54098",
+      "route_to": "op:22:22007",
+      "stops": [
+        {
+          "stop_id": "op:22:22007",
+          "name": "Каменская автостанция",
+          "region": "22",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "22007"
+            }
+          ],
+          "lat": 53.7901957064213,
+          "lon": 81.315934187835,
+          "arr_min": 890,
+          "dep_min": 890
+        },
+        {
+          "stop_id": "op:22:22163",
+          "name": "Крутихинский ОП",
+          "region": "22",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "22163"
+            }
+          ],
+          "lat": 53.965376395374825,
+          "lon": 81.2134006640053,
+          "arr_min": 920,
+          "dep_min": 925
+        },
+        {
+          "stop_id": "op:22:22070",
+          "name": "ОП с. Масляха",
+          "region": "22",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "22070"
+            }
+          ],
+          "lat": 54.051414244758725,
+          "lon": 81.26924386247678,
+          "arr_min": 940,
+          "dep_min": 945
+        },
+        {
+          "stop_id": "op:54:54006",
+          "name": "АС рп Ордынское",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54006"
+            }
+          ],
+          "lat": 54.3635398031301,
+          "lon": 81.9086985848844,
+          "arr_min": 985,
+          "dep_min": 990
+        },
+        {
+          "stop_id": "op:54:54017",
+          "name": "ДКП «Юго-Западная» г. Новосибирск",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54017"
+            }
+          ],
+          "lat": 54.9714799207,
+          "lon": 82.8728526199,
+          "arr_min": 1090,
+          "dep_min": 1100
+        },
+        {
+          "stop_id": "op:54:54098",
+          "name": "«ОП «Вокзал «Новосибирск-Главный»",
+          "region": "54",
+          "codes": [
+            {
+              "system": "gov-registry",
+              "code_type": "op_reg",
+              "code": "54098"
+            }
+          ],
+          "lat": 55.03631869523268,
+          "lon": 82.89818682076192,
+          "arr_min": 1120,
+          "dep_min": 1120
+        }
+      ],
+      "frequency_only": false
+    }
+  ]
+}

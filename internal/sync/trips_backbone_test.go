@@ -27,7 +27,7 @@ func TestBackbonePromotesWithMidGap(t *testing.T) {
 		},
 	}}
 	rep, err := AttachTrips(context.Background(), AttachInput{
-		Trips: trips, Terminals: terms, TrustRouteNK: true, Source: "mintrans",
+		Trips: trips, Terminals: terms, TrustRouteNK: true, Source: testSource,
 		ChurnThreshold: 0.2, MaxSpeedKmh: 200, ParamsFor: attachParamsFor,
 		ClassForRegion: func(string) model.DensityClass { return model.DensityRural },
 	})
@@ -68,7 +68,7 @@ func TestBackboneEndsRequired(t *testing.T) {
 		},
 	}}
 	rep, err := AttachTrips(context.Background(), AttachInput{
-		Trips: trips, Terminals: terms, TrustRouteNK: true, Source: "mintrans",
+		Trips: trips, Terminals: terms, TrustRouteNK: true, Source: testSource,
 		ChurnThreshold: 0.2, MaxSpeedKmh: 200, ParamsFor: attachParamsFor,
 		ClassForRegion: func(string) model.DensityClass { return model.DensityRural },
 	})

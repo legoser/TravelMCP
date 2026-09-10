@@ -143,7 +143,7 @@ YANDEX_DATE=2026-09-05 ./scripts/yandex-collect.sh  # фиксированная
 
 Извлекает из XLSX-реестра межрегиональных маршрутов Минтранса маршруты,
 остановки и расписание по заданным регионам. Выход: `data/reestr/regions.json`
-(не коммитится; это рабочий датасет для Этапа 1 — парсинга в Go).
+(не коммитится; сырьё для standalone-коннектора `tools/registry-parser`).
 
 ```sh
 # сырьё: data/raw/minstran/reestr.xlsx (ручная/curl-загрузка с mintrans.gov.ru)
@@ -152,6 +152,24 @@ python3 scripts/extract-minstran.py --in data/raw/minstran/reestr.xlsx \
 ```
 
 Параметры фильтрации регионов — в начале скрипта (`REGIONS`).
+
+# tools/registry-parser — срез реестра → flat_trips.json
+
+Standalone-коннектор (отдельный Go-модуль, без зависимостей от `internal/`):
+единственное место, знающее специфику формата Минтранса. Переводит срез
+реестра в универсальный flat-формат для `cmd/trips-sync`.
+
+```sh
+cd tools/registry-parser
+go run . --input ../../data/reestr/regions.json \
+  --out ../../data/reestr/flat_trips.json \
+  --source gov-registry --trust-nk
+# bootstrap NK-стабильности (сравнение двух срезов, churn-порог):
+go run . --input new.json --bootstrap old.json --churn 0.2 --out flat_trips.json
+```
+
+`--trust-nk` — использовать reg-код как ключ маршрута (после
+bootstrap-подтверждения стабильности); по умолчанию синтезированный ключ.
 
 Схема XLSX задокументирована в `docs/07-first-provider-plan.md` (этап 0.1).
 

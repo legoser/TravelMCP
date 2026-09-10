@@ -151,7 +151,7 @@ type Sync struct {
 	YandexDumpPath      string  `yaml:"yandex_dump_path"`
 	SkeletonRegion      string  `yaml:"skeleton_region"`
 	Bbox                string  `yaml:"bbox"`
-	ReestrPath          string  `yaml:"reestr_path"`
+	FlatTripsPath       string  `yaml:"flat_trips_path"`
 	LegacyThreshold     float64 `yaml:"legacy_threshold"`
 	CoverageSoftScore   float64 `yaml:"coverage_soft_score"`
 	TripsChurnThreshold float64 `yaml:"trips_churn_threshold"`
@@ -560,8 +560,8 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SYNC_BBOX"); v != "" {
 		cfg.Sync.Bbox = v
 	}
-	if v := os.Getenv("SYNC_REESTR_PATH"); v != "" {
-		cfg.Sync.ReestrPath = v
+	if v := os.Getenv("SYNC_FLAT_TRIPS_PATH"); v != "" {
+		cfg.Sync.FlatTripsPath = v
 	}
 	if v := os.Getenv("SYNC_LEGACY_THRESHOLD"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
@@ -751,8 +751,8 @@ func setByPath(cfg *Config, parts []string, v string) {
 		if len(parts) == 2 && parts[1] == "bbox" {
 			cfg.Sync.Bbox = v
 		}
-		if len(parts) == 2 && parts[1] == "reestr_path" {
-			cfg.Sync.ReestrPath = v
+		if len(parts) == 2 && parts[1] == "flat_trips_path" {
+			cfg.Sync.FlatTripsPath = v
 		}
 		if len(parts) == 2 && parts[1] == "legacy_threshold" {
 			if f, err := strconv.ParseFloat(v, 64); err == nil {

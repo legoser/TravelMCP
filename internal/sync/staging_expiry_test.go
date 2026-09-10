@@ -26,7 +26,7 @@ func TestPersistResolvesTripReviewsOnPromotion(t *testing.T) {
 		t.Fatalf("attach: %v", err)
 	}
 	seedAttachTerminals(t, ms, terms)
-	if _, err := PersistAttachReport(ctx, ms, rep, "mintrans", slog.Default()); err != nil {
+	if _, err := PersistAttachReport(ctx, ms, rep, testSource, slog.Default()); err != nil {
 		t.Fatalf("persist1: %v", err)
 	}
 	openReviews := reviewCount(t, ms)
@@ -38,7 +38,7 @@ func TestPersistResolvesTripReviewsOnPromotion(t *testing.T) {
 	var fp string
 	for _, p := range rep.Promoted {
 		for _, r := range rep.Reviews {
-			if r.Fingerprint == "mintrans:"+p.RouteNK+"|"+p.TripNK {
+			if r.Fingerprint == testSource+":"+p.RouteNK+"|"+p.TripNK {
 				fp = r.Fingerprint
 			}
 		}
@@ -47,9 +47,9 @@ func TestPersistResolvesTripReviewsOnPromotion(t *testing.T) {
 		// нет пересечений в фикстуре — проверяем на синтетической записи
 		ms.SaveReviewQueue(ctx, model.ReviewQueueEntry{
 			EntityType: "trip", EntityID: -42, Reason: "low_confidence",
-			Fingerprint: "mintrans:54.22.078|54.22.078|forward:1:0", Score: 0.5,
+			Fingerprint: testSource + ":54.22.078|54.22.078|forward:1:0", Score: 0.5,
 		})
-		fp = "mintrans:54.22.078|54.22.078|forward:1:0"
+		fp = testSource + ":54.22.078|54.22.078|forward:1:0"
 	}
 	n, err := ms.ResolveTripReviewsByFingerprint(ctx, fp)
 	if err != nil {
@@ -79,7 +79,7 @@ func reviewCount(t *testing.T, ms *memory.MemoryStore) int {
 func TestSaveReviewQueueBumpsCount(t *testing.T) {
 	ms := memory.NewMemoryStore()
 	ctx := context.Background()
-	e := model.ReviewQueueEntry{EntityType: "trip", EntityID: -7, Reason: "low_confidence", Fingerprint: "mintrans:r|t"}
+	e := model.ReviewQueueEntry{EntityType: "trip", EntityID: -7, Reason: "low_confidence", Fingerprint: testSource + ":r|t"}
 	if err := ms.SaveReviewQueue(ctx, e); err != nil {
 		t.Fatal(err)
 	}
@@ -106,10 +106,10 @@ func TestExpireStaleStagingTrips(t *testing.T) {
 	old := time.Now().Add(-30 * 24 * time.Hour)
 	fresh := time.Now()
 	rows := []store.StagingTripRow{
-		{Source: "mintrans", ExternalRouteCode: "r1", ExternalTripCode: "t1", State: "incomplete_trip", LastAttemptAt: old},
-		{Source: "mintrans", ExternalRouteCode: "r2", ExternalTripCode: "t2", State: "awaiting_times", LastAttemptAt: old},
-		{Source: "mintrans", ExternalRouteCode: "r3", ExternalTripCode: "t3", State: "incomplete_trip", LastAttemptAt: fresh},
-		{Source: "mintrans", ExternalRouteCode: "r4", ExternalTripCode: "t4", State: "expired", LastAttemptAt: old},
+		{Source: testSource, ExternalRouteCode: "r1", ExternalTripCode: "t1", State: "incomplete_trip", LastAttemptAt: old},
+		{Source: testSource, ExternalRouteCode: "r2", ExternalTripCode: "t2", State: "awaiting_times", LastAttemptAt: old},
+		{Source: testSource, ExternalRouteCode: "r3", ExternalTripCode: "t3", State: "incomplete_trip", LastAttemptAt: fresh},
+		{Source: testSource, ExternalRouteCode: "r4", ExternalTripCode: "t4", State: "expired", LastAttemptAt: old},
 	}
 	for _, r := range rows {
 		if _, err := ms.UpsertStagingTrip(ctx, r); err != nil {

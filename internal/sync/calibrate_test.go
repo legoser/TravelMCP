@@ -9,7 +9,7 @@ func TestCalibrateAttachFixture(t *testing.T) {
 	terms := indexFromFixture(t, trips)
 	stops := registryStopsFromTrips(t)
 	thresholds := []float64{0.3, 0.4, 0.5, 0.6, 0.7, 0.8}
-	rep := CalibrateAttach(stops, terms, thresholds, 0.1, 0.005, attachParamsFor, nil, "mintrans")
+	rep := CalibrateAttach(stops, terms, thresholds, 0.1, 0.005, attachParamsFor, nil, testSource)
 	for _, p := range rep.Clean {
 		t.Logf("clean thr=%.1f verified=%d/%d margin=%d rejected=%d", p.Threshold, p.Verified, p.Total, p.MarginBand, p.Rejected)
 	}
@@ -54,7 +54,7 @@ func TestGateMethodSoftVsVerified(t *testing.T) {
 		{"empty", nil},
 	}
 	for _, sc := range scenarios {
-		rep := CompareGateMethods(stops, sc.terms, 0.4, attachParamsFor, nil, "mintrans")
+		rep := CompareGateMethods(stops, sc.terms, 0.4, attachParamsFor, nil, testSource)
 		for _, r := range rep {
 			t.Logf("%s region=%s total=%d soft=%.3f verified=%.3f", sc.name, r.Region, r.Total, r.SoftRate, r.VerifiedRate)
 			if sc.name == "full" && (r.SoftRate != 1 || r.VerifiedRate != 1) {

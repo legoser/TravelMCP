@@ -75,7 +75,7 @@ func main() {
 				os.Exit(1)
 			}
 			logger.Info("db migration completed", "elapsed_ms", time.Since(ms).Milliseconds())
-			for _, p := range []string{"yandex", "nominatim", "motis", "mintrans", "gtfs"} {
+			for _, p := range []string{"yandex", "nominatim", "motis", "gov-registry", "gtfs", "osm"} {
 				_ = st.SetQuotaLimit(context.Background(), p, store.DefaultQuotaLimit)
 			}
 			if qs, err := st.ListQuotas(context.Background()); err == nil {
@@ -226,10 +226,6 @@ func newJobsWorker(st store.Store, cfg *config.Config, l *slog.Logger) *jobs.Wor
 			}
 		}
 		return nil
-	})
-	w.Register("sync_mintrans", func(_ context.Context, job store.JobRow) error {
-		l.Warn("sync_mintrans disabled: legacy-импорт вырезан, канон пишут skeleton-sync + trips-sync", "id", job.ID)
-		return errors.New("sync_mintrans отключён: legacy-импорт вырезан, канон пишут skeleton-sync + trips-sync")
 	})
 	w.Register("sync_rail", func(ctx context.Context, job store.JobRow) error {
 		l.Info("handling sync_rail", "id", job.ID)

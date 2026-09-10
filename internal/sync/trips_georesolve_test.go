@@ -21,7 +21,7 @@ func TestResolveStopCoordsFillsFromSkeleton(t *testing.T) {
 			{StopID: "op:70:70016", Name: "Автовокзал АО «Томскавтотранс»", Region: "70"},
 		},
 	}}
-	filled, missing := ResolveStopCoords(trips, terms, "mintrans")
+	filled, missing := ResolveStopCoords(trips, terms, testSource)
 	if missing != 2 || filled == 0 {
 		t.Fatalf("оба стопа без координат: missing=%d filled=%d", missing, filled)
 	}
@@ -48,7 +48,7 @@ func TestResolveStopCoordsDisambiguatesCityTwins(t *testing.T) {
 			{StopID: "op:42:42005", Name: "Кемеровский АВ", Region: "42"},
 		},
 	}}
-	filled, _ := ResolveStopCoords(trips, terms, "mintrans")
+	filled, _ := ResolveStopCoords(trips, terms, testSource)
 	if filled != 1 || trips[0].Stops[0].Lat == nil {
 		t.Fatal("Кемеровский АВ должен резолвиться при тёзках города")
 	}
@@ -67,7 +67,7 @@ func TestResolveStopCoordsNoGuess(t *testing.T) {
 			{StopID: "x", Name: "ОП с. Таштагол", Region: "42"},
 		},
 	}}
-	filled, missing := ResolveStopCoords(trips, terms, "mintrans")
+	filled, missing := ResolveStopCoords(trips, terms, testSource)
 	if filled != 0 || missing != 1 {
 		t.Fatalf("неуверенный матч не должен давать координаты: filled=%d missing=%d", filled, missing)
 	}

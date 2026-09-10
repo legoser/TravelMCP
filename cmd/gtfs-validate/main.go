@@ -29,19 +29,19 @@ func main() {
 	ctx := context.Background()
 
 	// Фикстура: полный путь конвейера — route + trip + stop с provenance.
-	routeID, err := m.UpsertRoute(ctx, store.RouteRow{ProviderID: "mintrans", ExternalRouteCode: "42", ShortName: "42", LongName: "Тестовый маршрут", Mode: "bus"})
+	routeID, err := m.UpsertRoute(ctx, store.RouteRow{ProviderID: "gov-registry", ExternalRouteCode: "42", ShortName: "42", LongName: "Тестовый маршрут", Mode: "bus"})
 	if err != nil {
 		slog.Error("fixture route failed", "error", err)
 		os.Exit(1)
 	}
-	tripID, err := m.UpsertTrip(ctx, store.TripRow{RouteID: routeID, ProviderID: "mintrans", ExternalTripCode: "fwd-1"})
+	tripID, err := m.UpsertTrip(ctx, store.TripRow{RouteID: routeID, ProviderID: "gov-registry", ExternalTripCode: "fwd-1"})
 	if err != nil {
 		slog.Error("fixture trip failed", "error", err)
 		os.Exit(1)
 	}
 	for _, p := range []model.Provenance{
-		{EntityType: "route", EntityID: routeID, Source: "mintrans", Confidence: 1, ObservedAt: time.Now(), Channel: model.ChannelLocalFile},
-		{EntityType: "trip", EntityID: tripID, Source: "mintrans", Confidence: 1, ObservedAt: time.Now(), Channel: model.ChannelLocalFile},
+		{EntityType: "route", EntityID: routeID, Source: "gov-registry", Confidence: 1, ObservedAt: time.Now(), Channel: model.ChannelLocalFile},
+		{EntityType: "trip", EntityID: tripID, Source: "gov-registry", Confidence: 1, ObservedAt: time.Now(), Channel: model.ChannelLocalFile},
 	} {
 		if err := m.SaveProvenance(ctx, p); err != nil {
 			slog.Error("fixture provenance failed", "error", err)

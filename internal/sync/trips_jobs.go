@@ -34,14 +34,14 @@ func DecodeTripsAttachPayload(raw json.RawMessage) (TripsAttachPayload, error) {
 		return p, fmt.Errorf("sync trips: payload sync_trips_attach без route")
 	}
 	if p.Source == "" {
-		p.Source = "mintrans"
+		return p, fmt.Errorf("sync trips: payload sync_trips_attach без source")
 	}
 	return p, nil
 }
 
 func EnqueueTripsAttachJobs(ctx context.Context, db store.Store, routes []string, base TripsAttachPayload) ([]int64, error) {
 	if base.Source == "" {
-		base.Source = "mintrans"
+		return nil, fmt.Errorf("sync trips: payload sync_trips_attach без source")
 	}
 	sorted := append([]string{}, routes...)
 	sort.Strings(sorted)
