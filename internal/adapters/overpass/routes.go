@@ -1,10 +1,12 @@
 package overpass
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 
+	"travelmcp/internal/geocoder"
 	"travelmcp/internal/model"
 )
 
@@ -55,6 +57,36 @@ out body;
 >;
 out skel qt;`,
 		timeoutS, ref, bboxFilter)
+}
+
+// RouteRefBBox — параметры route-запроса как ключ кэша (O-5): ref + bbox
+// идентифицируют запрос детерминированно; копия значений, не указатель.
+type RouteQuery struct {
+	Ref  string
+	BBox *BBox
+}
+
+// FetchRouteRelations — O-5: маршрутные relation'ы Overpass (identity-доказательство
+// маршрута: ref/operator/network + упорядоченные члены-остановки; времена —
+// монополия Яндекса, §1.2). Сеть — через execQL (main→mirror fallback уже в
+// адаптере); путь cache+quota — в geocoder.CachedRoutesProvider, не здесь.
+func (a *Adapter) FetchRouteRelations(ctx context.Context, q RouteQuery) ([]model.AdaptedRecord, error) {
+	ql := BuildRouteQuery(q.Ref, q.BBox, 0)
+	body, err := a.execQL(ctx, ql)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRouteResponse(body)
+}
+
+// FetchRoutes — контракт geocoder.OverpassRoutesProvider для пути cache+quota:
+// мост обезличенных RouteQueryParams → RouteQuery адаптера.
+func (a *Adapter) FetchRoutes(ctx context.Context, q geocoder.RouteQueryParams) ([]model.AdaptedRecord, error) {
+	rq := RouteQuery{Ref: q.Ref}
+	if q.HasBBox {
+		rq.BBox = &BBox{MinLat: q.MinLat, MinLon: q.MinLon, MaxLat: q.MaxLat, MaxLon: q.MaxLon}
+	}
+	return a.FetchRouteRelations(ctx, rq)
 }
 
 func ParseRouteResponse(body []byte) ([]model.AdaptedRecord, error) {

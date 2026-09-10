@@ -387,9 +387,9 @@ func (s *Server) handleGTFS(w http.ResponseWriter, r *http.Request) {
 	if region != "" {
 		comp := gtfsperregion.NewCompiler("f-ru")
 		data, err = comp.BuildPerRegionFromStore(r.Context(), s.store, region, time.Now())
-		if err != nil {
-			data, err = gtfsCompile(net)
-		}
+		// Фолбека на gtfsCompile(net) при ошибке нет намеренно: gate
+		// полноты provenance (план §3.3) нельзя молча обходить сборкой
+		// мимо store — ошибка уходит клиенту как 500.
 		filename = gtfsperregion.ArchiveName(region)
 	} else {
 		data, err = gtfsCompile(net)
@@ -538,7 +538,7 @@ func (s *Server) handleReviewResolve(w http.ResponseWriter, r *http.Request) {
 					writeJSONResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 					return
 				}
-				_ = s.store.SaveProvenance(r.Context(), model.Provenance{EntityType: "terminal", EntityID: req.EntityID, Source: "manual", Confidence: 1.0, ObservedAt: time.Now(), ActorID: actorID})
+				_ = s.store.SaveProvenance(r.Context(), model.Provenance{EntityType: "terminal", EntityID: req.EntityID, Source: "manual", Confidence: 1.0, ObservedAt: time.Now(), ActorID: actorID, Channel: model.ChannelLocalFile})
 			}
 		}
 	}
@@ -788,7 +788,7 @@ func (s *Server) handleAdminUpdateTerminal(w http.ResponseWriter, r *http.Reques
 			writeJSONResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 			return
 		}
-		_ = s.store.SaveProvenance(r.Context(), model.Provenance{EntityType: "terminal", EntityID: tid, Source: "manual", Confidence: 1.0, ObservedAt: time.Now(), ActorID: actorID})
+		_ = s.store.SaveProvenance(r.Context(), model.Provenance{EntityType: "terminal", EntityID: tid, Source: "manual", Confidence: 1.0, ObservedAt: time.Now(), ActorID: actorID, Channel: model.ChannelLocalFile})
 		if req.Settlement != "" {
 			if tagger, ok := s.store.(interface {
 				SetTerminalTag(ctx context.Context, id int64, key, value string) error
@@ -815,7 +815,7 @@ func (s *Server) handleAdminUpdateTerminal(w http.ResponseWriter, r *http.Reques
 		writeJSONResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	_ = s.store.SaveProvenance(r.Context(), model.Provenance{EntityType: "terminal", EntityID: tid, Source: "manual", Confidence: 1.0, ObservedAt: time.Now(), ActorID: actorID})
+	_ = s.store.SaveProvenance(r.Context(), model.Provenance{EntityType: "terminal", EntityID: tid, Source: "manual", Confidence: 1.0, ObservedAt: time.Now(), ActorID: actorID, Channel: model.ChannelLocalFile})
 	if req.Settlement != "" {
 		if tagger, ok := s.store.(interface {
 			SetTerminalTag(ctx context.Context, id int64, key, value string) error
@@ -984,8 +984,21 @@ func (s *Server) handleAdminExternalCall(w http.ResponseWriter, r *http.Request)
 	s.logger.Info("external-call done", "provider", req.Provider, "query", req.Query, "validated", result["validated"], "actor", userEmail(user))
 	details, _ := json.Marshal(result)
 	_ = s.store.WriteAuditLog(r.Context(), actorID, "external_call", "terminal", nil, string(details))
-	_ = s.store.SaveProvenance(r.Context(), model.Provenance{EntityType: "terminal", EntityID: 0, Source: req.Provider, Confidence: confidence, ObservedAt: time.Now(), ActorID: actorID, Raw: details})
+	channel := provenanceChannelForProvider(req.Provider)
+	_ = s.store.SaveProvenance(r.Context(), model.Provenance{EntityType: "terminal", EntityID: 0, Source: req.Provider, Confidence: confidence, ObservedAt: time.Now(), ActorID: actorID, Raw: details, Channel: channel})
 	writeJSONResponse(w, http.StatusOK, result)
+}
+
+// provenanceChannelForProvider — канал доставки внешнего вызова (план §3.3):
+// MOTIS-коннекторы ходят в локальный инстанс, остальные внешние геокодеры —
+// live HTTP. Канон значений в model.Channel*.
+func provenanceChannelForProvider(provider string) string {
+	switch provider {
+	case "motis", "transitous":
+		return model.ChannelLocalMotis
+	default:
+		return model.ChannelLocalFile
+	}
 }
 
 func gtfsCompile(net *model.Network) ([]byte, error) {

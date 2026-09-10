@@ -200,7 +200,7 @@ func contestLegacyFields(ctx context.Context, st LegacyMatchStore, runID int64, 
 			updated = true
 		}
 	}
-	if err := st.SaveProvenance(ctx, model.Provenance{EntityType: "terminal", EntityID: leg.ID, Source: geomWinnerSource(j.Record), Confidence: j.Score, ObservedAt: now}); err != nil {
+	if err := st.SaveProvenance(ctx, model.Provenance{EntityType: "terminal", EntityID: leg.ID, Source: geomWinnerSource(j.Record), Confidence: j.Score, ObservedAt: now, Channel: model.ChannelLocalFile}); err != nil {
 		return false, err
 	}
 	return updated, nil

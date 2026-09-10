@@ -116,7 +116,7 @@
 | **3. Skeleton + миграция старых терминалов** | `SkeletonSource{osm,yandex}`; иерархия OSM на экстракции (§1.2); join OSM через staging-таблицы и `ST_DWithin/GiST`; прогон Фазы 0; генерация кандидатов позиций интерполяцией (§5.4). | Скелет в каноне, старые записи сматчены/в review, coverage измерен по регионам |
 | **4. Trips** | Минтранс → только рейсы; **запуск только после coverage-gate** по регионам трасс — метод измерения: доля стопов реестра с кандидатом выше мягкого порога `ScorePair` (§5.4); рекалибровка порогов `ScorePair` на новых регионах до массового attach; **предусловие NK:** bootstrap-сравнение двух срезов реестра на стабильность `external_route_code` до доверия ключу, при нестабильности — синтезированный ключ (регион + номер + конечные + carrier, пометка `synthetic`) + churn-мониторинг (§3.4); матчинг стопов на скелет (`ScorePair`, ось `stop_terminal`); единица работы — **трип/маршрут**, барьер межрегиональности с таймаутом (§4.2); **промоушен-транзакция = трип** (job=route — батчинг); политика времён §3.13 (winner-источник, запрет фабрикации); staging + автопромоушн по `outbox`; cached yandex-расписания как доп. источник; tombstone/GC исчезнувших рейсов; row-reconciliation per stage; churn-alert (>N% изменений за прогон → стоп). | Полные рейсы в каноне, `% полных рейсов` в дашборде, фантомов нет |
 | **5. Freshness** | `finalize`/GC `attribute_state` (retention 90д, victories в `provenance_history`), `v_stale_attributes`, аудит `possible_merge`, ночной recompute `transport_types`, золотой набор `testdata/golden_terminals.json` + `golden_trips.json` → precision/recall в CI, возраст расписаний и TTL-ресинк (§3.4); demand-driven ресинк расписаний по приоритету (трипы реальных запросов планировщика + истекающие TTL, остальное лениво). **Реализовано (2026-09-09): freshness-sweep `RunHygieneSweep`** (internal/sync/attribute_hygiene.go) в `jobs{cleanup}`: finalize/GC attribute_state (retention, ручные правки не трогаются, несходимость fail-loud), stale-счётчики 30д (`stale_attributes_30d` в dashboard KPI §8), аудит possible_merge (300м + пересечение типов → review, fingerprint=merge:a:b, идемпотентно), recompute transport_types (**union stored∪fact** — факт добавляет типы, скелетные rail/flight не срезаются временным отсутствием рейсов); FP-выборка `SampleMarginalMatches` (match_score ∈ [lo,hi), acceptance sampling §8 — вход для ручного FP-рейта); golden_terminals.json в CI (precision/recall 1.0). **Реализовано (2026-09-10): early-dedup форма recompute SELECT** (attribute_hygiene.go): агрегация `(stop_id, mode)` до join со стопами (3.5M → ~25k строк, parallel HashAggregate) вместо CROSS JOIN LATERAL с 64k переполнениями подзапроса; live-БД 12.3s → 0.6s (~20x), EXCEPT-проверка идентичности 0/0; новые индексы не нужны (покрыты существующими: `stop_id` — префикс `idx_stop_times_stop_departure`). Не реализовано: demand-driven ресинк расписаний (§3.4) и TTL-ресинк — backlog. | | Устаревание видно, объём `attribute_state` ограничен, рекалибровка измерима |
-| **6. Депрекация/масштаб** | Удаление legacy-пути по §6; при прод-деплое — заморозка `001_initial.sql`, далее аддитивные `002_*.sql`. РФ целиком — после паритета на полном `regions.json`. **Производственный GTFS:** проверка полноты provenance (`source/channel`, §3.3) как hard-gate CI (скан provenance zip) + GTFS Validator (MobilityData). `plan_id`: переход с `sha(binary)` на ручной logic version (бамп при семантических изменениях), иначе каждый деплой = full-resync чанков. **Реализовано (2026-09-10): паритет + вырезание legacy.** Паритет-скрипт `scripts/parity-check.py` (срез реестра vs канон; маршрутом считается трасса со стопом в регионе пилота, staging — честная промежуточная станция конвейера): пилот-42 routes 96.7% / timed 99.2% (порог 95% пройден; 42.22.016/2 — код с суффиксом, вычислен отдельным вопросом). Вырезано: `internal/providers/intercity` (JSON-провайдер), `Registry.WithDedupKm`/intercityPath, `providers.intercity`-секция конфига + env `INTERCITY_REESTR_PATH`, `internal/adapters/mintrans/importer.go` (типы контракта → contract.go, helpers → trips.go), `internal/import/pipeline.go`; planner-тесты перешли на `mintrans.FlattenTrips`-билдер сети из testdata. Канон transport-типов расширен (subway + car/bicycle/scooter/taxi, §3.1). `make check-deprecated` чисто (остались intentional-пометки MemoryStore). **Не закрыто (дальше):** производственный GTFS hard-gate + GTFS Validator; `plan_id` → logic version; РФ-целиком после полного среза. | `make check-deprecated` чисто |
+| **6. Депрекация/масштаб** | Удаление legacy-пути по §6; при прод-деплое — заморозка `001_initial.sql`, далее аддитивные `002_*.sql`. РФ целиком — после паритета на полном `regions.json`. **Производственный GTFS:** проверка полноты provenance (`source/channel`, §3.3) как hard-gate CI (скан provenance zip) + GTFS Validator (MobilityData). `plan_id`: переход с `sha(binary)` на ручной logic version (бамп при семантических изменениях), иначе каждый деплой = full-resync чанков. **Реализовано (2026-09-10): паритет + вырезание legacy.** Паритет-скрипт `scripts/parity-check.py` (срез реестра vs канон; маршрутом считается трасса со стопом в регионе пилота, staging — честная промежуточная станция конвейера): пилот-42 routes 96.7% / timed 99.2% (порог 95% пройден; 42.22.016/2 — код с суффиксом, вычислен отдельным вопросом). Вырезано: `internal/providers/intercity` (JSON-провайдер), `Registry.WithDedupKm`/intercityPath, `providers.intercity`-секция конфига + env `INTERCITY_REESTR_PATH`, `internal/adapters/mintrans/importer.go` (типы контракта → contract.go, helpers → trips.go), `internal/import/pipeline.go`; planner-тесты перешли на `mintrans.FlattenTrips`-билдер сети из testdata. Канон transport-типов расширен (subway + car/bicycle/scooter/taxi, §3.1). `make check-deprecated` чисто (остались intentional-пометки MemoryStore). **Реализовано (2026-09-10): GTFS hard-gate + channel.** `provenance.channel` (+history, триггер, CHECK по канону §3.3: local_file/local_motis/transitous_prod/transitous_staging) — модель `model.Provenance.Channel` + `ValidProvenanceChannel`, все писатели (postgres pool/tx, memory) падают на пустом/неканоническом значении; записи проставлены во всех путях записи (skeleton_promote/legacy_match/server/external-call); персист трипов 4.3 пишет provenance route+trip в промоушен-транзакции (слои, исторически писавшиеся без него). Gate: `ProvenanceCompletenessChecker.CheckProvenanceCompleteness` (живые routes/trips без пары source/channel → список; postgres одним UNION-запросом, memory-зеркало) вызывается из `Compiler.writeFromStore` **до** сборки zip — неполный канон = ошибка, не zip; фолбэк `gtfsCompile(net)` при падении gate в `/api/v1/export` убран (тихий обход). Раннер `cmd/gtfs-validate` + `make gtfs-validate` (GTFS_VALIDATOR_BIN): fixture-zip через тот же gate + локальный MobilityData-валидатор. **Реализовано (2026-09-10): `plan_id` → logic version.** `internal/sync/logicversion.go` — единый `LogicVersion` + `LogicVersionID()`; все раннеры (`skeleton-sync`, `trips-sync`, `gtfs-import`) считают plan_id от него вместо разрозненных `appVersion`-констант и sha(binary): деплой без изменения логики не инвалидирует чанки, бамп версии — полный resync там, где нужен (правило бампа — там же, тест `TestPlanIDLogicVersion`). **Не закрыто (дальше):** РФ-целиком после полного среза. | `make check-deprecated` чисто |
 
 **Зависимости фаз (DAG).** Фаза 1 — корень для всех остальных (DDL-сущности
 используются Фазами 2–5). Фаза 2 ⊂ Фаза 3 (verify-стадия). Фаза 0 — не точка
@@ -461,7 +461,10 @@ dead). Прогресс в админке: «прогон R: 42/57 chunks гот
 
 ### 4.3 Возобновляемость после рестарта/правки кода
 
-- `plan_id = sha256(binary/commit + эффективный конфиг + sha256(raw inputs))`.
+- `plan_id = sha256(logic version + эффективный конфиг + sha256(raw inputs))`.
+  **Logic version — ручная семантическая константа** (`internal/sync/logicversion.go`,
+  бамп при изменении обработки), не sha(binary/commit): иначе каждый деплой
+  = full-resync чанков. Входные данные по-прежнему в хеше.
   `plan_id` — про идемпотентность обработки, не про свежесть: совпадение
   `plan_id_done` пропускает чанк независимо от новых `live`-ответов
   `geocode_cache`; свежесть уже обработанного — через TTL/
@@ -724,10 +727,23 @@ O-блоки (коннектор), затем S-блоки (settlement), зат�
   + рекурсия `>>` за членами; парсер строит скелет `AdaptedTrip`: упорядоченный
   список стопов с OSM-ID + `ref`/`operator` как identity-доказательство. Фикстура
   relation в `testdata/overpass/`. Готово: юнит, порядок членов сохранён.
+  **Реализовано (2026-09-10):** `Adapter.FetchRouteRelations` (execQL main→mirror)
+  + мост `FetchRoutes` для пути cache+quota — `geocoder.CachedRoutesProvider`
+  (`cached_routes.go`, по лекалу O-4: ключи `overpass:route:<ref>[:bbox]`, квота
+  `api_quotas` на `osm`, общий пейсер ≥1.2с; нового пути вызова нет, §3.7).
+  Тесты: `TestFetchRouteRelationsHTTP/Empty` (фикстура, порядок членов),
+  `TestCachedRoutesProviderCacheQuota/QuotaExhausted` (hit без квоты, вежливый
+  отказ). Живая пачка O-6 парсится офлайн-скретч-тестом (skip в CI без сырья).
 - **O-6. Ручной скраппинг.** `scripts/overpass-collect.sh` по образцу
   `yandex-collect.sh`: вход — unmatched-список attach, сырьё —
   `data/overpass/raw/` (не коммитится), сводный офлайн-дамп
   `data/overpass/stations.json`. Готово: одна пачка собрана руками.
+  **Реализовано (2026-09-10):** скрипт жив (пейсер 1.2с, fallback
+  main→openstreetmap.fr, resume по уже собранным слагам); дефолтные точки —
+  реальные автовокзалы OSM (Кемерово 55.341592,86.061353; Красноярск МКАВ;
+  Барнаул; Томск; Кемеровская обл.) + route-relations O-5 (bbox СФО). Живая
+  пачка: 157КБ route_101 (Томск №101 Поросино↔Ленина, 161 member — порядок
+  сохранён), сводный дамп 1349 elements; сырьё в gitignored `data/`.
 - **O-7. Gap-fill в `skeleton-sync`.** После join: непарные Yandex + unmatched
   стопы реестра → `StationsAround` по их координатам → кандидаты в пул
   верификации `ScorePair` (первый verified побеждает). Флаги `--overpass-max`
@@ -793,8 +809,25 @@ O-блоки (коннектор), затем S-блоки (settlement), зат�
   что hard-валидаторы корректны именно на ней (писались под другую структуру).
   `rejected`-промежуток → промоут рейса без этого стопа (решение). Готово: тест
   склейки зелёный.
+  **Реализовано (2026-09-10):** `internal/sync/trips_glued_test.go` — форма
+  «порядок из `AdaptedTripData.Stops` (O-5) × времена winner-источника на весь
+  трип (§3.13)»: (a) убывающее время по relation-порядку → dead non-monotonic;
+  (b) overspeed на финализированной геометрии обоих концов → dead; (c) тот же
+  перегон при `GeomFinalized=false` конце → soft needs_review, не dead (guard
+  §5.1); (d) интерполированный конец + завышенная скорость → review (кейс
+  golden_trips.json на склеенной форме); полный проход `AttachTrips` —
+  Overpass-порядок сохраняется в seq, exclusivity тёзку не дублирует.
 - **C-3. Реран attach.** Полный цикл до первых promoted + конвергенция ресинка.
   Готово: promoted > 0, ресинк без dupes.
+  **Реализовано (2026-09-10):** живой прогон на scratch-БД (миграция с 0 ошибок
+  с `provenance.channel`): скелет Кузбасса (bbox дефолт, 5755 written/26
+  review, offline) → attach `reestr42.geo.json`: **run1 179 promoted** (full_rate
+  0.46, 779 stop_times, 212 staged, provenance route+trip пишется с channel
+  `local_file`, gate-запрос руками 0 нарушителей) → **run2 167 promoted + 12
+  tombstoned** (честный дифф: персист run1 добавил `terminal_identifiers` →
+  код-кандидаты изменили greedy-exclusivity исходы, единичная эволюция после
+  накопления кодов Фазы 4.5) → **run3 = run4: 167/224/0/0, dupes 0, churn-алерт
+  молчит** — конвергенция. Scratch-БД дропнута после проверки.
 
 ### D. Entity-resolution пробелы attach-пайплайна (по итогам внешнего ревью, принято)
 

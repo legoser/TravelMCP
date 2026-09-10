@@ -39,7 +39,7 @@ func seedLegacy(t *testing.T, ctx context.Context, ms *memstore.MemoryStore, nam
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ms.SaveProvenance(ctx, model.Provenance{EntityType: "terminal", EntityID: id, Source: "mintrans", Confidence: 0.5, ObservedAt: time.Now()}); err != nil {
+	if err := ms.SaveProvenance(ctx, model.Provenance{EntityType: "terminal", EntityID: id, Source: "mintrans", Confidence: 0.5, ObservedAt: time.Now(), Channel: model.ChannelLocalFile}); err != nil {
 		t.Fatal(err)
 	}
 	return id

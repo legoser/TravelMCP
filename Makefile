@@ -37,7 +37,15 @@ run-example:
 clean:
 	rm -rf $(BIN) bin
 
-.PHONY: check-layers check-deprecated
+.PHONY: check-layers check-deprecated gtfs-validate
+
+## gtfs-validate: прогон MobilityData gtfs-validator на фикстурном zip
+## (план §3.3/§6 — производственный GTFS hard-gate). Живой сети нет:
+## валидатор — локальный бинарник, zip собирается из memory-фикстуры.
+## GTFS_VALIDATOR_BIN — путь к бинарнику (дефолт bin/gtfs-validator).
+gtfs-validate:
+	@echo "==> сборка фикстурного zip (memory store, provenance gate)"
+	@go run ./cmd/gtfs-validate $(GTFS_VALIDATOR_BIN)
 
 ## check-layers: проверка направления зависимостей и SOLID-границ (AGENTS.md)
 check-layers:

@@ -396,13 +396,81 @@ func (p *PostgresStore) SaveProvenance(ctx context.Context, pr model.Provenance)
 	if p.pool == nil {
 		return nil
 	}
+	if !model.ValidProvenanceChannel(pr.Channel) {
+		return fmt.Errorf("save provenance: пустой/неканонический channel %q (канон: local_file/local_motis/transitous_prod/transitous_staging, план §3.3)", pr.Channel)
+	}
 	var raw any
 	if len(pr.Raw) > 0 {
 		raw = string(pr.Raw)
 	}
-	_, err := p.pool.Exec(ctx, `INSERT INTO provenance(entity_type, entity_id, source, confidence, observed_at, raw, actor_id) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(entity_type, entity_id, source) DO UPDATE SET confidence=EXCLUDED.confidence, observed_at=EXCLUDED.observed_at, raw=EXCLUDED.raw`, pr.EntityType, pr.EntityID, pr.Source, pr.Confidence, pr.ObservedAt, raw, pr.ActorID)
+	_, err := p.pool.Exec(ctx, `INSERT INTO provenance(entity_type, entity_id, source, confidence, observed_at, raw, actor_id, channel) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(entity_type, entity_id, source) DO UPDATE SET confidence=EXCLUDED.confidence, observed_at=EXCLUDED.observed_at, raw=EXCLUDED.raw, channel=EXCLUDED.channel`, pr.EntityType, pr.EntityID, pr.Source, pr.Confidence, pr.ObservedAt, raw, pr.ActorID, pr.Channel)
 	return err
 }
+
+// ListProvenanceChannels — карта entityID→channel для gate полноты §3.3.
+// Сущности без provenance-записей в карте отсутствуют (signal gate).
+// При нескольких источниках берётся самый свежий по observed_at.
+func (p *PostgresStore) ListProvenanceChannels(ctx context.Context, entityType string, ids []int64) (map[int64]string, error) {
+	out := map[int64]string{}
+	if p.pool == nil || len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := p.pool.Query(ctx, `SELECT DISTINCT ON (entity_id) entity_id, channel
+		FROM provenance WHERE entity_type=$1 AND entity_id = ANY($2)
+		ORDER BY entity_id, observed_at DESC`, entityType, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var channel string
+		if err := rows.Scan(&id, &channel); err != nil {
+			return nil, err
+		}
+		out[id] = channel
+	}
+	return out, rows.Err()
+}
+
+// CheckProvenanceCompleteness — hard-gate GTFS (план §3.3/§6): живые
+// routes/trips канона без записи provenance (или с пустым channel).
+// Терминалы/стопы промоутятся только с channel (save-валидация), здесь
+// проверяется слой рейсов, который исторически писался без provenance.
+func (p *PostgresStore) CheckProvenanceCompleteness(ctx context.Context) ([]string, error) {
+	out := []string{}
+	if p.pool == nil {
+		return out, nil
+	}
+	rows, err := p.pool.Query(ctx, `
+		SELECT 'route ' || r.external_route_code
+		FROM routes r
+		WHERE r.valid_to IS NULL
+		  AND NOT EXISTS (SELECT 1 FROM provenance pv
+		                  WHERE pv.entity_type='route' AND pv.entity_id=r.id
+		                    AND pv.channel IS NOT NULL AND pv.channel <> '')
+		UNION ALL
+		SELECT 'trip ' || t.external_trip_code || ' (route ' || r.external_route_code || ')'
+		FROM trips t
+		JOIN routes r ON r.id = t.route_id
+		WHERE t.valid_to IS NULL
+		  AND NOT EXISTS (SELECT 1 FROM provenance pv
+		                  WHERE pv.entity_type='trip' AND pv.entity_id=t.id
+		                    AND pv.channel IS NOT NULL AND pv.channel <> '')`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 func (p *PostgresStore) SaveReviewQueue(ctx context.Context, e model.ReviewQueueEntry) error {
 	if p.pool == nil {
 		return nil
@@ -1251,16 +1319,23 @@ func (t *pgTxStore) UpsertTerminal(ctx context.Context, r TerminalRow, names map
 	return id, nil
 }
 func (t *pgTxStore) SaveProvenance(ctx context.Context, p model.Provenance) error {
+	if !model.ValidProvenanceChannel(p.Channel) {
+		return fmt.Errorf("save provenance: пустой/неканонический channel %q (канон: local_file/local_motis/transitous_prod/transitous_staging, план §3.3)", p.Channel)
+	}
 	var raw any
 	if len(p.Raw) > 0 {
 		raw = string(p.Raw)
 	}
-	_, err := t.tx.Exec(ctx, `INSERT INTO provenance(entity_type, entity_id, source, confidence, observed_at, raw, actor_id) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(entity_type, entity_id, source) DO UPDATE SET confidence=EXCLUDED.confidence`, p.EntityType, p.EntityID, p.Source, p.Confidence, p.ObservedAt, raw, p.ActorID)
+	_, err := t.tx.Exec(ctx, `INSERT INTO provenance(entity_type, entity_id, source, confidence, observed_at, raw, actor_id, channel) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(entity_type, entity_id, source) DO UPDATE SET confidence=EXCLUDED.confidence, channel=EXCLUDED.channel`, p.EntityType, p.EntityID, p.Source, p.Confidence, p.ObservedAt, raw, p.ActorID, p.Channel)
 	return err
 }
 func (t *pgTxStore) SaveReviewQueue(ctx context.Context, e model.ReviewQueueEntry) error {
 	_, err := t.tx.Exec(ctx, `INSERT INTO review_queue(entity_type, entity_id, reason, score, fingerprint) VALUES($1,$2,$3,$4,$5) ON CONFLICT(entity_type, entity_id, reason) DO UPDATE SET score=EXCLUDED.score, fingerprint=CASE WHEN EXCLUDED.fingerprint<>'' THEN EXCLUDED.fingerprint ELSE review_queue.fingerprint END, observed_at=now(), count=review_queue.count+1`, e.EntityType, e.EntityID, e.Reason, e.Score, e.Fingerprint)
 	return err
+}
+
+func (t *pgTxStore) ListProvenanceChannels(ctx context.Context, entityType string, ids []int64) (map[int64]string, error) {
+	return t.parent.ListProvenanceChannels(ctx, entityType, ids)
 }
 func (t *pgTxStore) ListReviewQueue(ctx context.Context, limit int) ([]store.ReviewQueueRow, error) {
 	return t.parent.ListReviewQueue(ctx, limit)

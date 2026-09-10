@@ -19,6 +19,23 @@ func TestComputePlanIDStable(t *testing.T) {
 	}
 }
 
+// TestPlanIDLogicVersion — план §4.3/§6: plan_id строится от семантической
+// версии обработчика, не от sha(binary). Деплой без изменения логики не
+// инвалидирует чанки; бамп LogicVersion — инвалидирует предсказуемо.
+func TestPlanIDLogicVersion(t *testing.T) {
+	base := ComputePlanID(LogicVersionID(), "cfg", []string{"sha"})
+	again := ComputePlanID(LogicVersionID(), "cfg", []string{"sha"})
+	if base != again {
+		t.Fatal("одинаковые входы обязаны давать одинаковый plan_id")
+	}
+	if ComputePlanID("logic/3", "cfg", []string{"sha"}) == base {
+		t.Fatal("бамп LogicVersion обязан менять plan_id (иначе full-resync не произойдёт там, где нужен)")
+	}
+	if ComputePlanID(LogicVersionID(), "cfg", []string{"sha"}) == ComputePlanID(LogicVersionID(), "other", []string{"sha"}) {
+		t.Fatal("смена конфига обязана менять plan_id")
+	}
+}
+
 func TestDiffIgnoresAuditFields(t *testing.T) {
 	a := []CanonicalRow{{NaturalKey: "r1", Fields: map[string]string{"name": "X", "observed_at": "1", "sync_run_id": "7"}}}
 	b := []CanonicalRow{{NaturalKey: "r1", Fields: map[string]string{"name": "X", "observed_at": "2", "sync_run_id": "8"}}}

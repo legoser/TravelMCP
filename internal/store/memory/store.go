@@ -1068,14 +1068,87 @@ func (m *MemoryStore) DeleteReviewQueue(ctx context.Context, entityType string, 
 	return nil
 }
 func (m *MemoryStore) SaveProvenance(ctx context.Context, p model.Provenance) error {
+	if !model.ValidProvenanceChannel(p.Channel) {
+		return fmt.Errorf("save provenance: пустой/неканонический channel %q (канон: local_file/local_motis/transitous_prod/transitous_staging, план §3.3)", p.Channel)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	at := p.ObservedAt.Unix()
 	if at == 0 {
 		at = time.Now().Unix()
 	}
-	m.provenance[p.EntityType+"\x00"+fmt.Sprint(p.EntityID)+"\x00"+p.Source] = store.ProvenanceVote{Source: p.Source, Confidence: p.Confidence, ObservedAt: at}
+	m.provenance[p.EntityType+"\x00"+fmt.Sprint(p.EntityID)+"\x00"+p.Source] = store.ProvenanceVote{Source: p.Source, Confidence: p.Confidence, ObservedAt: at, Channel: p.Channel}
 	return nil
+}
+
+// ListProvenanceChannels — зеркало postgres: entityID→channel, отсутствующий
+// ID = нет записей (signal gate). При нескольких голосах канонизированный
+// channel один и тот же (пишется только через валидацию), конфликта нет.
+func (m *MemoryStore) ListProvenanceChannels(ctx context.Context, entityType string, ids []int64) (map[int64]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prefix := entityType + "\x00"
+	idSet := map[int64]bool{}
+	for _, id := range ids {
+		idSet[id] = true
+	}
+	out := map[int64]string{}
+	for key, v := range m.provenance {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		rest := key[len(prefix):]
+		var entityID int64
+		if i := strings.IndexByte(rest, 0); i >= 0 {
+			if n, err := strconv.ParseInt(rest[:i], 10, 64); err == nil {
+				entityID = n
+			}
+		}
+		if entityID == 0 || !idSet[entityID] {
+			continue
+		}
+		out[entityID] = v.Channel
+	}
+	return out, nil
+}
+
+// CheckProvenanceCompleteness — зеркало postgres gate (план §3.3/§6):
+// живые routes/trips без provenance-записи с непустым channel.
+func (m *MemoryStore) CheckProvenanceCompleteness(ctx context.Context) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	provOK := func(entityType string, id int64) bool {
+		prefix := entityType + "\x00" + fmt.Sprint(id) + "\x00"
+		for key, v := range m.provenance {
+			if strings.HasPrefix(key, prefix) && v.Channel != "" {
+				return true
+			}
+		}
+		return false
+	}
+	out := []string{}
+	for _, r := range m.routes {
+		if r.ValidTo != nil {
+			continue
+		}
+		if !provOK("route", r.ID) {
+			out = append(out, "route "+r.ExternalRouteCode)
+		}
+	}
+	for _, t := range m.trips {
+		if t.ValidTo != nil {
+			continue
+		}
+		if !provOK("trip", t.ID) {
+			rn := ""
+			if r, ok := m.routes[t.RouteID]; ok {
+				rn = " (route " + r.ExternalRouteCode + ")"
+			}
+			out = append(out, "trip "+t.ExternalTripCode+rn)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
 }
 func (m *MemoryStore) SaveReviewQueue(ctx context.Context, e model.ReviewQueueEntry) error {
 	m.mu.Lock()

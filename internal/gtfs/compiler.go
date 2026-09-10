@@ -71,6 +71,17 @@ func (c *Compiler) BuildPerRegionFromStore(ctx context.Context, st store.Store, 
 }
 
 func (c *Compiler) writeFromStore(ctx context.Context, zw *zip.Writer, st store.Store, region, feedID, feedVersion string, snapshot time.Time) error {
+	// Hard-gate полноты provenance (план §3.3/§6): zip не собирается, пока
+	// у живых сущностей канона есть записи без пары source/channel.
+	if checker, ok := st.(store.ProvenanceCompletenessChecker); ok {
+		missing, err := checker.CheckProvenanceCompleteness(ctx)
+		if err != nil {
+			return fmt.Errorf("gtfs provenance gate: %w", err)
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("gtfs provenance gate: %d сущностей без пары source/channel (первые 10: %v) — zip не собирается, план §3.3", len(missing), firstN(missing, 10))
+		}
+	}
 	net, err := st.LoadNetwork(ctx, []string{"mintrans", "gtfs"}, snapshot)
 	if err != nil {
 		return err
@@ -207,6 +218,14 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// firstN — первые n элементов (для diagnostic-вывода gate).
+func firstN[T any](in []T, n int) []T {
+	if len(in) <= n {
+		return in
+	}
+	return in[:n]
 }
 
 func ArchiveName(region string) string {

@@ -79,6 +79,26 @@ type Provenance struct {
 	ObservedAt time.Time `json:"observed_at"`
 	Raw        []byte    `json:"raw,omitempty"`
 	ActorID    *int64    `json:"actor_id,omitempty"`
+	Channel    string    `json:"channel,omitempty"`
+}
+
+// Канон каналов доставки provenance (план §3.3): совпадает с CHECK в DDL,
+// источник истины один — этот набор + миграция.
+const (
+	ChannelLocalFile         = "local_file"         // локальные датасеты: OSM-экстракт, дамп Яндекса, реестр
+	ChannelLocalMotis        = "local_motis"        // локальный MOTIS-инстанс
+	ChannelTransitousProd    = "transitous_prod"    // Transitous production
+	ChannelTransitousStaging = "transitous_staging" // Transitous staging
+)
+
+// ValidProvenanceChannel — true для канонического канала (иначе писатель
+// обязан падать, а не подставлять дефолт: gate полноты молча позеленеет).
+func ValidProvenanceChannel(c string) bool {
+	switch c {
+	case ChannelLocalFile, ChannelLocalMotis, ChannelTransitousProd, ChannelTransitousStaging:
+		return true
+	}
+	return false
 }
 
 type ReviewQueueEntry struct {

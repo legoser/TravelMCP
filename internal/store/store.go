@@ -73,6 +73,17 @@ type ProvenanceStore interface {
 	SaveReviewQueue(ctx context.Context, e model.ReviewQueueEntry) error
 	ListReviewQueue(ctx context.Context, limit int) ([]ReviewQueueRow, error)
 	DeleteReviewQueue(ctx context.Context, entityType string, entityID int64, reason string) error
+	ListProvenanceChannels(ctx context.Context, entityType string, ids []int64) (map[int64]string, error)
+}
+
+// ProvenanceCompletenessChecker — hard-gate CI при сборке GTFS (план §3.3/§6):
+// живые сущности канона обязаны иметь запись provenance с парой source/channel.
+// Реализация сканирует канон против provenance одним запросом.
+type ProvenanceCompletenessChecker interface {
+	// CheckProvenanceCompleteness — список описаний сущностей без пары
+	// source/channel (format: "route 42" / "trip 123 / route 42").
+	// Пустой список = gate pass.
+	CheckProvenanceCompleteness(ctx context.Context) ([]string, error)
 }
 
 type QualityStore interface {

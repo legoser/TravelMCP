@@ -296,6 +296,7 @@ type ProvenanceVote struct {
 	Source     string
 	Confidence float64
 	ObservedAt int64
+	Channel    string
 }
 
 type LegacyTerminalRow struct {

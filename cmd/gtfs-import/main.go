@@ -20,7 +20,7 @@ import (
 	"travelmcp/internal/sync"
 )
 
-const appVersion = "gtfs-import/1"
+// appVersion → sync.LogicVersionID() (plan_id от семантической версии, план §4.3).
 
 func main() {
 	var configPath, feedPath, tag string
@@ -74,7 +74,8 @@ func main() {
 	}
 	sum := sha256.Sum256([]byte(feedPath))
 	inputSHA := hex.EncodeToString(sum[:])
-	runID, err := gst.CreateSyncRun(ctx, store.SyncRunRow{PlanID: appVersion, Kind: "gtfs_import", InputSHA: inputSHA, Tag: tag})
+	planID := sync.ComputePlanID(sync.LogicVersionID(), "", []string{inputSHA})
+	runID, err := gst.CreateSyncRun(ctx, store.SyncRunRow{PlanID: planID, Kind: "gtfs_import", InputSHA: inputSHA, Tag: tag})
 	if err != nil {
 		slog.Error("begin run failed", "error", err)
 		os.Exit(1)

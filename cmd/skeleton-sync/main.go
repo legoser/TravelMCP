@@ -30,7 +30,7 @@ import (
 	"travelmcp/internal/sync"
 )
 
-const appVersion = "skeleton-sync/1"
+// appVersion → sync.LogicVersionID() (plan_id от семантической версии, план §4.3).
 
 // Локальные значения enrich-стадий (не конфиг): quota-лимит api_quotas
 // на enrich-прогон, TTL in-memory геокэша и таймаут reverse-запроса.
@@ -151,7 +151,7 @@ func main() {
 		slog.Error("hash inputs failed", "error", err)
 		os.Exit(1)
 	}
-	planID := sync.ComputePlanID(appVersion, syncConfigHash(sc), []string{inputSHA})
+	planID := sync.ComputePlanID(sync.LogicVersionID(), syncConfigHash(sc), []string{inputSHA})
 	slog.Info("plan", "plan_id", planID, "input_sha", inputSHA)
 
 	if dryRun {

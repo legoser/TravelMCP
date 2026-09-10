@@ -41,6 +41,7 @@ type TripsStore interface {
 	DeleteOutbox(ctx context.Context, id int64) error
 	SaveReviewQueue(ctx context.Context, e model.ReviewQueueEntry) error
 	ResolveTripReviewsByFingerprint(ctx context.Context, fingerprint string) (int, error)
+	SaveProvenance(ctx context.Context, p model.Provenance) error
 }
 
 type PersistSummary struct {
@@ -234,6 +235,11 @@ func persistPromotedTrip(ctx context.Context, db store.Store, ts TripsStore, p P
 				return err
 			}
 		}
+		// provenance полноты §3.3: route несёт пару source/channel — вход
+		// CI-gate при сборке GTFS (без записи zip не собирается)
+		if err := tts.SaveProvenance(ctx, model.Provenance{EntityType: "route", EntityID: routeID, Source: source, Confidence: 1.0, ObservedAt: time.Now(), Channel: model.ChannelLocalFile}); err != nil {
+			return err
+		}
 		if p.ServiceID != 0 {
 			if err := tts.UpsertService(ctx, store.ServiceRow{ID: p.ServiceID, ProviderID: source}); err != nil {
 				return err
@@ -277,6 +283,10 @@ func persistPromotedTrip(ctx context.Context, db store.Store, ts TripsStore, p P
 		if err := tts.UpsertTripSource(ctx, store.TripSourceRow{
 			TripID: tripID, Source: baseSource(p.WinnerSource), DurationS: tripDurationS(p.StopTimes),
 		}); err != nil {
+			return err
+		}
+		// provenance полноты §3.3: trip несёт пару source/channel
+		if err := tts.SaveProvenance(ctx, model.Provenance{EntityType: "trip", EntityID: tripID, Source: source, Confidence: 1.0, ObservedAt: time.Now(), Channel: model.ChannelLocalFile}); err != nil {
 			return err
 		}
 		for _, m := range p.StopTimes {

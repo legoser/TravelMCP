@@ -187,6 +187,7 @@ CREATE TABLE IF NOT EXISTS provenance (
   observed_at timestamptz NOT NULL DEFAULT now(),
   raw jsonb,
   actor_id bigint REFERENCES users(id) ON DELETE SET NULL,
+  channel text NOT NULL CHECK (channel IN ('local_file','local_motis','transitous_prod','transitous_staging')),
   PRIMARY KEY (entity_type, entity_id, source)
 );
 CREATE TABLE IF NOT EXISTS provenance_history (
@@ -198,12 +199,13 @@ CREATE TABLE IF NOT EXISTS provenance_history (
   observed_at timestamptz NOT NULL DEFAULT now(),
   raw jsonb,
   actor_id bigint REFERENCES users(id) ON DELETE SET NULL,
+  channel text NOT NULL CHECK (channel IN ('local_file','local_motis','transitous_prod','transitous_staging')),
   sync_run_id bigint
 );
 CREATE INDEX IF NOT EXISTS idx_prov_hist_entity ON provenance_history(entity_type, entity_id, observed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_prov_hist_sync_run ON provenance_history(sync_run_id);
 CREATE OR REPLACE FUNCTION trg_provenance_history() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN INSERT INTO provenance_history(entity_type, entity_id, source, confidence, observed_at, raw, actor_id) VALUES (NEW.entity_type, NEW.entity_id, NEW.source, NEW.confidence, NEW.observed_at, NEW.raw, NEW.actor_id); RETURN NEW; END; $$;
+BEGIN INSERT INTO provenance_history(entity_type, entity_id, source, confidence, observed_at, raw, actor_id, channel) VALUES (NEW.entity_type, NEW.entity_id, NEW.source, NEW.confidence, NEW.observed_at, NEW.raw, NEW.actor_id, NEW.channel); RETURN NEW; END; $$;
 DROP TRIGGER IF EXISTS trg_prov_history ON provenance;
 CREATE TRIGGER trg_prov_history AFTER INSERT OR UPDATE ON provenance FOR EACH ROW EXECUTE FUNCTION trg_provenance_history();
 

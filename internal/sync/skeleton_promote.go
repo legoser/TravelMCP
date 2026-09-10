@@ -321,7 +321,7 @@ func promoteJoined(ctx context.Context, st SkeletonStore, runID int64, j skeleto
 		}
 	}
 	for _, src := range provenanceSources(r, j.Enrichment == skeleton.Enriched) {
-		if err := st.SaveProvenance(ctx, model.Provenance{EntityType: "terminal", EntityID: id, Source: src, Confidence: j.Score, ObservedAt: now}); err != nil {
+		if err := st.SaveProvenance(ctx, model.Provenance{EntityType: "terminal", EntityID: id, Source: src, Confidence: j.Score, ObservedAt: now, Channel: model.ChannelLocalFile}); err != nil {
 			return false, err
 		}
 	}

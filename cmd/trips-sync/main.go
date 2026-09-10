@@ -22,7 +22,7 @@ import (
 	"travelmcp/internal/sync"
 )
 
-const appVersion = "trips-sync/1"
+// appVersion → sync.LogicVersionID() (plan_id от семантической версии, план §4.3).
 
 func main() {
 	var configPath, tag, reestrOverride, regionsOverride, waitOverride string
@@ -70,7 +70,7 @@ func main() {
 	trips, fstats := mintrans.FlattenTrips(ds)
 	sum := sha256.Sum256(raw)
 	inputSHA := hex.EncodeToString(sum[:])
-	planID := sync.ComputePlanID(appVersion, syncConfigHash(sc, trustNK, force), []string{inputSHA})
+	planID := sync.ComputePlanID(sync.LogicVersionID(), syncConfigHash(sc, trustNK, force), []string{inputSHA})
 	slog.Info("plan", "plan_id", planID, "input_sha", inputSHA, "trips", len(trips),
 		"restricted_weekdays", fstats.RestrictedTrips, "parity", fstats.ParityTrips,
 		"dropped_empty_weekdays", fstats.DroppedEmptyWeekdays)
