@@ -1,24 +1,91 @@
 [
   {
-    "id": "osm-yandex-pair",
-    "a": {"name": "Кемерово автовокзал", "lat": 55.3416, "lon": 86.061},
-    "b": {"name": "Кемерово автовокзал", "lat": 55.3417, "lon": 86.0612},
+    "id": "stop-terminal-verified-geo",
     "task": "skeleton_osm",
-    "expect": "verified"
+    "matcher": "scorepair",
+    "class": "urban",
+    "stop": {"name": "Кемерово автовокзал", "lat": 55.3416, "lon": 86.061, "source": "mintrans", "settlement": "кемерово"},
+    "terminals": [
+      {"name": "Кемерово, автовокзал", "lat": 55.3417, "lon": 86.0612, "source": "osm", "settlement": "кемерово", "transport": "bus"}
+    ],
+    "expect": "verified",
+    "expect_best": 0
   },
   {
-    "id": "name-only-urban",
-    "a": {"name": "Остановка Центральная", "lat": 55.03, "lon": 82.92},
-    "b": {"name": "Остановка Центральная", "lat": null, "lon": null},
+    "id": "stop-terminal-far-twin-name",
     "task": "skeleton_osm",
-    "expect": "review",
-    "reason": "geom-null в urban по одному name — никогда verified"
+    "matcher": "scorepair",
+    "class": "urban",
+    "stop": {"name": "Кемерово автовокзал", "lat": 55.3416, "lon": 86.061, "source": "mintrans", "settlement": "кемерово"},
+    "terminals": [
+      {"name": "Кемерово, автовокзал", "lat": 55.9417, "lon": 86.9612, "source": "osm", "settlement": "кемерово", "transport": "bus"}
+    ],
+    "expect": "low_confidence",
+    "expect_best": 0,
+    "reason": "тёзка за десятки км: имя+settlement дают маргинальный скор без гео-подтверждения (§3.8 hard-guard режет verified), зона review — оператор решает"
   },
   {
-    "id": "distinct-terminals",
-    "a": {"name": "Новосибирск автовокзал", "lat": 55.0411, "lon": 83.0274},
-    "b": {"name": "Барнаул автовокзал", "lat": 53.3518, "lon": 83.7586},
-    "task": "merge",
-    "expect": "no_match"
+    "id": "stop-terminal-ambiguous-twins",
+    "task": "skeleton_osm",
+    "matcher": "scorepair",
+    "class": "urban",
+    "stop": {"name": "Собор", "lat": 55.3501, "lon": 86.0501, "source": "mintrans", "settlement": "кемерово"},
+    "terminals": [
+      {"name": "Собор", "lat": 55.35012, "lon": 86.05012, "source": "osm", "settlement": "кемерово", "transport": "bus"},
+      {"name": "Собор", "lat": 55.35008, "lon": 86.05004, "source": "osm", "settlement": "кемерово", "transport": "bus"}
+    ],
+    "expect": "duplicate_ambiguous",
+    "reason": "две равноценные гео-кандидаты (gap < ambiguity 0.05) — ambiguity-зона, оператор решает; стороны дороги = разные стопы одного терминала, не один стоп"
+  },
+  {
+    "id": "stop-terminal-code-match-beats-geo",
+    "task": "skeleton_osm",
+    "matcher": "scorepair",
+    "class": "urban",
+    "stop": {"name": "Тёзка за 79 км", "lat": 55.0, "lon": 86.0, "source": "mintrans", "settlement": "тёзкино", "codes": [{"system": "mintrans", "code_type": "op_reg", "code": "op:54:54099"}]},
+    "terminals": [
+      {"name": "Совсем другое имя", "lat": 55.9, "lon": 87.9, "source": "osm", "codes": [{"system": "mintrans", "code_type": "op_reg", "code": "op:54:54099"}]}
+    ],
+    "expect": "verified",
+    "expect_best": 0,
+    "reason": "код-матч — сильнейший сигнал, пробивает гео-дистанцию (идентичен golden_trips «тёзка 79км»)"
+  },
+  {
+    "id": "stop-terminal-ambiguous-twins",
+    "task": "skeleton_osm",
+    "matcher": "scorepair",
+    "class": "urban",
+    "stop": {"name": "Собор", "lat": 55.3501, "lon": 86.0501, "source": "mintrans", "settlement": "кемерово"},
+    "terminals": [
+      {"name": "Собор", "lat": 55.35012, "lon": 86.05012, "source": "osm", "settlement": "кемерово", "transport": "bus"},
+      {"name": "Собор", "lat": 55.35008, "lon": 86.05004, "source": "osm", "settlement": "кемерово", "transport": "bus"}
+    ],
+    "expect": "duplicate_ambiguous",
+    "reason": "две равноценные гео-кандидаты (gap < ambiguity 0.05) — ambiguity-зона, оператор решает; стороны дороги = разные стопы одного терминала, не один стоп"
+  },
+  {
+    "id": "stop-terminal-intermodal-hub",
+    "task": "skeleton_osm",
+    "matcher": "scorepair",
+    "class": "urban",
+    "stop": {"name": "Вокзал Томск I", "lat": 56.4111, "lon": 84.9511, "source": "mintrans", "settlement": "томск", "transport": "bus"},
+    "terminals": [
+      {"name": "Станция Томск I", "lat": 56.4112, "lon": 84.9512, "source": "osm", "settlement": "томск", "transport": "bus+rail"}
+    ],
+    "expect": "verified",
+    "expect_best": 0,
+    "reason": "интермодальный хаб: агрегат bus+rail корректно матчится автобусным стопом (transport-фича)"
+  },
+  {
+    "id": "stop-terminal-low-confidence-marginal",
+    "task": "skeleton_osm",
+    "matcher": "scorepair",
+    "class": "urban",
+    "stop": {"name": "Поворот на Тяжинский", "lat": 55.9, "lon": 86.9, "source": "mintrans", "settlement": "тяжинский"},
+    "terminals": [
+      {"name": "Поворот Тяжинский", "lat": 55.9010, "lon": 86.9010, "source": "osm", "settlement": "тяжинский", "transport": "bus"}
+    ],
+    "expect": "verified",
+    "reason": "имя похоже, гео в полосе порога, transport совпал — verified с честным score (кейс для FP-аудита D-4: попадает в выборку маргинальных)"
   }
 ]
