@@ -3,6 +3,7 @@ package sync
 import (
 	"math"
 
+	"travelmcp/internal/geo"
 	"travelmcp/internal/model"
 )
 
@@ -18,8 +19,9 @@ type matchIndex struct {
 	byCode   map[string][]int // "system|code" → индексы (код-совпадения проходят гео-окно)
 }
 
-const matchCellSizeDeg = 0.5
-const matchGeoWindowM = 2000
+// Blocking-параметры — общие с skeleton JoinPager (geo.JoinCellSizeDeg,
+// geo.JoinGeoWindowM): пул кандидатов обязан покрывать то же окно, иначе
+// attach и join разъедутся по кандидатам.
 
 func buildMatchIndex(terms []AttachTerminal) *matchIndex {
 	idx := &matchIndex{
@@ -29,7 +31,7 @@ func buildMatchIndex(terms []AttachTerminal) *matchIndex {
 	}
 	for i, t := range terms {
 		if t.Lat != nil && t.Lon != nil {
-			c := [2]int{int(math.Floor(*t.Lat / matchCellSizeDeg)), int(math.Floor(*t.Lon / matchCellSizeDeg))}
+			c := [2]int{int(math.Floor(*t.Lat / geo.JoinCellSizeDeg)), int(math.Floor(*t.Lon / geo.JoinCellSizeDeg))}
 			idx.cells[c] = append(idx.cells[c], i)
 		} else {
 			idx.noCoords = append(idx.noCoords, i)
@@ -62,7 +64,7 @@ func (idx *matchIndex) candidates(stop model.FlatStop, source string) []int {
 		}
 	}
 	if stop.Lat != nil && stop.Lon != nil {
-		base := [2]int{int(math.Floor(*stop.Lat / matchCellSizeDeg)), int(math.Floor(*stop.Lon / matchCellSizeDeg))}
+		base := [2]int{int(math.Floor(*stop.Lat / geo.JoinCellSizeDeg)), int(math.Floor(*stop.Lon / geo.JoinCellSizeDeg))}
 		for di := -1; di <= 1; di++ {
 			for dj := -1; dj <= 1; dj++ {
 				add(idx.cells[[2]int{base[0] + di, base[1] + dj}])
@@ -81,11 +83,7 @@ func (idx *matchIndex) inGeoWindow(stopLat, stopLon float64, t AttachTerminal) b
 	if t.Lat == nil || t.Lon == nil {
 		return true
 	}
-	dLat := (*t.Lat - stopLat) * 111000
-	dLon := (*t.Lon - stopLon) * 111000 * cosDeg(stopLat)
-	return dLat*dLat+dLon*dLon <= matchGeoWindowM*matchGeoWindowM
-}
-
-func cosDeg(latDeg float64) float64 {
-	return 1 - latDeg*latDeg*0.0000152
+	dLat := (*t.Lat - stopLat) * geo.MetersPerDegree
+	dLon := (*t.Lon - stopLon) * geo.MetersPerDegree * geo.CosLatApprox(stopLat)
+	return dLat*dLat+dLon*dLon <= geo.JoinGeoWindowM*geo.JoinGeoWindowM
 }

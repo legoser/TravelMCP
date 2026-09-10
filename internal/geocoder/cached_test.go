@@ -25,6 +25,13 @@ func (s *stubGeocoder) Reverse(ctx context.Context, lat, lon float64) (string, e
 	return "", errors.New("not implemented")
 }
 
+// TTL тестов повторяют дефолты geocode.ttl_verified/ttl_disputed (2160h/168h):
+// тесты документируют соответствие кэша конфигу.
+const (
+	testTTLVerified = 2160 * time.Hour
+	testTTLDisputed = 168 * time.Hour
+)
+
 func TestCachedHitNoQuota(t *testing.T) {
 	inner := &stubGeocoder{res: &Result{Lat: 1, Lon: 2, Name: "X"}}
 	cache := NewMapCacheStore()
@@ -33,7 +40,7 @@ func TestCachedHitNoQuota(t *testing.T) {
 		quotaCalls++
 		return true, 0, nil
 	})
-	c := NewCachedGeocoder(inner, "nominatim", cache, q, 1000, 90*24*time.Hour, 7*24*time.Hour)
+	c := NewCachedGeocoder(inner, "nominatim", cache, q, 1000, testTTLVerified, testTTLDisputed)
 	if _, err := c.Geocode(context.Background(), "Кемерово"); err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +55,7 @@ func TestCachedHitNoQuota(t *testing.T) {
 func TestCachedStaleWhileRevalidate(t *testing.T) {
 	inner := &stubGeocoder{err: errors.New("down")}
 	cache := NewMapCacheStore()
-	c := NewCachedGeocoder(inner, "nominatim", cache, nil, 1000, 90*24*time.Hour, 7*24*time.Hour)
+	c := NewCachedGeocoder(inner, "nominatim", cache, nil, 1000, testTTLVerified, testTTLDisputed)
 	c.now = func() time.Time { return time.Now().Add(-30 * 24 * time.Hour) }
 	cache.Set(NormalizeQuery("Томск"), "nominatim", CacheEntry{Lat: 56, Lon: 85, ObservedAt: c.now(), Origin: "seed"})
 	c.now = time.Now
@@ -91,8 +98,8 @@ func TestSeedOriginIsSeed(t *testing.T) {
 	if !ok || e.Origin != "seed" {
 		t.Fatalf("seed-запись обязана нести origin='seed': %+v", e)
 	}
-	c := NewCachedGeocoder(&stubGeocoder{res: &Result{}}, "nominatim", cache, nil, 1, 90*24*time.Hour, 7*24*time.Hour)
-	if got := c.ttlFor(e); got != 7*24*time.Hour {
+	c := NewCachedGeocoder(&stubGeocoder{res: &Result{}}, "nominatim", cache, nil, 1, testTTLVerified, testTTLDisputed)
+	if got := c.ttlFor(e); got != testTTLDisputed {
 		t.Fatalf("seed всегда disputed-TTL 7д, получено %v", got)
 	}
 }

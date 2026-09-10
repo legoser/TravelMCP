@@ -358,8 +358,13 @@ const WalkTransferRadiusM = 400
 
 // WalkTransferMinMinutes — минимальное время пешего transfer: чистое время
 // по haversine на 5 км/ч плюс 2 минуты навигационного запаса.
+const (
+	walkMetersPerHour = 5000.0
+	walkNavSlackMin   = 2
+)
+
 func WalkTransferMinutes(distM float64) int {
-	return int(distM/5000.0*60.0) + 2
+	return int(distM/walkMetersPerHour*60.0) + walkNavSlackMin
 }
 
 // BuildWalkTransfers — генерация пеших пересадок между близкими
@@ -374,8 +379,12 @@ func (n *Network) BuildWalkTransfers() {
 	for _, tr := range n.Transfers {
 		seen[tr.FromStopID+"|"+tr.ToStopID] = true
 	}
+	// transferCellDeg — ячейка пространственного индекса пересадок 0.1°
+	// (~11 км): граничные пары радиуса WalkTransferRadiusM добираются
+	// соседними ячейками ниже.
+	const transferCellDeg = 0.1
 	cell := func(lat, lon float64) (int, int) {
-		return int((lat + 90) * 10), int((lon + 180) * 10)
+		return int((lat + 90) / transferCellDeg), int((lon + 180) / transferCellDeg)
 	}
 	byCell := map[[2]int][]string{}
 	for id, s := range n.Stops {
@@ -411,7 +420,7 @@ func (n *Network) BuildWalkTransfers() {
 			}
 		}
 	}
-	// соседние ячейки 0.1° (~11 км): граничные пары радиуса 400м
+	// соседние ячейки transferCellDeg: граничные пары радиуса 400м
 	for c, ids := range byCell {
 		for _, off := range [][2]int{{1, 0}, {0, 1}, {1, 1}, {1, -1}} {
 			nc := [2]int{c[0] + off[0], c[1] + off[1]}
@@ -445,13 +454,13 @@ func (n *Network) BuildWalkTransfers() {
 }
 
 func haversineKm(lat1, lon1, lat2, lon2 float64) float64 {
-	const R = 6371
+	const earthRadiusKm = 6371.0
 	dLat := (lat2 - lat1) * math.Pi / 180
 	dLon := (lon2 - lon1) * math.Pi / 180
 	sa := math.Sin(dLat / 2)
 	sb := math.Sin(dLon / 2)
 	h := sa*sa + math.Cos(lat1*math.Pi/180)*math.Cos(lat2*math.Pi/180)*sb*sb
-	return 2 * R * math.Asin(math.Sqrt(h))
+	return 2 * earthRadiusKm * math.Asin(math.Sqrt(h))
 }
 
 func (n *Network) BuildIndexes() {

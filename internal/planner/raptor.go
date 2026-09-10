@@ -11,7 +11,10 @@ import (
 func (p *Planner) raptor(net *model.Network, fromStop, toStop string, depart time.Time, params model.SearchParams) ([]model.Leg, error) {
 	maxTransfers := params.MaxTransfers
 	if maxTransfers < 0 {
-		maxTransfers = 100
+		// defaultMaxTransfers — фактически «без лимита»: RAPTOR сходится
+		// за 2–4 раунда на межгороде, 100 — страховка от патологий сети.
+		const defaultMaxTransfers = 100
+		maxTransfers = defaultMaxTransfers
 	}
 	allowed := map[model.Mode]bool{}
 	for _, m := range params.AllowedModes {

@@ -11,7 +11,6 @@ store:
   kind: "postgres" # postgres|memory
   # postgres: dsn: "postgres://user:***@localhost:5432/travelmcp?sslmode=disable"
   dsn: "${DATABASE_DSN:-}" # env DATABASE_DSN или TRAVELMCP__STORE__DSN
-  max_open_conns: 10
 
 cache:
   kind: "memory" # memory|redis
@@ -21,10 +20,6 @@ cache:
 queue:
   kind: "memory" # memory|nats
   url: ""
-
-# legacy: database.dsn — deprecated, используйте store.dsn (syncLegacy)
-# database:
-#   dsn: "postgres://postgres:postgres@localhost:5432/travelmcp?sslmode=disable"
 
 providers:
   # По умолчанию источников нет: реальные провайдеры подключаются по мере
@@ -72,13 +67,13 @@ telemetry:
 geocoder:
   # Приоритет по умолчанию: nominatim (OSM, бесплатно) -> yandex (требует ключ).
   # Провайдеры регистрируются, kind — опциональный приоритет (пусто = nominatim first).
-  # При недоступности одного — фолбэк на следующий; attempts=3 циклит по списку.
+  # При недоступности одного — фолбэк на следующий; attempts циклит по списку.
   kind: "" # nominatim|yandex|""
-  url: "" # legacy generic (deprecated) — используйте yandex.geocode_url / nominatim.url
-  key: "${GEOCODER_API_KEY:-${GEOCODER_KEY:-${YANDEX_GEOCODE_KEY}}}" # api_key
-  api_key: "${GEOCODER_API_KEY:-${GEOCODER_KEY:-${YANDEX_GEOCODE_KEY}}}" # alias
-  base_url: "" # alias url
-  attempts: 3 # попыток с фолбэком по приоритету [nominatim,yandex]
+  attempts: 3 # попыток с фолбэком по приоритету [nominatim,yandex] (env GEOCODER_ATTEMPTS)
+  limit: 5 # кандидатов за запрос к геокодеру, потолок 10 (env GEOCODER_LIMIT)
+  max_calls: 0 # суточный лимит квоты api_quotas для геокодеров, 0 = дефолт вызывающей стороны (env GEOCODER_MAX_CALLS)
+  ttl_verified: "2160h" # 90д — подтверждённые (Фаза 2, GEOCODER_TTL_VERIFIED)
+  ttl_disputed: "168h" # 7д — спорные/seed (Фаза 2, GEOCODER_TTL_DISPUTED)
 
 nominatim:
   url: "https://nominatim.openstreetmap.org"
@@ -86,11 +81,6 @@ nominatim:
 overpass:
   url: "https://overpass-api.de/api/interpreter"
   mirror_url: "https://overpass.openstreetmap.fr/api/interpreter"
-
-geocode:
-  ttl_verified: "2160h" # 90д — подтверждённые (Фаза 2, GEOCODE_TTL_VERIFIED)
-  ttl_disputed: "168h" # 7д — спорные/seed (Фаза 2, GEOCODE_TTL_DISPUTED)
-  # max_calls — deprecated, замена: квота БД api_quotas + TTL geocode_cache
 
 sync:
   log_dir: "${SYNC_LOG_DIR:-data/logs}" # файлы операций sync_<run>.log.jsonl (Фаза 1)
@@ -125,6 +115,6 @@ pricing:
 # Секреты — только через env (или .env, gitignored); в YAML не заполняются.
 yandex:
   rasp_key: "${YANDEX_RASP_KEY}"
+  rasp_url: "${YANDEX_RASP_URL:-https://api.rasp.yandex.net/v3.0}" # дефолт URL расписаний
   geocode_key: "${YANDEX_GEOCODE_KEY}"
   geocode_url: "https://geocode-maps.yandex.ru/1.x"
-  geocode_kind: ""

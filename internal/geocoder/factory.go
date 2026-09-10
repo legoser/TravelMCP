@@ -31,7 +31,7 @@ func New(cfg config.Config, client *httpx.Client) (Geocoder, error) {
 	}
 	attempts := cfg.Geocoder.Attempts
 	if attempts <= 0 {
-		attempts = 3
+		attempts = defaultAttempts
 	}
 	if cfg.Geocoder.Kind != "" {
 		if _, ok := registry[cfg.Geocoder.Kind]; !ok {

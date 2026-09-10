@@ -205,9 +205,12 @@ func PromoteSkeletonChunk(ctx context.Context, st store.Store, runID int64, chun
 				return err
 			}
 			if r.HasCoords() {
+				// unverifiedPromoteScore — confidence unverified-канона (O-10):
+				// ниже verified-порога, выше seed-уровня интерполяции.
+				const unverifiedPromoteScore = 0.4
 				written, err := promoteJoined(ctx, tskel, runID, skeleton.JoinedRecord{
 					Record:     r,
-					Score:      0.4,
+					Score:      unverifiedPromoteScore,
 					Enrichment: skeleton.IdentityOnly,
 				})
 				if err != nil {

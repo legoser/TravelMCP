@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"travelmcp/internal/adapters/overpass"
 	"travelmcp/internal/geocoder"
@@ -28,12 +29,16 @@ func WithNominatim(g geocoder.Geocoder) HubResolverOption {
 	return func(r *HubResolver) { r.nominatim = g }
 }
 
+// hubCacheTTL — TTL in-memory кэша хаб-координат (сутки: хабы стабильны,
+// свежие правки подтянутся следующим прогоном).
+const hubCacheTTL = 24 * time.Hour
+
 func NewHubResolver(osmAdapter *overpass.Adapter, yanSource *YandexDumpSource, overpassAdapter *overpass.Adapter) *HubResolver {
 	return &HubResolver{
 		osmAdapter: osmAdapter,
 		yanSource:  yanSource,
 		overpass:   overpassAdapter,
-		cache:      geocoder.NewMapGeoCacheStore(24 * 60 * 60 * 1000000000), // 24h ns
+		cache:      geocoder.NewMapGeoCacheStore(hubCacheTTL),
 	}
 }
 

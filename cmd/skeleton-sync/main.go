@@ -32,6 +32,15 @@ import (
 
 const appVersion = "skeleton-sync/1"
 
+// Локальные значения enrich-стадий (не конфиг): quota-лимит api_quotas
+// на enrich-прогон, TTL in-memory геокэша и таймаут reverse-запроса.
+// Лимит nominatim берётся из geocode.max_calls (0 = defaultEnrichQuota).
+const (
+	defaultEnrichQuota = 500
+	enrichCacheTTL     = 24 * time.Hour
+	reverseTimeout     = 10 * time.Second
+)
+
 func main() {
 	var configPath, tag, osmOverride, yandexOverride, reestrOverride, regionOverride string
 	var resumeRun int64
@@ -266,12 +275,12 @@ func enrichFromOverpass(ctx context.Context, st store.Store, cfg config.Config, 
 	if len(outcome.Unverified) == 0 {
 		return
 	}
-	limit := 500
+	limit := defaultEnrichQuota
 	if err := st.SetQuotaLimit(ctx, "osm", limit); err != nil {
 		slog.Warn("overpass quota limit failed", "error", err)
 	}
 	adapter := overpass.New(cfg, httpx.New(slog.Default(), "overpass"))
-	cache := geocoder.NewMapGeoCacheStore(24 * time.Hour)
+	cache := geocoder.NewMapGeoCacheStore(enrichCacheTTL)
 	quotaFunc := func(ctx context.Context, provider string, lim int) (bool, int, error) {
 		return st.TryConsumeQuota(ctx, provider, lim)
 	}
@@ -280,9 +289,9 @@ func enrichFromOverpass(ctx context.Context, st store.Store, cfg config.Config, 
 }
 
 func enrichAddresses(ctx context.Context, st store.Store, outcome *skeleton.JoinOutcome, cfg config.Config) {
-	limit := cfg.Geocode.MaxCalls
+	limit := cfg.Geocoder.MaxCalls
 	if limit <= 0 {
-		limit = 500
+		limit = defaultEnrichQuota
 	}
 	if err := st.SetQuotaLimit(ctx, "nominatim", limit); err != nil {
 		slog.Warn("nominatim quota limit failed", "error", err)
@@ -305,7 +314,7 @@ func enrichAddresses(ctx context.Context, st store.Store, outcome *skeleton.Join
 			slog.Warn("nominatim quota exhausted, reverse stopped", "enriched", done, "error", err)
 			break
 		}
-		call, cancel := context.WithTimeout(ctx, 10*time.Second)
+		call, cancel := context.WithTimeout(ctx, reverseTimeout)
 		addr, err := rev.Reverse(call, *r.Lat, *r.Lon)
 		cancel()
 		if err != nil {

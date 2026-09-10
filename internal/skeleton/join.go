@@ -15,12 +15,23 @@ type JoinConfig struct {
 	Ambiguity     float64
 }
 
+// Дефолты join-порогов (= verification.* в конфиге: distance_m,
+// confidence_threshold, score_margin, score_ambiguity). Явные значения
+// JoinConfig имеют приоритет; applyDefaults гарантирует те же числа
+// в config.Verification.
+const (
+	defaultGeoThresholdM = 500.0
+	defaultThreshold     = 0.6
+	defaultMargin        = 0.1
+	defaultAmbiguity     = 0.05
+)
+
 func DefaultJoinConfig() JoinConfig {
 	return JoinConfig{
-		GeoThresholdM: 500,
-		Threshold:     0.6,
-		Margin:        0.1,
-		Ambiguity:     0.05,
+		GeoThresholdM: defaultGeoThresholdM,
+		Threshold:     defaultThreshold,
+		Margin:        defaultMargin,
+		Ambiguity:     defaultAmbiguity,
 	}
 }
 

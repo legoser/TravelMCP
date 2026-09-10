@@ -67,7 +67,9 @@ func TestMapGeoCacheStore(t *testing.T) {
 }
 
 func TestMapGeoCacheStoreExpires(t *testing.T) {
-	s := NewMapGeoCacheStore(50 * time.Millisecond)
+	// testShortTTL — короткий TTL для проверки протухания без ожидания суток.
+	const testShortTTL = 50 * time.Millisecond
+	s := NewMapGeoCacheStore(testShortTTL)
 	s.Set("key1", GeoCacheEntry{ObservedAt: time.Now().Add(-time.Hour)})
 
 	_, ok := s.Get("key1")

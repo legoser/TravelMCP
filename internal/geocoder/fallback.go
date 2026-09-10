@@ -17,11 +17,13 @@ type named struct {
 	g    Geocoder
 }
 
+// defaultPriority — порядок провайдеров без явного geocoder.kind:
+// бесплатный nominatim первый, платный yandex фолбэком.
 var defaultPriority = []string{"nominatim", "yandex"}
 
 func NewFallback(providers map[string]Geocoder, attempts int, preferred string) Geocoder {
 	if attempts <= 0 {
-		attempts = 3
+		attempts = defaultAttempts
 	}
 	ordered := make([]named, 0, len(providers))
 	if preferred != "" {

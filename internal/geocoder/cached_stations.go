@@ -10,6 +10,9 @@ import (
 	"travelmcp/internal/model"
 )
 
+// pacerMinInterval — минимальный интервал между вызовами Overpass:
+// публичный API раздельный, вежливый темп + глобальный windowed-токен
+// в api_quotas; меньше 1с — риск 429.
 const pacerMinInterval = 1200 * time.Millisecond
 
 func geoCacheKey(lat, lon float64, radius int) string {

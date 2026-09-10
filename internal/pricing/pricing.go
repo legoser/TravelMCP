@@ -6,16 +6,29 @@ import (
 	"travelmcp/internal/model"
 )
 
+// Тарифы-заглушки (руб/км) до подключения зонных тарифов: авиа дороже
+// всего, трамвай/метро дешевле автобуса. minPrice — floor поездки,
+// minDistanceKm — короткие плечи считаются за 1 км (вокзал рядом),
+// округление — до целого рубля.
+const (
+	flightPricePerKm = 8.0
+	railPricePerKm   = 3.5
+	urbanPricePerKm  = 2.0
+	busPricePerKm    = 2.5
+	minPrice         = 50.0
+	minDistanceKm    = 1.0
+)
+
 func pricePerKm(mode model.Mode) float64 {
 	switch mode {
 	case model.ModeFlight:
-		return 8.0
+		return flightPricePerKm
 	case model.ModeRail:
-		return 3.5
+		return railPricePerKm
 	case model.ModeTram, model.ModeMetro:
-		return 2.0
+		return urbanPricePerKm
 	default:
-		return 2.5
+		return busPricePerKm
 	}
 }
 
@@ -24,12 +37,12 @@ func estimatePrice(from, to *model.Stop, mode model.Mode) float64 {
 		return 0
 	}
 	d := geo.Haversine(from.Coordinates(), to.Coordinates())
-	if d < 1 {
-		d = 1
+	if d < minDistanceKm {
+		d = minDistanceKm
 	}
 	price := d * pricePerKm(mode)
-	if price < 50 {
-		price = 50
+	if price < minPrice {
+		price = minPrice
 	}
 	return float64(int(price + 0.5))
 }

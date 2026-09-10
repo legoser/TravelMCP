@@ -67,7 +67,7 @@
 #### Yandex Geocoder
 
 - **Endpoint**: `https://geocode-maps.yandex.ru/1.x/?format=json&apikey=<key>&geocode=<query>` (`adapters/yandex` через `httpx`, `User-Agent` не требуется).
-- **Ключ**: `YANDEX_GEOCODE_KEY` / `GEOCODER_API_KEY` (иначе `geocode key empty` → fallback).
+- **Ключ**: `YANDEX_GEOCODE_KEY` (иначе `geocode key empty` → fallback).
 - **Запрос (2026-09-02, ключ `b619...`):**
   ```sh
   curl "https://geocode-maps.yandex.ru/1.x/?format=json&apikey=$YANDEX_GEOCODE_KEY&geocode=Новосибирск"
@@ -135,9 +135,9 @@
 ```yaml
 geocoder: {kind: "", attempts: 3} # "" = nominatim first
 nominatim: {url: "https://nominatim.openstreetmap.org"}
-yandex: {geocode_key: "${YANDEX_GEOCODE_KEY}", geocode_url: "https://geocode-maps.yandex.ru/1.x"}
+yandex: {geocode_key: "${YANDEX_GEOCODE_KEY}", geocode_url: "https://geocode-maps.yandex.ru/1.x", rasp_url: "https://api.rasp.yandex.net/v3.0"}
 ```
-Env: `GEOCODER_KIND`, `GEOCODER_ATTEMPTS`, `NOMINATIM_URL`/`TRAVELMCP__NOMINATIM__URL`, `YANDEX_GEOCODE_KEY`/`URL`, `GEOCODER_API_KEY` (legacy).
+Env: `GEOCODER_KIND`, `GEOCODER_ATTEMPTS`, `GEOCODER_LIMIT`, `NOMINATIM_URL`/`TRAVELMCP__NOMINATIM__URL`, `YANDEX_GEOCODE_KEY`/`URL`.
 
 ### Платные API (Yandex Maps, 2ГИС и др.)
 

@@ -26,21 +26,23 @@ type Geocoder struct {
 	key    string
 }
 
+// defaultGeocodeURL — Geocode API Яндекса; переопределяется yandex.geocode_url
+// (env YANDEX_GEOCODE_URL).
+const defaultGeocodeURL = "https://geocode-maps.yandex.ru/1.x"
+
+// Лимиты results (протокол Geocode API): defaultResultsLimit — при limit<=0,
+// если geocoder.limit не задан; maxResultsLimit — потолок.
+const (
+	defaultResultsLimit = 5
+	maxResultsLimit     = 10
+)
+
 func New(cfg config.Config, client *httpx.Client) *Geocoder {
 	url := cfg.Yandex.GeocodeURL
 	if url == "" {
-		url = cfg.Geocoder.URL
-	}
-	if url == "" {
-		url = "https://geocode-maps.yandex.ru/1.x"
+		url = defaultGeocodeURL
 	}
 	key := cfg.Yandex.GeocodeKey
-	if key == "" {
-		key = cfg.Geocoder.ApiKey
-	}
-	if key == "" {
-		key = cfg.Geocoder.Key
-	}
 	return &Geocoder{cfg: cfg, client: client, url: url, key: key}
 }
 
@@ -79,10 +81,13 @@ func (y *Geocoder) GeocodeCandidates(ctx context.Context, query string, limit in
 		return nil, fmt.Errorf("geocode key empty")
 	}
 	if limit <= 0 {
-		limit = 5
+		limit = y.cfg.Geocoder.Limit
 	}
-	if limit > 10 {
-		limit = 10
+	if limit <= 0 {
+		limit = defaultResultsLimit
+	}
+	if limit > maxResultsLimit {
+		limit = maxResultsLimit
 	}
 	base, err := url.Parse(y.url)
 	if err != nil {

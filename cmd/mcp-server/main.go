@@ -47,22 +47,23 @@ func main() {
 	logger := factory.For("main")
 	slog.SetDefault(logger)
 	pricing.Configure(cfg.Pricing.DefaultCurrency)
-	logger.Info("config loaded", "path", configPath, "addr", cfg.HTTP.Addr, "providers", strings.Join(cfg.Providers.Enabled, ","), "dsn", maskDSN(cfg.Database.DSN), "reestr", cfg.Providers.Intercity.ReestrPath, "log_level", cfg.Log.Level, "log_format", cfg.Log.Format, "log_levels", cfg.Log.Levels, "pricing_currency", cfg.Pricing.DefaultCurrency)
+	logger.Info("config loaded", "path", configPath, "addr", cfg.HTTP.Addr, "providers", strings.Join(cfg.Providers.Enabled, ","), "dsn", maskDSN(cfg.Store.DSN), "reestr", cfg.Providers.Intercity.ReestrPath, "log_level", cfg.Log.Level, "log_format", cfg.Log.Format, "log_levels", cfg.Log.Levels, "pricing_currency", cfg.Pricing.DefaultCurrency)
 
 	httpLogger := factory.For("http")
 
 	metrics := telemetry.New()
 	regStart := time.Now()
 	intercityLogger := factory.For("providers.intercity")
-	registry := providers.NewRegistryWithLogger(cfg.Providers.Enabled, cfg.Providers.Intercity.ReestrPath, intercityLogger)
+	registry := providers.NewRegistryWithLogger(cfg.Providers.Enabled, cfg.Providers.Intercity.ReestrPath, intercityLogger).
+		WithDedupKm(float64(cfg.Deduplication.DistanceM) / 1000.0)
 	logger.Info("provider registry initialized", "enabled", cfg.Providers.Enabled, "elapsed", time.Since(regStart).String())
 
 	var st store.Store
-	if cfg.Database.DSN != "" {
+	if cfg.Store.DSN != "" {
 		s := time.Now()
-		logger.Info("storage init", "dsn", maskDSN(cfg.Database.DSN))
+		logger.Info("storage init", "dsn", maskDSN(cfg.Store.DSN))
 		var err error
-		st, err = store.New(context.Background(), cfg.Database.DSN)
+		st, err = store.New(context.Background(), cfg.Store.DSN)
 		if err != nil {
 			logger.Error("storage init failed", "error", err)
 			os.Exit(1)
@@ -77,7 +78,7 @@ func main() {
 			}
 			logger.Info("db migration completed", "elapsed_ms", time.Since(ms).Milliseconds())
 			for _, p := range []string{"yandex", "nominatim", "motis", "mintrans", "gtfs"} {
-				_ = st.SetQuotaLimit(context.Background(), p, 1000)
+				_ = st.SetQuotaLimit(context.Background(), p, store.DefaultQuotaLimit)
 			}
 			if qs, err := st.ListQuotas(context.Background()); err == nil {
 				logger.Info("quotas loaded", "count", len(qs))

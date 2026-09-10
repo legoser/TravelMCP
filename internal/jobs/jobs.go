@@ -99,9 +99,12 @@ func (m *Manager) ClaimNext(ctx context.Context) (*Job, error) {
 }
 
 func Backoff(attempt int) time.Duration {
+	// maxBackoff — потолок экспоненциальной паузы ретраев (линейный рост
+	// 2мин×attempt упирается в 30 минут).
+	const maxBackoff = 30 * time.Minute
 	base := time.Duration(attempt*2) * time.Minute
-	if base > 30*time.Minute {
-		base = 30 * time.Minute
+	if base > maxBackoff {
+		base = maxBackoff
 	}
 	return base
 }

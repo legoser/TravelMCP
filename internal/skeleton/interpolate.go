@@ -41,14 +41,23 @@ func InterpolatePosition(stops []SeqStop, idx int) (Interpolated, bool) {
 	lat := stops[prev].Lat + (stops[next].Lat-stops[prev].Lat)*share
 	lon := stops[prev].Lon + (stops[next].Lon-stops[prev].Lon)*share
 	legKm := haversineM(stops[prev].Lat, stops[prev].Lon, stops[next].Lat, stops[next].Lon) / 1000
-	conf := 0.3
+	// Доверие интерполяции (origin='seed', ниже verified-порога 0.6):
+	// долевой метод точнее пропорционального; длинные перегоны
+	// штрафуются — интерполяция на 50+ км почти неинформативна.
+	const (
+		seqProportionalConf = 0.3
+		shareMethodConf     = 0.45
+		longLegKm           = 50.0
+		longLegPenalty      = 0.6
+	)
+	conf := seqProportionalConf
 	method := "seq_proportional"
 	if hasWeights(stops, prev, next) {
 		method = "duration_distance_share"
-		conf = 0.45
+		conf = shareMethodConf
 	}
-	if legKm > 50 {
-		conf *= 0.6
+	if legKm > longLegKm {
+		conf *= longLegPenalty
 	}
 	return Interpolated{Lat: lat, Lon: lon, Confidence: conf, Origin: "seed", Method: method}, true
 }

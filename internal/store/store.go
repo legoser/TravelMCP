@@ -98,6 +98,12 @@ type QuotaStore interface {
 	ListQuotas(ctx context.Context) ([]QuotaRow, error)
 }
 
+// DefaultQuotaLimit — суточный лимит вызовов внешнего API на провайдера,
+// когда точный лимит неизвестен или не задан (geocode.max_calls для
+// геокодеров). Пользовательский акцент: квота считается атомарно в БД
+// (api_quotas), значение видно в /api/v1/quotas.
+const DefaultQuotaLimit = 1000
+
 type JobStore interface {
 	EnqueueJob(ctx context.Context, j JobRow) (int64, error)
 	ClaimNextJob(ctx context.Context) (*JobRow, error)
