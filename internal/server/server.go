@@ -1023,11 +1023,27 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	user, _ := r.Context().Value(ctxUserKey).(*store.UserRow)
 	s.logger.Info("dashboard", "user", userEmail(user))
 	s.logger.Debug("dashboard debug", "counters", fmt.Sprint(s.metrics.Named()))
-	writeJSONResponse(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"uptime_seconds": int64(time.Since(s.started).Seconds()),
 		"providers":      s.registry.HealthStatuses(),
 		"counters":       s.metrics.Named(),
-	})
+	}
+	// KPI §8: устаревание полей — v_stale_attributes-осцилляция (30д-окно),
+	// застрявшие staging-очереди (после expiry §5.3 живёт только свежее).
+	if s.store != nil {
+		if sw, ok := s.store.(interface {
+			StaleAttributesCounters(ctx context.Context, olderThan time.Duration) (map[string]int, error)
+			CountStagingByState(ctx context.Context) (map[string]int, error)
+		}); ok {
+			if stale, err := sw.StaleAttributesCounters(r.Context(), 30*24*time.Hour); err == nil {
+				resp["stale_attributes_30d"] = stale
+			}
+			if byState, err := sw.CountStagingByState(r.Context()); err == nil {
+				resp["staging_by_state"] = byState
+			}
+		}
+	}
+	writeJSONResponse(w, http.StatusOK, resp)
 }
 
 func userEmail(u *store.UserRow) string {

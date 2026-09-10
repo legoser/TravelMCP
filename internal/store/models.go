@@ -383,6 +383,46 @@ type OutboxEvent struct {
 	Payload     string
 }
 
+// AttributeSweepResult — итог Finalize/GC attribute_state (Фаза 5, §3.1/§8).
+type AttributeSweepResult struct {
+	FinalizedToHistory int // конкурентов отправлено в provenance_history (наблюдение старше retention)
+	GCSupersededSeed   int // seed-строк, вытесненных live-конкурентом, удалено
+	RemainingLive      int // живых конкурентов после прогона (KPI-объём)
+}
+
+// MergeAuditCandidate — терминал-кандидат аудита possible_merge (Фаза 5):
+// мульти-тип хаб либо терминал рядом с другим терминалом пересекающегося
+// типа. Решение слияния — за оператором, не автоматически.
+type MergeAuditCandidate struct {
+	TerminalID     int64
+	Name           string
+	TransportTypes string
+	NeighborID     int64
+	NeighborName   string
+	NeighborTypes  string
+	DistanceM      float64
+	SharedTypes    int
+}
+
+// TransportTypesRecomputeResult — сверка материализованного агрегата
+// terminals.transport_types с фактом (Фаза 5, ночной recompute).
+type TransportTypesRecomputeResult struct {
+	Checked int            // терминалов проверено
+	Updated int            // агрегат исправлен (дрейф с фактом)
+	ByDelta map[string]int // статистика изменений: «bus+rail» → N
+}
+
+// MarginalMatchSample — строка выборки FP-аудита (§8): маргинальный
+// стоп-матч, подлежащий ручной проверке оператором.
+type MarginalMatchSample struct {
+	TripID        int64
+	StopID        int64
+	StopName      string
+	MatchScore    float64
+	MatchMethod   string
+	IsProvisional bool
+}
+
 type AuditLogRow struct {
 	ID         int64
 	UserID     *int64

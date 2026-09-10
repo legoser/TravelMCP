@@ -94,7 +94,7 @@ func main() {
 	if st != nil {
 		go func() {
 			workerLogger := factory.For("jobs")
-			w := newJobsWorker(st, workerLogger)
+			w := newJobsWorker(st, cfg, workerLogger)
 			workerLogger.Info("jobs worker started")
 			w.Run(context.Background(), 5*time.Second)
 		}()
@@ -163,7 +163,7 @@ func parseDuration(s string, def time.Duration) time.Duration {
 	return def
 }
 
-func newJobsWorker(st store.Store, l *slog.Logger) *jobs.Worker {
+func newJobsWorker(st store.Store, cfg *config.Config, l *slog.Logger) *jobs.Worker {
 	w := jobs.NewWorker(st, l)
 	w.Register("import_gtfs", func(ctx context.Context, job store.JobRow) error {
 		l.Info("handling import_gtfs", "id", job.ID, "payload", job.Payload)
@@ -242,19 +242,42 @@ func newJobsWorker(st store.Store, l *slog.Logger) *jobs.Worker {
 		return nil
 	})
 	w.Register("cleanup", func(ctx context.Context, job store.JobRow) error {
-		l.Info("handling cleanup (staging expiry §5.3)", "id", job.ID)
+		l.Info("handling cleanup (staging expiry §5.3 + hygiene sweep Фаза 5)", "id", job.ID)
 		days := 14
+		retentionDays := 90
 		var p map[string]any
 		if json.Unmarshal([]byte(job.Payload), &p) == nil {
 			if d, ok := p["staging_expiry_days"].(float64); ok && d > 0 {
 				days = int(d)
 			}
+			if d, ok := p["attribute_retention_days"].(float64); ok && d > 0 {
+				retentionDays = int(d)
+			}
+		}
+		if cfg != nil && cfg.Sync.StagingExpiryDays > 0 {
+			days = cfg.Sync.StagingExpiryDays
 		}
 		ex, ok := st.(syncpkg.StagingExpirer)
 		if !ok {
 			return errors.New("cleanup: стор не поддерживает staging expiry")
 		}
-		return syncpkg.HandleCleanupJob(ctx, ex, days, l)
+		if err := syncpkg.HandleCleanupJob(ctx, ex, days, l); err != nil {
+			return err
+		}
+		// freshness-sweep Фазы 5 (§2): finalize/GC attribute_state +
+		// possible_merge-аудит + recompute transport_types; сбой sweep
+		// не роняет staging-expiry (шаги независимы, частичность в логах).
+		if sw, ok := st.(syncpkg.AttributeHygieneSweeper); ok {
+			if rq, ok2 := st.(syncpkg.ReviewQueueWriter); ok2 {
+				if _, err := syncpkg.RunHygieneSweep(ctx, sw, rq, time.Duration(retentionDays)*24*time.Hour, l); err != nil {
+					l.Warn("hygiene sweep partial failure (staging expiry уже применён)", "err", err)
+					return err
+				}
+			}
+		} else {
+			l.Info("cleanup: стор без hygiene-sweep (memory в тестах) — пропущено")
+		}
+		return nil
 	})
 	return w
 }
