@@ -47,15 +47,13 @@ func main() {
 	logger := factory.For("main")
 	slog.SetDefault(logger)
 	pricing.Configure(cfg.Pricing.DefaultCurrency)
-	logger.Info("config loaded", "path", configPath, "addr", cfg.HTTP.Addr, "providers", strings.Join(cfg.Providers.Enabled, ","), "dsn", maskDSN(cfg.Store.DSN), "reestr", cfg.Providers.Intercity.ReestrPath, "log_level", cfg.Log.Level, "log_format", cfg.Log.Format, "log_levels", cfg.Log.Levels, "pricing_currency", cfg.Pricing.DefaultCurrency)
+	logger.Info("config loaded", "path", configPath, "addr", cfg.HTTP.Addr, "providers", strings.Join(cfg.Providers.Enabled, ","), "dsn", maskDSN(cfg.Store.DSN), "log_level", cfg.Log.Level, "log_format", cfg.Log.Format, "log_levels", cfg.Log.Levels, "pricing_currency", cfg.Pricing.DefaultCurrency)
 
 	httpLogger := factory.For("http")
 
 	metrics := telemetry.New()
 	regStart := time.Now()
-	intercityLogger := factory.For("providers.intercity")
-	registry := providers.NewRegistryWithLogger(cfg.Providers.Enabled, cfg.Providers.Intercity.ReestrPath, intercityLogger).
-		WithDedupKm(float64(cfg.Deduplication.DistanceM) / 1000.0)
+	registry := providers.NewRegistryWithLogger(cfg.Providers.Enabled, factory.For("providers"))
 	logger.Info("provider registry initialized", "enabled", cfg.Providers.Enabled, "elapsed", time.Since(regStart).String())
 
 	var st store.Store
@@ -82,11 +80,6 @@ func main() {
 			}
 			if qs, err := st.ListQuotas(context.Background()); err == nil {
 				logger.Info("quotas loaded", "count", len(qs))
-			}
-			for _, id := range cfg.Providers.Enabled {
-				if id == providers.IntercityID {
-					logger.Warn("legacy mintrans import disabled: канон пишут skeleton-sync + trips-sync, сервер только читает", "provider", id, "reestr", cfg.Providers.Intercity.ReestrPath)
-				}
 			}
 		}
 	} else {

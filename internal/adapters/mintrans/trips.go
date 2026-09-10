@@ -3,8 +3,10 @@ package mintrans
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"travelmcp/internal/model"
+	"travelmcp/internal/support/timeutil"
 )
 
 type Dataset = reestrDataset
@@ -163,4 +165,75 @@ func FlattenTrips(ds Dataset) ([]model.FlatTrip, FlattenStats) {
 		}
 	}
 	return out, stats
+}
+
+func blockOf(st reestrSchedStop, period string) *reestrBlock {
+	if period == "winter" {
+		return st.Winter
+	}
+	return st.Summer
+}
+
+func blockHasTimes(b *reestrBlock) bool {
+	for _, t := range b.Dep {
+		if _, ok := timeutil.ParseTimeMinutes(t); ok {
+			return true
+		}
+	}
+	for _, t := range b.Arr {
+		if _, ok := timeutil.ParseTimeMinutes(t); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func pickPeriod(sched reestrSched) string {
+	for _, st := range sched.Stops {
+		if st.Winter != nil && blockHasTimes(st.Winter) {
+			return "winter"
+		}
+	}
+	for _, st := range sched.Stops {
+		if st.Summer != nil && blockHasTimes(st.Summer) {
+			return "summer"
+		}
+	}
+	return ""
+}
+
+func runsCount(sched reestrSched, period string) int {
+	n := 1
+	for _, st := range sched.Stops {
+		b := blockOf(st, period)
+		if b == nil {
+			continue
+		}
+		if l := len(b.Dep); l > n {
+			n = l
+		}
+		if l := len(b.Arr); l > n {
+			n = l
+		}
+	}
+	return n
+}
+
+func cellAt(list []string, run int) (mins int, days []int, hasDays bool, ok bool) {
+	if run >= len(list) {
+		return 0, nil, false, false
+	}
+	raw := strings.TrimSpace(list[run])
+	if raw == "" || IsNoServiceCell(raw) {
+		return 0, nil, false, false
+	}
+	mins, days, hasDays, err := ParseCellTime(raw)
+	if err != nil {
+		return 0, nil, false, false
+	}
+	return mins, days, hasDays, true
+}
+
+func parseTimeMinutes(s string) (int, bool) {
+	return timeutil.ParseTimeMinutes(s)
 }

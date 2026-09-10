@@ -41,11 +41,6 @@ type Queue struct {
 	URL  string `yaml:"url"`
 }
 
-type Intercity struct {
-	ReestrPath string `yaml:"reestr_path"`
-	Bounds     string `yaml:"bounds"`
-}
-
 type GTFS struct {
 	Path   string `yaml:"path"`
 	TmpDir string `yaml:"tmp_dir"`
@@ -70,9 +65,8 @@ type Motis struct {
 }
 
 type Providers struct {
-	Enabled   []string  `yaml:"enabled"`
-	Intercity Intercity `yaml:"intercity"`
-	GTFS      GTFS      `yaml:"gtfs"`
+	Enabled []string `yaml:"enabled"`
+	GTFS    GTFS     `yaml:"gtfs"`
 }
 
 type Auth struct {
@@ -201,9 +195,6 @@ func Defaults() *Config {
 		Queue: Queue{Kind: "memory"},
 		Providers: Providers{
 			Enabled: []string{},
-			Intercity: Intercity{
-				ReestrPath: "data/reestr/regions.json",
-			},
 		},
 		Geocoder:  Geocoder{Kind: "", Attempts: 3, Limit: 5, MaxCalls: 0, TTLVerified: "2160h", TTLDisputed: "168h"},
 		Yandex:    Yandex{RaspURL: "https://api.rasp.yandex.net/v3.0", GeocodeURL: "https://geocode-maps.yandex.ru/1.x"},
@@ -407,9 +398,6 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("PROVIDERS_ENABLED"); v != "" {
 		cfg.Providers.Enabled = splitCsv(v)
-	}
-	if v := os.Getenv("INTERCITY_REESTR_PATH"); v != "" {
-		cfg.Providers.Intercity.ReestrPath = v
 	}
 	if v := os.Getenv("YANDEX_RASP_KEY"); v != "" {
 		cfg.Yandex.RaspKey = v

@@ -21,10 +21,9 @@ queue:
   url: "${QUEUE_URL:-nats://nats:4222}"
 
 providers:
-  enabled: ["intercity"]
-  intercity:
-    reestr_path: "data/reestr/regions.json"
-    bounds: "ru"
+  # Legacy JSON-провайдер intercity вырезан (Фаза 6): канон пишут
+  # skeleton-sync + trips-sync, сеть строит Store.
+  enabled: []
   gtfs:
     path: "data/gtfs/feed.zip"
 

@@ -153,22 +153,34 @@ func (p *PostgresStore) RecomputeTransportTypes(ctx context.Context) (store.Tran
 	if p.pool == nil {
 		return res, errNotImplemented
 	}
+	// Early-dedup: (stop_id, mode) агрегируется ДО join со стопами (3.5M →
+	// ~25k строк), поэтому дедуп через UNION работает на порядок дешевле,
+	// а не по факту сортировки 3.5M строк. EXCEPT-проверка на live-БД:
+	// результат идентичен прежней LATERAL-форме (12.3s → ~1.0s).
 	rows, err := p.pool.Query(ctx, `
+WITH modes_per_stop AS (
+  SELECT st.stop_id, r.mode::text AS mode
+  FROM stop_times st
+  JOIN trips tr ON st.trip_id = tr.id AND tr.valid_to IS NULL
+  JOIN routes r ON r.id = tr.route_id AND r.valid_to IS NULL
+  GROUP BY st.stop_id, r.mode::text
+),
+fact AS (
+  SELECT u.terminal_id, string_agg(u.m, '+' ORDER BY u.m) AS fact
+  FROM (
+    SELECT sc.terminal_id, sc.stop_type::text AS m
+    FROM stops_canonical sc WHERE sc.stop_type IS NOT NULL
+    UNION
+    SELECT sc.terminal_id, mps.mode
+    FROM stops_canonical sc JOIN modes_per_stop mps ON mps.stop_id = sc.id
+  ) u
+  GROUP BY u.terminal_id
+)
 SELECT t.id,
        array_to_string(t.transport_types, '+') AS stored,
-       coalesce(agg.fact, '') AS fact
+       coalesce(f.fact, '') AS fact
 FROM terminals t
-CROSS JOIN LATERAL (
-  SELECT string_agg(DISTINCT u.x, '+' ORDER BY u.x) AS fact FROM (
-    SELECT sc.stop_type::text AS x
-      FROM stops_canonical sc WHERE sc.terminal_id = t.id AND sc.stop_type IS NOT NULL
-    UNION
-    SELECT r.mode::text AS x
-      FROM stop_times st JOIN trips tr ON st.trip_id = tr.id AND tr.valid_to IS NULL
-      JOIN routes r ON r.id = tr.route_id AND r.valid_to IS NULL
-      WHERE st.stop_id IN (SELECT id FROM stops_canonical WHERE terminal_id = t.id)
-  ) u
-) agg
+LEFT JOIN fact f ON f.terminal_id = t.id
 WHERE t.valid_to IS NULL`)
 	if err != nil {
 		return res, err

@@ -8,8 +8,6 @@ store:
 
 providers:
   enabled: ["synth"]
-  intercity:
-    reestr_path: "testdata/test.json"
 
 log:
   level: "warn"

@@ -21,6 +21,8 @@ func gtfsRouteType(m model.Mode) string {
 	switch m {
 	case model.ModeTram:
 		return "0"
+	case model.ModeMetro:
+		return "1"
 	case model.ModeRail:
 		return "2"
 	case model.ModeBus, model.ModeCoach:

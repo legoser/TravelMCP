@@ -1,14 +1,104 @@
 package planner
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"travelmcp/internal/adapters/mintrans"
 	"travelmcp/internal/model"
 	"travelmcp/internal/providers"
 )
+
+// reestrTestNetwork строит сеть из JSON-среза реестра (testdata/test.json)
+// через mintrans-адаптер — замена вырезанного legacy-провайдера intercity
+// (Фаза 6): тестам нужна сеть с автовокзалами и межгородом, а не сам
+// провайдер реестра.
+func reestrTestNetwork(t *testing.T, day time.Time) *model.Network {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "test.json"))
+	if err != nil {
+		t.Fatalf("read test dataset: %v", err)
+	}
+	ds, err := mintrans.ParseDataset(raw)
+	if err != nil {
+		t.Fatalf("parse dataset: %v", err)
+	}
+	flat, _ := mintrans.FlattenTrips(ds)
+	net := model.NewNetwork()
+	for _, s := range ds.Stops {
+		lat, lon := 0.0, 0.0
+		if s.Lat != nil {
+			lat = *s.Lat
+		}
+		if s.Lon != nil {
+			lon = *s.Lon
+		}
+		net.Stops[s.ID] = &model.Stop{ID: s.ID, ProviderID: "mintrans", Name: s.Name, Lat: lat, Lon: lon, Type: model.InferStopType(s.Name)}
+	}
+	for _, ft := range flat {
+		if ft.FrequencyOnly {
+			continue
+		}
+		routeID := ft.RouteReg
+		if _, ok := net.Routes[routeID]; !ok {
+			net.Routes[routeID] = &model.Route{ID: routeID, ProviderID: "mintrans", ShortName: routeID, Mode: model.ModeBus}
+		}
+		tripID := routeID + "-" + ft.Direction + "-" + itoa(ft.Run)
+		var times []model.StopTime
+		for i, st := range ft.Stops {
+			if st.DepMin == nil && st.ArrMin == nil {
+				continue
+			}
+			arr, dep := 0, 0
+			if st.ArrMin != nil {
+				arr = *st.ArrMin * 60
+			}
+			if st.DepMin != nil {
+				dep = *st.DepMin * 60
+			}
+			if arr == 0 && dep == 0 {
+				continue
+			}
+			if arr == 0 {
+				arr = dep
+			}
+			if dep == 0 {
+				dep = arr
+			}
+			times = append(times, model.StopTime{StopID: st.StopID, Sequence: len(times), ArrivalSec: arr, DepartureSec: dep})
+			_ = i
+		}
+		if len(times) < 2 {
+			continue
+		}
+		net.Trips[tripID] = &model.Trip{ID: tripID, RouteID: routeID, ProviderID: "mintrans", Mode: model.ModeBus, StopTimes: times}
+		for i := 0; i < len(times)-1; i++ {
+			net.Connections = append(net.Connections, model.Connection{
+				TripID: tripID, ProviderID: "mintrans", RouteID: routeID, Mode: model.ModeBus,
+				From: times[i].StopID, To: times[i+1].StopID,
+				Departure: day.Add(time.Duration(times[i].DepartureSec) * time.Second),
+				Arrival:   day.Add(time.Duration(times[i+1].ArrivalSec) * time.Second),
+			})
+		}
+	}
+	net.BuildIndexes()
+	return net
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	digits := ""
+	for n > 0 {
+		digits = string(rune('0'+n%10)) + digits
+		n /= 10
+	}
+	return digits
+}
 
 func newTestPlanner(t *testing.T) (*Planner, *model.Network) {
 	t.Helper()
@@ -186,10 +276,7 @@ func TestPlanNoRoute(t *testing.T) {
 
 func TestFindStopByPlacePrefersAutoStation(t *testing.T) {
 	day := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC)
-	net, err := providers.NewIntercity(filepath.Join("..", "..", "testdata", "test.json"), day).NetworkForDay(day)
-	if err != nil {
-		t.Fatalf("network: %v", err)
-	}
+	net := reestrTestNetwork(t, day)
 
 	origin := map[string]bool{}
 	for _, trip := range net.Trips {
@@ -211,10 +298,7 @@ func TestFindStopByPlacePrefersAutoStation(t *testing.T) {
 func TestPlaceJourneyStartsAtAutoStation(t *testing.T) {
 	day := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC)
 	p := New(nil)
-	net, err := providers.NewIntercity(filepath.Join("..", "..", "testdata", "test.json"), day).NetworkForDay(day)
-	if err != nil {
-		t.Fatalf("network: %v", err)
-	}
+	net := reestrTestNetwork(t, day)
 
 	journey, err := p.PlanWithPlaces(net,
 		model.Coords{Lat: 55.0410573, Lon: 83.0273816},

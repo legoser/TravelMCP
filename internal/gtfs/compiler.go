@@ -71,7 +71,7 @@ func (c *Compiler) BuildPerRegionFromStore(ctx context.Context, st store.Store, 
 }
 
 func (c *Compiler) writeFromStore(ctx context.Context, zw *zip.Writer, st store.Store, region, feedID, feedVersion string, snapshot time.Time) error {
-	net, err := st.LoadNetwork(ctx, []string{"intercity", "gtfs"}, snapshot)
+	net, err := st.LoadNetwork(ctx, []string{"mintrans", "gtfs"}, snapshot)
 	if err != nil {
 		return err
 	}
@@ -120,6 +120,12 @@ func (c *Compiler) writeFromStore(ctx context.Context, zw *zip.Writer, st store.
 		routeType := "3"
 		if r.Mode == "rail" {
 			routeType = "2"
+		}
+		if r.Mode == "subway" {
+			routeType = "1"
+		}
+		if r.Mode == "tram" {
+			routeType = "0"
 		}
 		fmt.Fprintf(files["routes.txt"], "%s,%s,%s,%s,%s\n", r.ID, agency, r.ShortName, r.LongName, routeType)
 	}

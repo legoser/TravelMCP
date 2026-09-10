@@ -52,7 +52,7 @@
 
 ```
 cmd/trips-sync/        раннер массового attach Фазы 4.4 (конфиг → контракт → план → coverage/gate → attach → персист → sync_runs + ops-лог; флаги --regions/--wait/--force/--dry-run/--trust-nk)
-internal/providers/     Provider-интерфейс, Registry, synth (мок), intercity (JSON, legacy)
+internal/providers/     Provider-интерфейс, Registry, synth (мок), gtfs (адаптер-обёртка; legacy intercity вырезан, Фаза 6)
 internal/geo/           гаверсин, ближайшие остановки, время пешего доступа, таблица кодов регионов (общие геодезические константы: MetersPerDegree, JoinCellSizeDeg, JoinGeoWindowM)
 internal/sync/          Фазы 0–1: `planid` (plan_id + ChunkFresh), `replay` (каноническая проекция + diff), `overrides` (экспорт/импорт решений оператора), `elect` (per-field конкурс + legacy-матчинг); Фаза 4: `trips_attach` (движок 4.2) + `trips_promote` (персист 4.3: TripsStore/PersistAttachReport/outbox, tagging intercity) + `trips_jobs` (payload sync_trips_attach, барьер) + `coverage_attach` (coverage осью stop_terminal, gate) + `calibrate` (sweep порога, рекомендация) + `trips_run` (оркестрация массового attach 4.4)
 internal/skeleton/      Фаза 3: источники отдают `model.AdaptedRecord` (`Kind=AdaptedTerminal`, идентификаторы `osm_id`/`yandex_code`/`esr_code`, `Extra`: settlement/region/transport_type) — своего типа терминала нет; `OSMSource` + `YandexDumpSource` (только локальные файлы, 0 API), `CollapseStopArea` (иерархия OSM на экстракции), `Join` (скоринг OSM↔Yandex: код > гео+имя; `Enrichment`/`Score` — в результате join'а, не в записи; Yandex-only → unverified, не канон), `InterpolatePosition` (seq/долевой кандидат, origin seed), `CoverageByRegion`+`GatePass` (coverage-gate)
@@ -61,8 +61,7 @@ internal/planner/       CSA-поиск + сборка Journey (работает 
 internal/store/         Store/PlaceStore и т.п. интерфейсы; postgres/, sqlite/ (legacy, к удалению), memory/ (тесты)
 internal/model/adapted.go   AdaptedRecord — единый промежуточный формат коннекторов
 internal/verification/  ScorePair — единый скоринг (§3.8: stop_terminal/skeleton_osm/merge/dedup/legacy_match); `verify.go`/`VerifyTerminal` удалены, `haversineMeters` переехал в `scorepair.go`
-internal/import/        оркестрация конвейера: normalize → enrich → dedup → verify → canonical
-internal/adapters/mintrans/  коннектор реестра Минтранса (XLSX → AdaptedRecord)
+internal/adapters/mintrans/  коннектор реестра Минтранса: контракт JSON (contract.go) + FlattenTrips для trips-sync (legacy-импорт вырезан, Фаза 6)
 internal/adapters/gtfs/      коннектор внешних GTFS (Москва/СПб)
 internal/adapters/yandex/    коннектор Яндекс.Расписание (квоты, ротация)
 internal/adapters/motis/     коннектор MOTIS (geocode/reverse-geocode/areas)
@@ -73,7 +72,8 @@ data/                    сырьё и датасеты сбора (НЕ ком�
 scripts/api-demo.sh          ручное демо/обследование API (curl+jq)
 scripts/mcp-route.sh         шаблоны запросов MCP
 scripts/yandex-collect.sh    точечный сбор фикстур Яндекса
-scripts/extract-minstran.py  XLSX-реестр Минтранса → JSON датасет (legacy-путь, до полного переноса в internal/adapters/mintrans)
+scripts/extract-minstran.py  XLSX-реестр Минтранса → JSON датасет (вход trips-sync; legacy-путь провайдера закрыт)
+scripts/parity-check.py      паритет store vs legacy-срез реестра (Фаза 6)
 ```
 
 ## 4. Env-переменные (текущий полный список)
@@ -82,8 +82,7 @@ scripts/extract-minstran.py  XLSX-реестр Минтранса → JSON да�
 |---|---|
 | `HTTP_ADDR` | адрес HTTP-сервера |
 | `DATABASE_DSN` | строка подключения к Postgres |
-| `PROVIDERS_ENABLED` | список активных `Provider` (пусто по умолчанию; `synth` — тесты/демо; `intercity` — реальный реестр) |
-| `INTERCITY_REESTR_PATH` | путь к `data/reestr/regions.json` для `intercity` |
+| `PROVIDERS_ENABLED` | список активных `Provider` (пусто по умолчанию; `synth` — тесты/демо; сеть строит Store из канона — legacy `intercity` вырезан, Фаза 6) |
 | `ADMIN_TOKEN` | токен админки текущей фазы (до внедрения полноценного JWT/ролей по плану Фазы 5) |
 | `PLANNER_MAX_WALK_MINUTES` | дефолт пешей доступности (мин, 1..180), если запрос `find_route` не задал `max_walk_minutes`; междугородние автовокзалы часто за окраиной 2.5 км (конфиг `planner.max_walk_minutes`, дефолт 30) |
 | `SYNC_STAGING_EXPIRY_DAYS` | порог dead-letter для протухших `staging_trips` (дней, дефолт 14; `jobs{cleanup}` + `sync.staging_expiry_days`, план §5.3) |
@@ -153,21 +152,34 @@ scripts/extract-minstran.py  XLSX-реестр Минтранса → JSON да�
   прибытие `09:05`, 0 пересадок; кластер C→B — ошибка «маршрут не найден».
 - Порог пешей доступности по умолчанию — 30 мин (5 км/ч).
 
-### 5.2 intercity (реестр Минтранса, JSON-путь)
+### 5.2 intercity — вырезан (Фаза 6, 2026-09-10)
 
-- Источник exact-времён: `scripts/extract-minstran.py` (XLSX → JSON) с опц.
-  `--osm data/osm/stations.json` для геокодинга (140/255 остановок с
-  координатами на момент снимка). Рабочий датасет `data/reestr/regions.json`
-  (не коммитится); фикстура для тестов `testdata/test.json`
-  (коммитится).
-- Проверенный сквозной сценарий (поиск 06:00 UTC, лимит пешего подхода
-  30 мин): НСК-автовокзал → Барнаул/Томск/Кемерово находятся и строятся
-  через CSA.
-- Пешие стыковки между близкими терминалами (< 0,4 км) строятся
-  автоматически (`addTransferLinks`) — соседний вокзал/автостанция часто
-  оформлены как разные стопы реестра.
-- Сеть строится лениво на каждый запрос (см. §2 — целевой канон в Postgres
-  снимет это ограничение через материализованный компилятор GTFS).
+- **Legacy JSON-провайдер `internal/providers/intercity` вырезан после паритета**
+  (`scripts/parity-check.py`: пилот-регион 42 — routes 96.7% / timed 99.2%,
+  порог 95%; срез реестра `scripts/extract-minstran.py` vs канон Postgres:
+  маршрутом считается трасса со стопом в регионе пилота, `staging_trips` —
+  честная промежуточная станция конвейера). Сеть строит Store из канона
+  (`LoadNetwork`, минтранс-трипы конвейера trips-sync); live-проверка:
+  Кемерово → Новосибирск строится по канон-терминалу «Кемерово, автовокзал».
+- Вместе с провайдером вырезаны: `Registry.WithDedupKm`/`intercityPath`,
+  `providers.intercity`-секция конфига, env `INTERCITY_REESTR_PATH`,
+  `mintrans/importer.go` (JSON-типы контракта → `contract.go`, helpers
+  `pickPeriod/runsCount/blockOf/cellAt` → `trips.go`), `internal/import/pipeline.go`.
+- Planner-тесты, использовавшие провайдер как network-builder из
+  `testdata/test.json`, перешли на локальный билдер через
+  `mintrans.ParseDataset`+`FlattenTrips` (`reestrTestNetwork`).
+- Датасет реестра (`data/reestr/regions.json`, не коммитится) остаётся
+  входом `cmd/trips-sync` (`sync.reestr_path`) — как источник конвейера,
+  не как провайдер сети.
+- **Канон transport-типов расширен** (§3.1 плана): `subway` (единообразно
+  с OSM `station=subway` и GTFS `route_type=1`; исправлено схлопывание
+  metro→rail в OSM/GTFS-адаптерах) + полноценные `taxi, car, bicycle,
+  scooter` (модель `model.Mode`, справочник `transport_modes`, скорости:
+  car/taxi 130, bicycle/scooter 25 км/ч; MCP `transit_modes` принимает
+  SUBWAY,TAXI,CAR,BICYCLE,SCOOTER). Правило расхождения «GTFS считает метро
+  rail»: OSM-скелет — канонический гео-факт, route_type фида — claim
+  маршрута; recompute `transport_types` объединяет (union), subway-терминал
+  с rail-маршрутом честно носит `rail+subway`.
 
 ## 6. Чек-лист устаревания (актуальные паттерны)
 

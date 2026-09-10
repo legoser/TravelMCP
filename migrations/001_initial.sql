@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS transport_modes (
   max_speed real NOT NULL
 );
 INSERT INTO transport_modes(mode, max_speed) VALUES
-  ('bus', 120), ('coach', 120), ('tram', 120), ('rail', 250), ('flight', 1000)
+  ('bus', 120), ('coach', 120), ('tram', 120), ('subway', 120), ('rail', 250), ('flight', 1000),
+  ('taxi', 130), ('car', 130), ('bicycle', 25), ('scooter', 25)
 ON CONFLICT DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS providers (

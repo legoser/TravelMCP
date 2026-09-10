@@ -25,15 +25,9 @@ providers:
   # По умолчанию источников нет: реальные провайдеры подключаются по мере
   # реализации. Мок synth для демо/тестов включается явно:
   #   PROVIDERS_ENABLED=synth
-  # Реестр Минтранса (межгородской автобус, регионы 22/42/54/70) — как есть:
-  #   PROVIDERS_ENABLED=intercity
-  #   (датасет data/reestr/regions.json с координатами собирается
-  #   scripts/extract-minstran.py с --osm и не хранится в git)
   enabled: []
-  intercity:
-    # путь к JSON-датасету реестра (см. scripts/extract-minstran.py)
-    reestr_path: "data/reestr/regions.json"
-    bounds: "ru"
+  # Legacy JSON-провайдер intercity вырезан (Фаза 6): минтранс-данные
+  # попадают в канон конвейером trips-sync, сеть строит Store.
   gtfs:
     path: "data/gtfs/feed.zip"
 
@@ -55,7 +49,6 @@ log:
     #planner: "info"
     #mcp: "info"
     # http: "info"
-    # providers.intercity: "debug"
     # httpx: "debug" # внешние запросы подробно
   # Loki push: LOG_LOKI_URL=http://localhost:3100 (отключено если пусто)
   loki:

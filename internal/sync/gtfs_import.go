@@ -504,7 +504,9 @@ func gtfsMode(t string) string {
 	switch strings.TrimSpace(t) {
 	case "0":
 		return "tram"
-	case "1", "2":
+	case "1":
+		return "subway"
+	case "2":
 		return "rail"
 	case "4":
 		return "flight"

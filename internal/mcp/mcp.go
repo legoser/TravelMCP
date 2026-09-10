@@ -89,7 +89,7 @@ func (a *App) Server() *server.MCPServer {
 		mcp.WithString("preference", mcp.Description("Предпочтение: arrival (быстрее) или transfers (меньше пересадок), по умолчанию arrival")),
 		mcp.WithNumber("max_walk_minutes", mcp.Description("Максимальная пешая доступность до остановки, мин (по умолчанию — из конфига сервера, 30)")),
 		mcp.WithNumber("max_transfers", mcp.Description("Лимит пересадок; -1 — без ограничения. По умолчанию -1")),
-		mcp.WithString("transit_modes", mcp.Description("Режимы транспорта через запятую: BUS,COACH,RAIL,TRAM,FLIGHT. Пусто — все режимы")),
+		mcp.WithString("transit_modes", mcp.Description("Режимы транспорта через запятую: BUS,COACH,RAIL,SUBWAY,TRAM,FLIGHT,TAXI,CAR,BICYCLE,SCOOTER. Пусто — все режимы")),
 	)
 	srv.AddTool(findRoute, a.handleFindRoute)
 
@@ -217,7 +217,7 @@ func (a *App) handleFindRoute(ctx context.Context, req mcp.CallToolRequest) (*mc
 		if s != "" {
 			modes := model.ParseTransitModes(s)
 			if len(modes) == 0 {
-				return mcp.NewToolResultError(fmt.Sprintf("transit_modes: неизвестные режимы %q (допустимо BUS,COACH,RAIL,TRAM,FLIGHT)", s)), nil
+				return mcp.NewToolResultError(fmt.Sprintf("transit_modes: неизвестные режимы %q (допустимо BUS,COACH,RAIL,SUBWAY,TRAM,FLIGHT,TAXI,CAR,BICYCLE,SCOOTER)", s)), nil
 			}
 			params.AllowedModes = modes
 		}
@@ -372,8 +372,6 @@ func (a *App) networkForDay(ctx context.Context, day time.Time) (*model.Network,
 		var n *model.Network
 		var err error
 		switch prov := p.(type) {
-		case *providers.Intercity:
-			n, err = prov.NetworkForDay(day)
 		case *providers.Synth:
 			n, err = prov.NetworkForDay(day)
 		default:

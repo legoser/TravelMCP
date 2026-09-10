@@ -73,10 +73,19 @@ func elementToRecord(el overpassElement) (model.AdaptedRecord, bool) {
 
 func overpassTransportType(tags map[string]string) string {
 	if v, ok := tags["railway"]; ok && (v == "station" || v == "halt") {
+		if tags["station"] == "subway" || tags["subway"] == "yes" {
+			return "subway"
+		}
 		return "rail"
 	}
 	if v, ok := tags["building"]; ok && v == "train_station" {
+		if tags["station"] == "subway" || tags["subway"] == "yes" {
+			return "subway"
+		}
 		return "rail"
+	}
+	if tags["subway"] == "yes" {
+		return "subway"
 	}
 	return "bus"
 }

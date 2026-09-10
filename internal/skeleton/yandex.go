@@ -131,8 +131,10 @@ func yandexTransportType(t string) string {
 		return "rail"
 	case "plane":
 		return "flight"
-	case "bus", "tram", "trolleybus", "metro", "water":
+	case "bus", "tram", "trolleybus", "water":
 		return t
+	case "metro":
+		return "subway"
 	default:
 		return t
 	}

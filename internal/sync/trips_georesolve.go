@@ -89,6 +89,9 @@ func resolveOne(s model.FlatStop, terms []AttachTerminal, bySettlement map[strin
 		if stopTypeSignalMatch(stopType, t.Name, t.Transport) {
 			score += 0.25
 		}
+		if metroStopMatchesSubwayTerminal(s.Name, t.Transport) {
+			score += 0.25
+		}
 		// Контраст-фича: различающее слово терминала, которого нет в стопе
 		// («Летний», «ТЦ», «Ж/Д», «Аэропорт»), штрафует — «Кемеровский АВ»
 		// реестра не тождественен «Летнему автовокзалу» и «автовокзалу
@@ -134,6 +137,29 @@ func stopTypeSignalMatch(stopType model.StopType, terminalName, terminalTranspor
 		return strings.Contains(n, "аэропорт")
 	}
 	return false
+}
+
+// terminalIsSubway — терминал канонически метро (OSM-скелет station=subway
+// → transport_types). GTFS-фид может ошибочно типизировать метро-линию как
+// route_type=2 (rail); канонический гео-факт скелета приоритетнее claim'а
+// фида: subway-терминал и rail-claim — не взаимоисключающий union (§3.10).
+func terminalIsSubway(terminalTransport string) bool {
+	for _, t := range strings.Split(terminalTransport, "+") {
+		if t == "subway" {
+			return true
+		}
+	}
+	return false
+}
+
+// metroStopMatchesSubwayTerminal — имя стопа с «метро» на subway-терминале:
+// сигнал совместимости, обратный контрасту (metro-стоп у rail-only терминала
+// штрафуется hasContrastWord через «метро» в имени).
+func metroStopMatchesSubwayTerminal(stopName, terminalTransport string) bool {
+	if !strings.Contains(strings.ToLower(stopName), "метро") {
+		return false
+	}
+	return terminalIsSubway(terminalTransport)
 }
 
 // contrastWords — слова, различающие тёзок одного города: если они есть в

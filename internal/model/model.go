@@ -14,23 +14,29 @@ type Coords struct {
 type Mode string
 
 const (
-	ModeWalk   Mode = "walk"
-	ModeBus    Mode = "bus"
-	ModeCoach  Mode = "coach"
-	ModeTram   Mode = "tram"
-	ModeRail   Mode = "rail"
-	ModeMetro  Mode = "metro"
-	ModeTaxi   Mode = "taxi"
-	ModeCar    Mode = "car"
-	ModeFlight Mode = "flight"
+	ModeWalk    Mode = "walk"
+	ModeBus     Mode = "bus"
+	ModeCoach   Mode = "coach"
+	ModeTram    Mode = "tram"
+	ModeRail    Mode = "rail"
+	ModeMetro   Mode = "subway"
+	ModeTaxi    Mode = "taxi"
+	ModeCar     Mode = "car"
+	ModeBicycle Mode = "bicycle"
+	ModeScooter Mode = "scooter"
+	ModeFlight  Mode = "flight"
 )
 
 const (
-	BusMaxSpeed    = 120.0
-	TramMaxSpeed   = 120.0
-	MetroMaxSpeed  = 120.0
-	RailMaxSpeed   = 250.0
-	FlightMaxSpeed = 1000.0
+	BusMaxSpeed     = 120.0
+	TramMaxSpeed    = 120.0
+	SubwayMaxSpeed  = 120.0
+	RailMaxSpeed    = 250.0
+	FlightMaxSpeed  = 1000.0
+	CarMaxSpeed     = 130.0
+	TaxiMaxSpeed    = 130.0
+	BicycleMaxSpeed = 25.0
+	ScooterMaxSpeed = 25.0
 )
 
 func MaxSpeed(mode Mode) float64 {
@@ -40,7 +46,11 @@ func MaxSpeed(mode Mode) float64 {
 	case ModeRail:
 		return RailMaxSpeed
 	case ModeBus, ModeCoach, ModeTram, ModeMetro:
-		return BusMaxSpeed
+		return SubwayMaxSpeed
+	case ModeCar, ModeTaxi:
+		return CarMaxSpeed
+	case ModeBicycle, ModeScooter:
+		return BicycleMaxSpeed
 	default:
 		return BusMaxSpeed
 	}
@@ -56,10 +66,18 @@ func ParseTransitMode(s string) (Mode, bool) {
 		return ModeTram, true
 	case "rail", "RAIL":
 		return ModeRail, true
-	case "metro", "METRO":
+	case "subway", "SUBWAY":
 		return ModeMetro, true
 	case "flight", "FLIGHT":
 		return ModeFlight, true
+	case "taxi", "TAXI":
+		return ModeTaxi, true
+	case "car", "CAR":
+		return ModeCar, true
+	case "bicycle", "BICYCLE":
+		return ModeBicycle, true
+	case "scooter", "SCOOTER":
+		return ModeScooter, true
 	case "walk", "WALK":
 		return ModeWalk, true
 	default:
@@ -170,6 +188,9 @@ func InferStopType(name string) StopType {
 	}
 	if IsVillageName(name) {
 		return StopTypePlatform
+	}
+	if strings.Contains(lower, "метро") {
+		return StopTypeStation
 	}
 	if strings.Contains(lower, "вокзал") {
 		return StopTypeStation

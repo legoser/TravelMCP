@@ -31,51 +31,44 @@ type Provider interface {
 }
 
 type Registry struct {
-	mu            sync.RWMutex
-	byID          map[string]Provider
-	order         []string
-	intercityPath string
-	dedupKm       float64
-	snapshot      map[string]HealthStatus
-	snapshotAt    time.Time
+	mu         sync.RWMutex
+	byID       map[string]Provider
+	order      []string
+	snapshot   map[string]HealthStatus
+	snapshotAt time.Time
 }
 
 func NewRegistry(enabled []string) *Registry {
-	return NewRegistryWith(enabled, "")
+	return NewRegistryWithLogger(enabled, nil)
 }
 
-func NewRegistryWith(enabled []string, intercityPath string) *Registry {
-	return NewRegistryWithLogger(enabled, intercityPath, nil)
-}
-
-func NewRegistryWithLogger(enabled []string, intercityPath string, logger *slog.Logger) *Registry {
-	r := &Registry{byID: map[string]Provider{}, intercityPath: intercityPath}
+// NewRegistryWithLogger собирает реестр из включённых провайдеров.
+// Legacy JSON-провайдер intercity вырезан (Фаза 6): канон строится
+// конвейером skeleton-sync + trips-sync в Store, планировщик читает
+// Store, fallback-сеть собирается из активных провайдеров реестра.
+func NewRegistryWithLogger(enabled []string, logger *slog.Logger) *Registry {
+	r := &Registry{byID: map[string]Provider{}}
 	if len(enabled) == 0 {
 		return r
 	}
 	for _, id := range enabled {
-		if id == IntercityID && logger != nil {
-			r.Register(NewIntercityWithLogger(intercityPath, time.Now(), logger))
-			continue
-		}
 		r.enable(id)
 	}
 	return r
 }
 
-var factories = map[string]func(path string) Provider{
-	SynthID:     func(_ string) Provider { return NewSynth(time.Now()) },
-	IntercityID: func(p string) Provider { return NewIntercityWithLogger(p, time.Now(), nil) },
-	GTFSID:      func(p string) Provider { return NewGTFS(p) },
+var factories = map[string]func() Provider{
+	SynthID: func() Provider { return NewSynth(time.Now()) },
+	GTFSID:  func() Provider { return NewGTFS("") },
 }
 
-func RegisterFactory(id string, fn func(path string) Provider) {
+func RegisterFactory(id string, fn func() Provider) {
 	factories[id] = fn
 }
 
 func (r *Registry) enable(id string) {
 	if fn, ok := factories[id]; ok {
-		r.Register(fn(r.intercityPath))
+		r.Register(fn())
 	}
 }
 
@@ -83,23 +76,8 @@ func (r *Registry) Register(p Provider) {
 	if _, ok := r.byID[p.ID()]; ok {
 		return
 	}
-	if ic, ok := p.(*Intercity); ok && r.dedupKm > 0 {
-		ic.WithDedupKm(r.dedupKm)
-	}
 	r.byID[p.ID()] = p
 	r.order = append(r.order, p.ID())
-}
-
-// WithDedupKm задаёт порог схлопывания дублей intercity (км) для уже
-// зарегистрированных и будущих провайдеров; 0 = defaultDedupKm.
-func (r *Registry) WithDedupKm(km float64) *Registry {
-	r.dedupKm = km
-	for _, p := range r.byID {
-		if ic, ok := p.(*Intercity); ok {
-			ic.WithDedupKm(km)
-		}
-	}
-	return r
 }
 
 func (r *Registry) Get(id string) (Provider, bool) {
