@@ -12,7 +12,7 @@ type RegistryStop struct {
 	Name       string
 	Region     string
 	Settlement string
-	OpCode     string
+	Codes      []model.AdaptedIdentifier
 	Lat, Lon   *float64
 }
 
@@ -57,12 +57,15 @@ func MeasureCoverage(stops []RegistryStop, skeletons []store.SkeletonTerminalRow
 }
 
 func stopAdapted(s RegistryStop) model.AdaptedRecord {
-	r := model.AdaptedRecord{Kind: model.AdaptedTerminal, NameRu: s.Name, Source: "mintrans"}
+	r := model.AdaptedRecord{Kind: model.AdaptedTerminal, NameRu: s.Name}
 	if s.Lat != nil && s.Lon != nil {
 		r.Lat, r.Lon = s.Lat, s.Lon
 	}
 	if s.Settlement != "" {
 		r.Extra = map[string]string{"settlement": s.Settlement}
+	}
+	if len(s.Codes) > 0 {
+		r.Identifiers = append([]model.AdaptedIdentifier{}, s.Codes...)
 	}
 	return r
 }

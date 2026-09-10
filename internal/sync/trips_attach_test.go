@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"travelmcp/internal/adapters/mintrans"
 	"travelmcp/internal/config"
 	"travelmcp/internal/model"
 	"travelmcp/internal/support/namesim"
@@ -19,18 +18,19 @@ func attachParamsFor(class model.DensityClass) verification.Params {
 	return verification.DefaultStopTerminalParams(config.Verification{}, class)
 }
 
+const testSource = "gov-registry"
+
 func loadFlatTrips(t *testing.T) []model.FlatTrip {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "test.json"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "flat_trips.json"))
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
 	}
-	ds, err := mintrans.ParseDataset(raw)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
+	var payload model.FlatPayload
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("parse flat fixture: %v", err)
 	}
-	trips, _ := mintrans.FlattenTrips(ds)
-	return trips
+	return payload.Trips
 }
 
 func indexFromFixture(t *testing.T, trips []model.FlatTrip) []AttachTerminal {
@@ -67,7 +67,7 @@ func baseInput(trips []model.FlatTrip, terms []AttachTerminal) AttachInput {
 		Trips:          trips,
 		Terminals:      terms,
 		TrustRouteNK:   true,
-		Source:         "mintrans",
+		Source:         testSource,
 		ChurnThreshold: 0.2,
 		MaxSpeedKmh:    200,
 		ParamsFor:      attachParamsFor,
@@ -94,7 +94,7 @@ func TestAttachFixtureOutcome(t *testing.T) {
 		}
 	}
 	for _, p := range rep.Promoted {
-		if p.WinnerSource != "mintrans:winter" && p.WinnerSource != "mintrans:summer" {
+		if p.WinnerSource != testSource+":winter" && p.WinnerSource != testSource+":summer" {
 			t.Fatalf("%s: winner = %q", p.TripNK, p.WinnerSource)
 		}
 		if !p.IsSyntheticKey {
@@ -123,7 +123,7 @@ func TestMatchStopsProvisionalFlag(t *testing.T) {
 	in := baseInput(trips, terms)
 	in.ParamsFor = attachParamsFor
 	in.ClassForRegion = func(string) model.DensityClass { return model.DensityRural }
-	matched, _, _, unmatched := matchStops(trips[0], buildMatchIndex(terms), "mintrans", in.ClassForRegion, in.ParamsFor, slog.Default())
+	matched, _, _, unmatched := matchStops(trips[0], buildMatchIndex(terms), testSource, in.ClassForRegion, in.ParamsFor, slog.Default())
 	if len(unmatched) != 0 {
 		t.Fatalf("unmatched: %v", unmatched)
 	}

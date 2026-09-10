@@ -74,6 +74,7 @@ type MemoryStore struct {
 	syncRuns       map[int64]store.SyncRunRow
 	syncChunks     map[int64]store.SyncChunkRow
 	terminalIdents map[int64][]model.AdaptedIdentifier
+	schemes        map[string]store.IdentifierSchemeRow
 	provenance     map[string]store.ProvenanceVote
 	reviewQueue    []store.ReviewQueueRow
 	stagingTrips   map[string]store.StagingTripRow
@@ -105,6 +106,7 @@ func NewMemoryStore() *MemoryStore {
 		syncRuns:       make(map[int64]store.SyncRunRow),
 		syncChunks:     make(map[int64]store.SyncChunkRow),
 		terminalIdents: make(map[int64][]model.AdaptedIdentifier),
+		schemes:        make(map[string]store.IdentifierSchemeRow),
 		provenance:     make(map[string]store.ProvenanceVote),
 		nextID:         1,
 	}
@@ -1375,4 +1377,64 @@ func init() {
 	store.Register("memory", func(ctx context.Context, dsn string) (store.Store, error) {
 		return NewMemoryStore(), nil
 	})
+}
+
+// ——— identifier_schemes (зеркало postgres; seed — из миграции) ———
+
+func (m *MemoryStore) ListIdentifierSchemes(ctx context.Context) ([]store.IdentifierSchemeRow, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]store.IdentifierSchemeRow, 0, len(m.schemes))
+	for _, s := range m.schemes {
+		out = append(out, s)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].System != out[j].System {
+			return out[i].System < out[j].System
+		}
+		return out[i].Code < out[j].Code
+	})
+	return out, nil
+}
+
+func (m *MemoryStore) UpsertIdentifierScheme(ctx context.Context, s store.IdentifierSchemeRow) error {
+	if s.Code == "" || s.System == "" || s.DisplayName == "" {
+		return fmt.Errorf("identifier scheme: code, system и display_name обязательны")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.schemes[s.Code] = s
+	return nil
+}
+
+func (m *MemoryStore) DeleteIdentifierScheme(ctx context.Context, code string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.schemes[code]; !ok {
+		return fmt.Errorf("тип кода %q не найден", code)
+	}
+	for _, ids := range m.terminalIdents {
+		for _, id := range ids {
+			if id.CodeType == code {
+				return fmt.Errorf("тип кода %q используется у существующих идентификаторов — сначала убрать коды", code)
+			}
+		}
+	}
+	delete(m.schemes, code)
+	return nil
+}
+
+func (m *MemoryStore) ListIdentifierSystems(ctx context.Context) ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	seen := map[string]bool{}
+	out := []string{}
+	for _, s := range m.schemes {
+		if !seen[s.System] {
+			seen[s.System] = true
+			out = append(out, s.System)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
 }

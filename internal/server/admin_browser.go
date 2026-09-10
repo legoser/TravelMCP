@@ -135,7 +135,14 @@ func (s *Server) listTerminalIdentifiers(ctx context.Context, terminalID int64) 
 	if !ok {
 		return nil, nil
 	}
-	systems := []string{"mintrans", "yandex", "osm", "gtfs", "motis", "nominatim"}
+	schemes, ok := s.store.(store.IdentifierSchemeStore)
+	if !ok {
+		return nil, nil
+	}
+	systems, err := schemes.ListIdentifierSystems(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := []map[string]any{}
 	for _, sys := range systems {
 		codes, err := lister.ListTerminalCodes(ctx, terminalID, sys)

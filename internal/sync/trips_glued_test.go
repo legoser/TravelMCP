@@ -145,7 +145,7 @@ func TestGluedFormFullAttach(t *testing.T) {
 		},
 	}}
 	rep, err := AttachTrips(t.Context(), AttachInput{
-		Trips: trips, Terminals: terms, TrustRouteNK: true, Source: "mintrans",
+		Trips: trips, Terminals: terms, TrustRouteNK: true, Source: testSource,
 		ChurnThreshold: 0.2, MaxSpeedKmh: 200, ParamsFor: attachParamsFor,
 		ClassForRegion: func(string) model.DensityClass { return model.DensityRural },
 	})

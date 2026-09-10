@@ -43,7 +43,7 @@ func seedSkeletonTerms(t *testing.T, ms *memory.MemoryStore, terms []AttachTermi
 
 func runCfg() TripsRunConfig {
 	return TripsRunConfig{
-		Source: "mintrans", TrustRouteNK: true,
+		Source: testSource, TrustRouteNK: true,
 		ChurnThreshold: 0.2, MaxSpeedKmh: 200,
 		CoverageGate: 0, SoftScore: 0.4, Margin: 0.1,
 		ParamsFor: attachParamsFor, ClassFor: nil,
@@ -174,7 +174,7 @@ func TestRunTripsSyncDryRun(t *testing.T) {
 	if len(sum.ByRoute) != 4 || sum.FullTripRate != 0.5 {
 		t.Fatalf("dry-run обязан посчитать сводку: %+v", sum)
 	}
-	if _, ok := ms.FindRouteID(ctx, "mintrans", "54.22.078"); ok {
+	if _, ok := ms.FindRouteID(ctx, testSource, "54.22.078"); ok {
 		t.Fatal("dry-run записал route в стор")
 	}
 }

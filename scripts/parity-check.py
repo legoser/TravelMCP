@@ -4,7 +4,7 @@
 Сравнивает JSON-срез реестра (regions.json) с канонической сетью в Postgres.
 Паритет = store-сеть покрывает legacy-сеть на срезе регионов пилота:
 у каждого маршрута реестра, трассирующего через регион пилота (стоп в
-регионе), есть канонический маршрут mintrans (promoted или staged —
+регионе), есть канонический маршрут gov-registry (promoted или staged —
 staging честная промежуточная станция конвейера, времена реально есть).
 
 Флаг --all измеряет полный срез реестра (для дальних фаз — РФ целиком).
@@ -88,7 +88,7 @@ def main():
     with psycopg.connect(args.dsn) as conn:
         store_routes = {
             row[0] for row in conn.execute(
-                "SELECT external_route_code FROM routes WHERE source_provider='mintrans'"
+                "SELECT external_route_code FROM routes WHERE source_provider='gov-registry'"
             )
         }
         staged_routes = {
@@ -100,7 +100,7 @@ def main():
         # Стопы реестра прикрепляются к терминалам (ось stop_terminal):
         # имя стопа реестра («Юргинский АВ») НЕ сохраняется как имя стопа —
         # канонический терминал носит имя OSM/Yandex. Покрытие стопов мерим
-        # по терминалам, к которым прикреплены стопы promoted-минтранс-тридов.
+        # по терминалам, к которым прикреплены стопы promoted-тридов gov-registry.
         for row in conn.execute(
             """
             SELECT DISTINCT tn.name
@@ -108,7 +108,7 @@ def main():
             JOIN trips t ON t.id = st.trip_id
             JOIN stops_canonical sc ON sc.id = st.stop_id
             JOIN terminal_names tn ON tn.terminal_id = sc.terminal_id AND tn.lang = 'ru'
-            WHERE t.provider_id = 'mintrans'
+            WHERE t.provider_id = 'gov-registry'
             """
         ):
             if row[0]:

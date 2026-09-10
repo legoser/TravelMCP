@@ -83,7 +83,7 @@ sync:
   yandex_dump_path: "${SYNC_YANDEX_DUMP_PATH:-data/yandex/cache/global_stations_list.json}"
   skeleton_region: "${SYNC_SKELETON_REGION:-Кемеровская область - Кузбасс}" # пилотный регион скелета
   bbox: "${SYNC_BBOX:-53.5,84.0,57.0,88.5}" # minLat,minLon,maxLat,maxLon пилота
-  reestr_path: "${SYNC_REESTR_PATH:-}" # JSON-срез реестра для coverage-замера
+  flat_trips_path: "${SYNC_FLAT_TRIPS_PATH:-}" # flat_trips.json (генерирует tools/registry-parser) для coverage-замера и trips-sync
   legacy_threshold: 0.6 # порог legacy_match Фазы 0
   coverage_soft_score: 0.4 # мягкий порог ScorePair для coverage-gate (§5.4)
   trips_churn_threshold: 0.2 # churn-alert attach трипов: доля added+removed+changed за прогон, стоп при превышении (Фаза 4)

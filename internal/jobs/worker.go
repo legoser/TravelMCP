@@ -98,8 +98,6 @@ func (w *Worker) withQuota(ctx context.Context, job *store.JobRow, h Handler) er
 
 func (w *Worker) providersForJob(job *store.JobRow) []string {
 	switch job.Type {
-	case string(JobSyncMintrans):
-		return []string{"mintrans", "yandex", "nominatim"}
 	case string(JobSyncRail):
 		return []string{"yandex", "nominatim", "motis"}
 	case string(JobImportGTFS):

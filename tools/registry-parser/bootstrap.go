@@ -1,4 +1,4 @@
-package mintrans
+package main
 
 import (
 	"crypto/sha256"

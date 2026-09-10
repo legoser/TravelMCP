@@ -341,7 +341,7 @@ func (a *App) networkForDay(ctx context.Context, day time.Time) (*model.Network,
 	a.netMu.RUnlock()
 	if a.store != nil {
 		ids := make([]string, 0, len(a.registry.List())+1)
-		ids = append(ids, "mintrans")
+		ids = append(ids, "gov-registry")
 		for _, p := range a.registry.List() {
 			ids = append(ids, p.ID())
 		}

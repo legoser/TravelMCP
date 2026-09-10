@@ -1,38 +1,26 @@
-package mintrans
+package main
 
 import (
 	"encoding/json"
 	"fmt"
 	"strings"
-
-	"travelmcp/internal/model"
-	"travelmcp/internal/support/timeutil"
 )
 
-type Dataset = reestrDataset
-
-func ParseDataset(raw []byte) (Dataset, error) {
+func ParseDataset(raw []byte) (reestrDataset, error) {
 	if err := ValidateDatasetContract(raw); err != nil {
-		return Dataset{}, err
+		return reestrDataset{}, err
 	}
 	var ds reestrDataset
 	if err := json.Unmarshal(raw, &ds); err != nil {
-		return Dataset{}, fmt.Errorf("реестр: разбор: %w", err)
+		return reestrDataset{}, fmt.Errorf("реестр: разбор: %w", err)
 	}
 	return ds, nil
 }
 
-type FlattenStats struct {
-	Schedules            int `json:"schedules"`
-	Runs                 int `json:"runs"`
-	Trips                int `json:"trips"`
-	FrequencyOnly        int `json:"frequency_only"`
-	DroppedEmptyWeekdays int `json:"dropped_empty_weekdays"`
-	RestrictedTrips      int `json:"restricted_trips"`
-	ParityTrips          int `json:"parity_trips"`
-}
-
-func FlattenTrips(ds Dataset) ([]model.FlatTrip, FlattenStats) {
+// FlattenTrips — конвертация реестра в flat-рейсы. op_reg стопа попадает
+// в Codes с system источника (source), поэтому конвейер не знает, что
+// код называется op_reg и откуда он пришёл.
+func FlattenTrips(ds reestrDataset, source string) ([]FlatTrip, FlattenStats) {
 	stops := map[string]reestrStop{}
 	for _, st := range ds.Stops {
 		stops[st.ID] = st
@@ -58,14 +46,14 @@ func FlattenTrips(ds Dataset) ([]model.FlatTrip, FlattenStats) {
 			}
 		}
 	}
-	var out []model.FlatTrip
+	var out []FlatTrip
 	var stats FlattenStats
 	for _, sc := range ds.Schedules {
 		stats.Schedules++
 		period := pickPeriod(sc)
 		r := carrier[sc.Route]
 		ep := endpoints[sc.Route]
-		base := model.FlatTrip{
+		base := FlatTrip{
 			RouteReg:   sc.Route,
 			Direction:  sc.Direction,
 			ServiceID:  sc.ServiceID,
@@ -136,16 +124,19 @@ func FlattenTrips(ds Dataset) ([]model.FlatTrip, FlattenStats) {
 				prevEff = effDep
 				st := stops[s.Stop]
 				arr, dep := eff, effDep
-				ft.Stops = append(ft.Stops, model.FlatStop{
+				fs := FlatStop{
 					StopID: s.Stop,
 					Name:   st.Name,
 					Region: s.Region,
-					OpCode: st.OpReg,
 					Lat:    st.Lat,
 					Lon:    st.Lon,
 					ArrMin: &arr,
 					DepMin: &dep,
-				})
+				}
+				if st.OpReg != "" {
+					fs.Codes = []AdaptedIdentifier{{System: source, CodeType: "op_reg", Code: st.OpReg}}
+				}
+				ft.Stops = append(ft.Stops, fs)
 			}
 			if len(ft.Untimed) == 0 {
 				if len(weekdays) == 0 {
@@ -176,12 +167,12 @@ func blockOf(st reestrSchedStop, period string) *reestrBlock {
 
 func blockHasTimes(b *reestrBlock) bool {
 	for _, t := range b.Dep {
-		if _, ok := timeutil.ParseTimeMinutes(t); ok {
+		if _, ok := parseTimeMinutes(t); ok {
 			return true
 		}
 	}
 	for _, t := range b.Arr {
-		if _, ok := timeutil.ParseTimeMinutes(t); ok {
+		if _, ok := parseTimeMinutes(t); ok {
 			return true
 		}
 	}
@@ -232,8 +223,4 @@ func cellAt(list []string, run int) (mins int, days []int, hasDays bool, ok bool
 		return 0, nil, false, false
 	}
 	return mins, days, hasDays, true
-}
-
-func parseTimeMinutes(s string) (int, bool) {
-	return timeutil.ParseTimeMinutes(s)
 }

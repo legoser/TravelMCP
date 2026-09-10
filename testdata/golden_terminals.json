@@ -4,7 +4,7 @@
     "task": "skeleton_osm",
     "matcher": "scorepair",
     "class": "urban",
-    "stop": {"name": "Кемерово автовокзал", "lat": 55.3416, "lon": 86.061, "source": "mintrans", "settlement": "кемерово"},
+    "stop": {"name": "Кемерово автовокзал", "lat": 55.3416, "lon": 86.061, "source": "gov-registry", "settlement": "кемерово"},
     "terminals": [
       {"name": "Кемерово, автовокзал", "lat": 55.3417, "lon": 86.0612, "source": "osm", "settlement": "кемерово", "transport": "bus"}
     ],
@@ -16,7 +16,7 @@
     "task": "skeleton_osm",
     "matcher": "scorepair",
     "class": "urban",
-    "stop": {"name": "Кемерово автовокзал", "lat": 55.3416, "lon": 86.061, "source": "mintrans", "settlement": "кемерово"},
+    "stop": {"name": "Кемерово автовокзал", "lat": 55.3416, "lon": 86.061, "source": "gov-registry", "settlement": "кемерово"},
     "terminals": [
       {"name": "Кемерово, автовокзал", "lat": 55.9417, "lon": 86.9612, "source": "osm", "settlement": "кемерово", "transport": "bus"}
     ],
@@ -29,7 +29,7 @@
     "task": "skeleton_osm",
     "matcher": "scorepair",
     "class": "urban",
-    "stop": {"name": "Собор", "lat": 55.3501, "lon": 86.0501, "source": "mintrans", "settlement": "кемерово"},
+    "stop": {"name": "Собор", "lat": 55.3501, "lon": 86.0501, "source": "gov-registry", "settlement": "кемерово"},
     "terminals": [
       {"name": "Собор", "lat": 55.35012, "lon": 86.05012, "source": "osm", "settlement": "кемерово", "transport": "bus"},
       {"name": "Собор", "lat": 55.35008, "lon": 86.05004, "source": "osm", "settlement": "кемерово", "transport": "bus"}
@@ -42,9 +42,9 @@
     "task": "skeleton_osm",
     "matcher": "scorepair",
     "class": "urban",
-    "stop": {"name": "Тёзка за 79 км", "lat": 55.0, "lon": 86.0, "source": "mintrans", "settlement": "тёзкино", "codes": [{"system": "mintrans", "code_type": "op_reg", "code": "op:54:54099"}]},
+    "stop": {"name": "Тёзка за 79 км", "lat": 55.0, "lon": 86.0, "source": "gov-registry", "settlement": "тёзкино", "codes": [{"system": "gov-registry", "code_type": "op_reg", "code": "op:54:54099"}]},
     "terminals": [
-      {"name": "Совсем другое имя", "lat": 55.9, "lon": 87.9, "source": "osm", "codes": [{"system": "mintrans", "code_type": "op_reg", "code": "op:54:54099"}]}
+      {"name": "Совсем другое имя", "lat": 55.9, "lon": 87.9, "source": "osm", "codes": [{"system": "gov-registry", "code_type": "op_reg", "code": "op:54:54099"}]}
     ],
     "expect": "verified",
     "expect_best": 0,
@@ -55,7 +55,7 @@
     "task": "skeleton_osm",
     "matcher": "scorepair",
     "class": "urban",
-    "stop": {"name": "Собор", "lat": 55.3501, "lon": 86.0501, "source": "mintrans", "settlement": "кемерово"},
+    "stop": {"name": "Собор", "lat": 55.3501, "lon": 86.0501, "source": "gov-registry", "settlement": "кемерово"},
     "terminals": [
       {"name": "Собор", "lat": 55.35012, "lon": 86.05012, "source": "osm", "settlement": "кемерово", "transport": "bus"},
       {"name": "Собор", "lat": 55.35008, "lon": 86.05004, "source": "osm", "settlement": "кемерово", "transport": "bus"}
@@ -68,7 +68,7 @@
     "task": "skeleton_osm",
     "matcher": "scorepair",
     "class": "urban",
-    "stop": {"name": "Вокзал Томск I", "lat": 56.4111, "lon": 84.9511, "source": "mintrans", "settlement": "томск", "transport": "bus"},
+    "stop": {"name": "Вокзал Томск I", "lat": 56.4111, "lon": 84.9511, "source": "gov-registry", "settlement": "томск", "transport": "bus"},
     "terminals": [
       {"name": "Станция Томск I", "lat": 56.4112, "lon": 84.9512, "source": "osm", "settlement": "томск", "transport": "bus+rail"}
     ],
@@ -81,7 +81,7 @@
     "task": "skeleton_osm",
     "matcher": "scorepair",
     "class": "urban",
-    "stop": {"name": "Поворот на Тяжинский", "lat": 55.9, "lon": 86.9, "source": "mintrans", "settlement": "тяжинский"},
+    "stop": {"name": "Поворот на Тяжинский", "lat": 55.9, "lon": 86.9, "source": "gov-registry", "settlement": "тяжинский"},
     "terminals": [
       {"name": "Поворот Тяжинский", "lat": 55.9010, "lon": 86.9010, "source": "osm", "settlement": "тяжинский", "transport": "bus"}
     ],

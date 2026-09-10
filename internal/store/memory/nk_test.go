@@ -10,11 +10,11 @@ import (
 func TestUpsertRouteIdempotentByNK(t *testing.T) {
 	m := NewMemoryStore()
 	ctx := context.Background()
-	id1, err := m.UpsertRoute(ctx, store.RouteRow{ProviderID: "mintrans", ExternalRouteCode: "42", LongName: "A"})
+	id1, err := m.UpsertRoute(ctx, store.RouteRow{ProviderID: "gov-registry", ExternalRouteCode: "42", LongName: "A"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	id2, err := m.UpsertRoute(ctx, store.RouteRow{ProviderID: "mintrans", ExternalRouteCode: "42", LongName: "B"})
+	id2, err := m.UpsertRoute(ctx, store.RouteRow{ProviderID: "gov-registry", ExternalRouteCode: "42", LongName: "B"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,11 +29,11 @@ func TestUpsertRouteIdempotentByNK(t *testing.T) {
 func TestUpsertTripIdempotentByNK(t *testing.T) {
 	m := NewMemoryStore()
 	ctx := context.Background()
-	id1, err := m.UpsertTrip(ctx, store.TripRow{RouteID: 7, ProviderID: "mintrans", ExternalTripCode: "synthetic:a:1:0"})
+	id1, err := m.UpsertTrip(ctx, store.TripRow{RouteID: 7, ProviderID: "gov-registry", ExternalTripCode: "synthetic:a:1:0"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	id2, err := m.UpsertTrip(ctx, store.TripRow{RouteID: 7, ProviderID: "mintrans", ExternalTripCode: "synthetic:a:1:0"})
+	id2, err := m.UpsertTrip(ctx, store.TripRow{RouteID: 7, ProviderID: "gov-registry", ExternalTripCode: "synthetic:a:1:0"})
 	if err != nil {
 		t.Fatal(err)
 	}

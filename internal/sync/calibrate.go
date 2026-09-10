@@ -37,7 +37,7 @@ func bestAttachScores(
 		classFor = func(string) model.DensityClass { return model.DensityUrban }
 	}
 	if source == "" {
-		source = "mintrans"
+		return nil
 	}
 	cands := make([]verification.PairItem, 0, len(terms))
 	for _, t := range terms {
@@ -45,7 +45,7 @@ func bestAttachScores(
 	}
 	best := make([]float64, 0, len(stops))
 	for _, stop := range stops {
-		item := PairItemFromStop(stop.Name, stop.Lat, stop.Lon, stop.Settlement, source, StopCodes(source, stop.OpCode))
+		item := PairItemFromStop(stop.Name, stop.Lat, stop.Lon, stop.Settlement, source, stop.Codes)
 		class := classFor(stop.Region)
 		top := 0.0
 		for _, cand := range cands {
@@ -170,7 +170,7 @@ func CompareGateMethods(
 		classFor = func(string) model.DensityClass { return model.DensityUrban }
 	}
 	if source == "" {
-		source = "mintrans"
+		return nil
 	}
 	cands := make([]verification.PairItem, 0, len(terms))
 	for _, t := range terms {
@@ -186,7 +186,7 @@ func CompareGateMethods(
 			order = append(order, stop.Region)
 		}
 		r.Total++
-		item := PairItemFromStop(stop.Name, stop.Lat, stop.Lon, stop.Settlement, source, StopCodes(source, stop.OpCode))
+		item := PairItemFromStop(stop.Name, stop.Lat, stop.Lon, stop.Settlement, source, stop.Codes)
 		class := classFor(stop.Region)
 		best := 0.0
 		for _, cand := range cands {

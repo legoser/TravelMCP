@@ -18,7 +18,7 @@ func TestCompilerProvenanceGateBlocks(t *testing.T) {
 	m := memory.NewMemoryStore()
 	ctx := context.Background()
 
-	if _, err := m.UpsertRoute(ctx, store.RouteRow{ProviderID: "mintrans", ExternalRouteCode: "42"}); err != nil {
+	if _, err := m.UpsertRoute(ctx, store.RouteRow{ProviderID: "gov-registry", ExternalRouteCode: "42"}); err != nil {
 		t.Fatal(err)
 	}
 	comp := NewCompiler("f-ru")
@@ -33,15 +33,15 @@ func TestCompilerProvenanceGatePass(t *testing.T) {
 	m := memory.NewMemoryStore()
 	ctx := context.Background()
 
-	routeID, err := m.UpsertRoute(ctx, store.RouteRow{ProviderID: "mintrans", ExternalRouteCode: "42"})
+	routeID, err := m.UpsertRoute(ctx, store.RouteRow{ProviderID: "gov-registry", ExternalRouteCode: "42"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.UpsertTrip(ctx, store.TripRow{RouteID: routeID, ProviderID: "mintrans", ExternalTripCode: "a"}); err != nil {
+	if _, err := m.UpsertTrip(ctx, store.TripRow{RouteID: routeID, ProviderID: "gov-registry", ExternalTripCode: "a"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, p := range []model.Provenance{
-		{EntityType: "route", EntityID: routeID, Source: "mintrans", Confidence: 1, ObservedAt: time.Now(), Channel: model.ChannelLocalFile},
+		{EntityType: "route", EntityID: routeID, Source: "gov-registry", Confidence: 1, ObservedAt: time.Now(), Channel: model.ChannelLocalFile},
 	} {
 		if err := m.SaveProvenance(ctx, p); err != nil {
 			t.Fatal(err)

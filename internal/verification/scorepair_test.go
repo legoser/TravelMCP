@@ -18,12 +18,12 @@ func TestTrustMatrix(t *testing.T) {
 		a, b string
 		want float64
 	}{
-		{"mintrans", "mintrans", 0.6},
+		{"gov-registry", "gov-registry", 0.6},
 		{"yandex", "yandex", 0.6},
 		{"osm", "motis", 0.6},
 		{"osm", "yandex", 1},
-		{"osm", "mintrans", 1},
-		{"mintrans", "yandex", 1},
+		{"osm", "gov-registry", 1},
+		{"gov-registry", "yandex", 1},
 		{"seed", "osm", 0.4},
 		{"seed", "seed", 0.4},
 		{"legacy", "osm", 0.7},
@@ -42,7 +42,7 @@ func TestTrustMatrix(t *testing.T) {
 
 func TestRenormalizeNullGeom(t *testing.T) {
 	p := testParams()
-	a := PairItem{Name: "Кемерово автовокзал", Settlement: "кемерово", Source: "mintrans"}
+	a := PairItem{Name: "Кемерово автовокзал", Settlement: "кемерово", Source: "gov-registry"}
 	b := PairItem{Name: "Кемерово автовокзал", Settlement: "кемерово", Source: "osm"}
 	s := ScorePair(a, b, model.DensityRural, p)
 	if s.Value != 1 {
@@ -52,7 +52,7 @@ func TestRenormalizeNullGeom(t *testing.T) {
 
 func TestUrbanNullGeomNeverVerified(t *testing.T) {
 	p := testParams()
-	a := PairItem{Name: "Кемерово автовокзал", Settlement: "кемерово", Source: "mintrans"}
+	a := PairItem{Name: "Кемерово автовокзал", Settlement: "кемерово", Source: "gov-registry"}
 	b := PairItem{Name: "Кемерово автовокзал", Lat: ptr(55.34), Lon: ptr(86.06), Settlement: "кемерово", Source: "osm"}
 	s := ScorePair(a, b, model.DensityUrban, p)
 	if s.GuardOK {
@@ -66,7 +66,7 @@ func TestUrbanNullGeomNeverVerified(t *testing.T) {
 
 func TestRuralNullGeomVerified(t *testing.T) {
 	p := testParams()
-	a := PairItem{Name: "Кемерово автовокзал", Settlement: "кемерово", Source: "mintrans"}
+	a := PairItem{Name: "Кемерово автовокзал", Settlement: "кемерово", Source: "gov-registry"}
 	b := PairItem{Name: "Кемерово автовокзал", Lat: ptr(55.34), Lon: ptr(86.06), Settlement: "кемерово", Source: "osm"}
 	idx, d, _ := MatchStopToTerminal(a, []PairItem{b}, model.DensityRural, p)
 	if idx != 0 || d != DecisionVerified {
@@ -76,8 +76,8 @@ func TestRuralNullGeomVerified(t *testing.T) {
 
 func TestSameVoiceRuralNullGeomNotVerified(t *testing.T) {
 	p := testParams()
-	a := PairItem{Name: "Кемерово автовокзал", Settlement: "кемерово", Source: "mintrans"}
-	b := PairItem{Name: "Кемерово автовокзал", Settlement: "кемерово", Source: "mintrans"}
+	a := PairItem{Name: "Кемерово автовокзал", Settlement: "кемерово", Source: "gov-registry"}
+	b := PairItem{Name: "Кемерово автовокзал", Settlement: "кемерово", Source: "gov-registry"}
 	_, d, _ := MatchStopToTerminal(a, []PairItem{b}, model.DensityRural, p)
 	if d == DecisionVerified {
 		t.Fatalf("same-voice rural null-geom must not verify, got %v", d)
@@ -86,7 +86,7 @@ func TestSameVoiceRuralNullGeomNotVerified(t *testing.T) {
 
 func TestAmbiguousTwins(t *testing.T) {
 	p := testParams()
-	a := PairItem{Name: "Кемерово автовокзал", Lat: ptr(55.34), Lon: ptr(86.06), Settlement: "кемерово", Source: "mintrans"}
+	a := PairItem{Name: "Кемерово автовокзал", Lat: ptr(55.34), Lon: ptr(86.06), Settlement: "кемерово", Source: "gov-registry"}
 	b := PairItem{Name: "Кемерово автовокзал", Lat: ptr(55.34), Lon: ptr(86.06), Settlement: "кемерово", Source: "osm"}
 	_, d, _ := MatchStopToTerminal(a, []PairItem{b, b}, model.DensityUrban, p)
 	if d != DecisionDuplicateAmbiguous {
@@ -98,7 +98,7 @@ func TestCodeMatchStrongest(t *testing.T) {
 	p := testParams()
 	a := PairItem{
 		Name:   "ОП ЛПК",
-		Source: "mintrans",
+		Source: "gov-registry",
 		Codes:  []model.AdaptedIdentifier{{System: "yandex", CodeType: "yandex_code", Code: "999"}},
 	}
 	b := PairItem{
@@ -120,7 +120,7 @@ func TestCodeMatchStrongest(t *testing.T) {
 
 func TestEmptyCandidates(t *testing.T) {
 	p := testParams()
-	a := PairItem{Name: "Кемерово автовокзал", Source: "mintrans"}
+	a := PairItem{Name: "Кемерово автовокзал", Source: "gov-registry"}
 	idx, d, _ := MatchStopToTerminal(a, nil, model.DensityUrban, p)
 	if idx != -1 || d != DecisionRejected {
 		t.Fatalf("want rejected/-1, got %v idx %d", d, idx)

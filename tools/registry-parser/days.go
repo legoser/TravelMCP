@@ -1,4 +1,4 @@
-package mintrans
+package main
 
 import (
 	"fmt"
@@ -13,6 +13,7 @@ var weekdayNum = map[string]int{
 }
 
 var cellTimeRe = regexp.MustCompile(`^(\d{1,2}):(\d{2})(?:\s*\(([^)]*)\))?$`)
+var timeRe = regexp.MustCompile(`^(\d{1,2}):(\d{2})`)
 
 func parseDayToken(tok string) (int, bool) {
 	n, ok := weekdayNum[strings.ToLower(strings.TrimSpace(tok))]
@@ -63,6 +64,19 @@ func ParseCellTime(s string) (mins int, days []int, hasDays bool, err error) {
 		return 0, nil, false, fmt.Errorf("время %q: неизвестные дни %q", s, m[3])
 	}
 	return h*60 + mm, d, true, nil
+}
+
+func parseTimeMinutes(s string) (int, bool) {
+	m := timeRe.FindStringSubmatch(strings.TrimSpace(s))
+	if m == nil {
+		return 0, false
+	}
+	h, _ := strconv.Atoi(m[1])
+	min, _ := strconv.Atoi(m[2])
+	if h < 0 || h > 23 || min < 0 || min > 59 {
+		return 0, false
+	}
+	return h*60 + min, true
 }
 
 type BlockDays struct {
@@ -155,17 +169,6 @@ func normWeekdays(in []int) []int {
 		return nil
 	}
 	return out
-}
-
-func FormatWeekdays(days []int) string {
-	if len(days) == 0 {
-		return ""
-	}
-	parts := make([]string, 0, len(days))
-	for _, n := range days {
-		parts = append(parts, strconv.Itoa(n))
-	}
-	return strings.Join(parts, ",")
 }
 
 func parseWeekdays(s string) []int {

@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strconv"
 
-	"travelmcp/internal/adapters/mintrans"
 	"travelmcp/internal/geo"
 	"travelmcp/internal/model"
 	"travelmcp/internal/support/namesim"
@@ -137,7 +136,7 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 	logger = logger.With("step", "attach_trips", "source", in.Source)
 	source := in.Source
 	if source == "" {
-		source = "mintrans"
+		return rep, fmt.Errorf("sync attach: source обязателен (вход flat-формата meta.source)")
 	}
 	threshold := in.ChurnThreshold
 	if threshold <= 0 {
@@ -158,12 +157,11 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 		if err := ctx.Err(); err != nil {
 			return rep, err
 		}
-		routeNK := ft.RouteReg
-		routeSynthetic := false
-		if !in.TrustRouteNK {
-			routeNK = mintrans.SyntheticKeyForRoute(ft.RouteReg, ft.RouteFrom, ft.RouteTo, ft.CarrierINN)
-			routeSynthetic = true
+		routeNK := ft.RouteNK
+		if routeNK == "" {
+			routeNK = ft.RouteReg
 		}
+		routeSynthetic := routeNK != ft.RouteReg
 		tripNK := routeNK + "|" + ft.Direction + ":" + strconv.FormatInt(ft.ServiceID, 10) + ":" + strconv.Itoa(ft.Run)
 		// В diff против канона (§5.3) входят только промоутнутые рейсы:
 		// staged/dead в каноне не живут, их «добавление» не churn.
@@ -292,13 +290,9 @@ func PairItemFromTerminal(t AttachTerminal) verification.PairItem {
 	}
 }
 
-func StopCodes(source, opCode string) []model.AdaptedIdentifier {
-	if source == "mintrans" && opCode != "" {
-		return []model.AdaptedIdentifier{{System: "mintrans", CodeType: "op_reg", Code: opCode}}
-	}
-	return nil
-}
-
+// PairItemFromStop — стоп flat-формата: коды приходят от коннектора
+// в FlatStop.Codes (конвейер не знает, как называется тип кода и
+// из какой он системы).
 func PairItemFromStop(name string, lat, lon *float64, settlement, source string, codes []model.AdaptedIdentifier) verification.PairItem {
 	return verification.PairItem{
 		Name: name, Lat: lat, Lon: lon,
@@ -320,12 +314,12 @@ func matchStops(ft model.FlatTrip, idx *matchIndex, source string, classFor func
 	firstTerminal := int64(0)
 	lastStop := len(ft.Stops) - 1
 	for seq, s := range ft.Stops {
-		pairCodes := StopCodes(source, s.OpCode)
+		pairCodes := s.Codes
 		stop := PairItemFromStop(s.Name, s.Lat, s.Lon, namesim.ExtractSettlement(s.Name), source, pairCodes)
 		class := classFor(s.Region)
 		params := paramsFor(class)
 
-		pool := idx.candidates(s, source)
+		pool := idx.candidates(s)
 		cands := make([]verification.PairItem, 0, len(pool))
 		poolIdx := make([]int, 0, len(pool))
 		for _, ti := range pool {

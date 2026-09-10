@@ -21,7 +21,7 @@ func TestPersistMatchScoreMethodRoundTrip(t *testing.T) {
 		Promoted: []PromotableTrip{{
 			RouteNK: "42.03.001", TripNK: "42.03.001|forward:1:1", RouteReg: "42.03.001",
 			Direction: "forward", ServiceID: 1, Run: 1,
-			IsSyntheticKey: true, WinnerSource: "mintrans:winter", WinnerPeriod: "winter",
+			IsSyntheticKey: true, WinnerSource: testSource + ":winter", WinnerPeriod: "winter",
 			Carrier: "ТП",
 			StopTimes: []MatchedStopTime{
 				{Seq: 0, TerminalID: 11, StopID: "a", ArrivalS: 36000, DepartureS: 36000, MatchScore: 0.95, MatchMethod: "scorepair"},
@@ -29,7 +29,7 @@ func TestPersistMatchScoreMethodRoundTrip(t *testing.T) {
 			},
 		}},
 	}
-	if _, err := PersistAttachReport(ctx, ms, rep, "mintrans", slog.Default()); err != nil {
+	if _, err := PersistAttachReport(ctx, ms, rep, testSource, slog.Default()); err != nil {
 		t.Fatalf("persist: %v", err)
 	}
 
@@ -74,18 +74,19 @@ func TestMatchStopsFillsScoreMethod(t *testing.T) {
 	latB, lonB := 55.5, 86.5
 	terms := []AttachTerminal{
 		{ID: 1, Name: "Альфа", Lat: &latA, Lon: &lonA, Settlement: "альфа", Source: "osm", GeomFinalized: true,
-			Codes: []model.AdaptedIdentifier{{System: "mintrans", CodeType: "op_reg", Code: "op77"}}},
+			Codes: []model.AdaptedIdentifier{{System: testSource, CodeType: "op_reg", Code: "op77"}}},
 		{ID: 2, Name: "Бета", Lat: &latB, Lon: &lonB, Settlement: "бета", Source: "osm", GeomFinalized: true},
 	}
 	trips := []model.FlatTrip{{
 		RouteReg: "42.04.001", Direction: "forward", ServiceID: 1, Period: "winter",
 		Stops: []model.FlatStop{
 			{StopID: "a", Name: "Альфа", Region: "42", Lat: &latA, Lon: &lonA, ArrMin: intPtr(600), DepMin: intPtr(600)},
-			{StopID: "b", Name: "Бета", Region: "42", Lat: &latB, Lon: &lonB, ArrMin: intPtr(700), DepMin: intPtr(700), OpCode: "op77"},
+			{StopID: "b", Name: "Бета", Region: "42", Lat: &latB, Lon: &lonB, ArrMin: intPtr(700), DepMin: intPtr(700),
+				Codes: []model.AdaptedIdentifier{{System: testSource, CodeType: "op_reg", Code: "op77"}}},
 		},
 	}}
 	idx := buildMatchIndex(terms)
-	matched, _, _, unmatched := matchStops(trips[0], idx, "mintrans",
+	matched, _, _, unmatched := matchStops(trips[0], idx, testSource,
 		func(string) model.DensityClass { return model.DensityRural }, attachParamsFor, slog.Default())
 	if len(unmatched) != 0 || len(matched) != 2 {
 		t.Fatalf("matched=%d unmatched=%v", len(matched), unmatched)

@@ -165,7 +165,6 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 	mux.Handle("POST /api/v1/jobs", s.auth(http.HandlerFunc(s.handleEnqueueJob), "admin"))
 	mux.Handle("GET /api/v1/quotas", s.auth(http.HandlerFunc(s.handleListQuotas), "admin"))
 	mux.Handle("POST /api/v1/import/gtfs", s.auth(http.HandlerFunc(s.handleImportGTFS), "admin"))
-	mux.Handle("POST /api/v1/import/mintrans", s.auth(http.HandlerFunc(s.handleSyncMintrans), "admin"))
 	mux.Handle("POST /api/v1/import/rail", s.auth(http.HandlerFunc(s.handleSyncRail), "admin"))
 	mux.Handle("GET /api/v1/admin/imports", s.auth(http.HandlerFunc(s.handleAdminImports), "admin"))
 	mux.Handle("GET /api/v1/admin/logs", s.auth(http.HandlerFunc(s.handleAdminImportLogs), "admin"))
@@ -174,6 +173,9 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 	mux.Handle("GET /api/v1/admin/terminals/liveness", s.auth(http.HandlerFunc(s.handleAdminListTerminalsLiveness), "admin"))
 	mux.Handle("GET /api/v1/admin/terminals/{id}/card", s.auth(http.HandlerFunc(s.handleAdminTerminalCard), "admin"))
 	mux.Handle("GET /api/v1/admin/terminals/{id}/schedule", s.auth(http.HandlerFunc(s.handleAdminTerminalSchedule), "admin"))
+	mux.Handle("GET /api/v1/admin/identifier-schemes", s.auth(http.HandlerFunc(s.handleListIdentifierSchemes), "admin"))
+	mux.Handle("PUT /api/v1/admin/identifier-schemes", s.auth(http.HandlerFunc(s.handleUpsertIdentifierScheme), "admin"))
+	mux.Handle("DELETE /api/v1/admin/identifier-schemes/{code}", s.auth(http.HandlerFunc(s.handleDeleteIdentifierScheme), "admin"))
 	mux.Handle("PUT /api/v1/admin/terminals/{id}", s.auth(http.HandlerFunc(s.handleAdminUpdateTerminal), "admin"))
 	mux.Handle("GET /api/v1/admin/routes", s.auth(http.HandlerFunc(s.handleAdminListRoutes), "admin"))
 	mux.Handle("GET /api/v1/admin/trips", s.auth(http.HandlerFunc(s.handleAdminListTrips), "admin"))
@@ -643,10 +645,6 @@ func (s *Server) handleImportGTFS(w http.ResponseWriter, r *http.Request) {
 	}
 	id, _ := s.store.EnqueueJob(r.Context(), store.JobRow{Type: "import_gtfs", Payload: "{}"})
 	writeJSONResponse(w, http.StatusCreated, map[string]any{"id": id, "type": "import_gtfs"})
-}
-
-func (s *Server) handleSyncMintrans(w http.ResponseWriter, r *http.Request) {
-	writeJSONResponse(w, http.StatusConflict, map[string]any{"error": "sync_mintrans отключён: legacy-импорт вырезан, канон пишут skeleton-sync + trips-sync"})
 }
 
 func (s *Server) handleSyncRail(w http.ResponseWriter, r *http.Request) {
