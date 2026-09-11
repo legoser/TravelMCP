@@ -223,6 +223,9 @@ type Route struct {
 	ShortName  string `json:"short_name"`
 	LongName   string `json:"long_name"`
 	Mode       Mode   `json:"mode"`
+	// CarrierID — перевозчик маршрута (канон carriers.id): контакты
+	// для fuzzy-легов (§5.4).
+	CarrierID string `json:"carrier_id,omitempty"`
 }
 
 // StopTime — остановка рейса; времена — секунды от 00:00 UTC дня dayBase.
@@ -235,6 +238,9 @@ type StopTime struct {
 	PickupType    int `json:"pickup_type"`
 	DropOffType   int `json:"drop_off_type"`
 	IsProvisional bool
+	// IsFuzzy — время ориентировочное (интерполировано, источника нет):
+	// лег получает пометку «время уточнять у перевозчика».
+	IsFuzzy bool
 }
 
 // Service — календарь рейсов (будни/сезон). Даты — UTC, в БД — INTEGER YYYYMMDD.
@@ -270,6 +276,10 @@ type Carrier struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	INN  string `json:"inn,omitempty"`
+	// Контакты для fuzzy-легов (§5.4): «время уточнять у перевозчика».
+	Phone   string `json:"phone,omitempty"`
+	InfoURL string `json:"info_url,omitempty"`
+	Address string `json:"address,omitempty"`
 }
 
 // Trip — конкретный рейс; календарь вынесен в Service via ServiceID FK.
@@ -300,6 +310,9 @@ type Connection struct {
 	Departure  time.Time
 	Arrival    time.Time
 	DistanceM  int `json:"distance_m"`
+	// Fuzzy — перегон из интерполированного времени (§5.4): лег
+	// получает TimeHint «время уточнять у перевозчика».
+	Fuzzy bool `json:"fuzzy,omitempty"`
 }
 
 type Zone struct {
@@ -576,6 +589,9 @@ type Leg struct {
 	Arrival      time.Time `json:"arrival"`
 	SelfProvided bool      `json:"self_provided"`
 	Cost         Cost      `json:"cost"`
+	// TimeHint — нестандартное время рейса (fuzzy): показываем
+	// «время уточнять у перевозчика» + контакты (§5.4 fallback).
+	TimeHint string `json:"time_hint,omitempty"`
 }
 
 type Journey struct {

@@ -80,6 +80,95 @@ func TestBackboneEndsRequired(t *testing.T) {
 	}
 }
 
+// Межгород с редким скелетом: «Юрга—Кемерово» 2/16 заматченных стопов
+// (только конечные автовокзалы) — обе конечные точки verified →
+// backbone-промоут с mid_gaps независимо от доли 2/3 (A2): перегоны
+// через пропуск валидируются ниже на эффективной последовательности.
+func TestBackboneIntercityEndsPromoteLowShare(t *testing.T) {
+	latA, lonA := 55.72, 84.88 // Юрга
+	latB, lonB := 55.34, 86.06 // Кемерово (~120 км)
+	terms := []AttachTerminal{
+		{ID: 1, Name: "Юрга, автовокзал", Lat: &latA, Lon: &lonA, Settlement: "юрга", Transport: "bus", Source: "osm", GeomFinalized: true},
+		{ID: 2, Name: "Кемерово, автовокзал", Lat: &latB, Lon: &lonB, Settlement: "кемерово", Transport: "bus", Source: "osm", GeomFinalized: true},
+	}
+	stops := []model.FlatStop{
+		{StopID: "end_a", Name: "Юрга, автовокзал", Region: "42", Lat: &latA, Lon: &lonA, ArrMin: intPtr(600), DepMin: intPtr(600)},
+	}
+	for i := 1; i <= 14; i++ {
+		// промежуточные деревни без терминалов в скелете
+		stops = append(stops, model.FlatStop{
+			StopID: "mid", Name: "Деревня без терминала", Region: "42",
+			ArrMin: intPtr(600 + i*20), DepMin: intPtr(600 + i*20),
+		})
+	}
+	stops = append(stops, model.FlatStop{
+		StopID: "end_b", Name: "Кемерово, автовокзал", Region: "42", Lat: &latB, Lon: &lonB,
+		ArrMin: intPtr(900), DepMin: intPtr(900),
+	})
+	trips := []model.FlatTrip{{
+		RouteReg: "42.07.001", Direction: "forward", ServiceID: 1, Period: "winter",
+		Stops: stops,
+	}}
+	rep, err := AttachTrips(context.Background(), AttachInput{
+		Trips: trips, Terminals: terms, TrustRouteNK: true, Source: testSource,
+		ChurnThreshold: 0.2, MaxSpeedKmh: 200, ParamsFor: attachParamsFor,
+		ClassForRegion: func(string) model.DensityClass { return model.DensityRural },
+	})
+	if err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	if len(rep.Promoted) != 1 {
+		t.Fatalf("межгород 2/16 с verified-концами обязан промоутиться: promoted=%d staged=%+v dead=%d",
+			len(rep.Promoted), rep.Staged, len(rep.Dead))
+	}
+	p := rep.Promoted[0]
+	if len(p.StopTimes) != 2 || p.StopTimes[0].TerminalID != 1 || p.StopTimes[1].TerminalID != 2 {
+		t.Fatalf("только конечные в stop_times: %+v", p.StopTimes)
+	}
+	if rep.MidGaps != 14 || rep.GappedPromoted != 1 {
+		t.Fatalf("mid_gaps=14 gapped=1, got %d/%d", rep.MidGaps, rep.GappedPromoted)
+	}
+}
+
+// Контр-кейс A2: один конец заматчен, второй нет, доля < 2/3 —
+// интерcity-промоут не срабатывает, трип уходит в staging.
+func TestBackboneIntercityOneEndStaged(t *testing.T) {
+	latA, lonA := 55.72, 84.88
+	terms := []AttachTerminal{
+		{ID: 1, Name: "Юрга, автовокзал", Lat: &latA, Lon: &lonA, Settlement: "юрга", Transport: "bus", Source: "osm", GeomFinalized: true},
+	}
+	stops := []model.FlatStop{
+		{StopID: "end_a", Name: "Юрга, автовокзал", Region: "42", Lat: &latA, Lon: &lonA, ArrMin: intPtr(600), DepMin: intPtr(600)},
+	}
+	for i := 1; i <= 14; i++ {
+		stops = append(stops, model.FlatStop{
+			StopID: "mid", Name: "Деревня без терминала", Region: "42",
+			ArrMin: intPtr(600 + i*20), DepMin: intPtr(600 + i*20),
+		})
+	}
+	// конечный стоп без терминала в скелете
+	stops = append(stops, model.FlatStop{
+		StopID: "end_b", Name: "Кемерово, автовокзал", Region: "42",
+		ArrMin: intPtr(900), DepMin: intPtr(900),
+	})
+	trips := []model.FlatTrip{{
+		RouteReg: "42.08.001", Direction: "forward", ServiceID: 1, Period: "winter",
+		Stops: stops,
+	}}
+	rep, err := AttachTrips(context.Background(), AttachInput{
+		Trips: trips, Terminals: terms, TrustRouteNK: true, Source: testSource,
+		ChurnThreshold: 0.2, MaxSpeedKmh: 200, ParamsFor: attachParamsFor,
+		ClassForRegion: func(string) model.DensityClass { return model.DensityRural },
+	})
+	if err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	if len(rep.Promoted) != 0 || len(rep.Staged) != 1 {
+		t.Fatalf("один конец без верификации при доле 1/15 — staging: promoted=%d staged=%d",
+			len(rep.Promoted), len(rep.Staged))
+	}
+}
+
 // Валидаторы на склеенном перегоне: дырка в середине → перегон А→Г
 // обязан пересчитаться как один (30 мин на ~40км — в норме; если бы
 // валидатор считал старую структуру — ложный overspeed не появлялся бы,

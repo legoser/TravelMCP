@@ -272,6 +272,7 @@ func persistPromotedTrip(ctx context.Context, db store.Store, ts TripsStore, p P
 				TripID: tripID, StopID: stopID, Seq: m.Seq,
 				Arrival: m.ArrivalS, Departure: m.DepartureS,
 				IsProvisional: m.IsProvisional,
+				IsFuzzy:       m.IsFuzzy,
 				MatchScore:    matchScore,
 				MatchMethod:   m.MatchMethod,
 			}); err != nil {

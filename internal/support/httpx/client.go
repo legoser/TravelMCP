@@ -19,7 +19,18 @@ type Client struct {
 
 func New(logger *slog.Logger, module string) *Client {
 	return &Client{
-		base:   &http.Client{Timeout: 10 * time.Second},
+		base:   &http.Client{Timeout: 90 * time.Second},
+		logger: logger,
+		module: module,
+	}
+}
+
+// NewWithTimeout — клиент с нестандартным общим таймаутом (перегруженные
+// публичные API вроде Overpass отвечают десятки секунд при заявленных
+// в QL таймаутах 30–60s; прежний хардкод 10s рвал запрос раньше ответа).
+func NewWithTimeout(logger *slog.Logger, module string, timeout time.Duration) *Client {
+	return &Client{
+		base:   &http.Client{Timeout: timeout},
 		logger: logger,
 		module: module,
 	}

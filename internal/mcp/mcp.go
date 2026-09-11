@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -30,12 +31,25 @@ type App struct {
 
 	// Кэш сети из Store по дню: LoadNetwork на живой БД читает
 	// миллионы stop_times (GTFS-СПб — 3.5M), построчный запрос на каждый
-	// find_route недопустим. Сеть на день иммутабельна в рамках запросов.
+	// find_route недопустим. Сеть на день иммутабельна в рамках запросов,
+	// но только пока не изменился канон (canonVersion): сбор
+	// рейсов/скелета, правка терминалов — кэш сбрасывается.
 	netMu  sync.RWMutex
 	netDay string
+	netV   uint64
 	net    *model.Network
 	netErr error
 }
+
+// canonVersion — пакет-уровневый счётчик изменений канона: бампается
+// после сборов скелета/рейсов, правок терминалов, merge/reset. Кэш сети
+// в App живёт, пока версия не изменилась — без сквозной проводки
+// колбеков через worker/server.
+var canonVersion atomic.Uint64
+
+// BumpCanonVersion — сигнализировать, что канон изменился: следующий
+// find_route перечитает сеть из Store.
+func BumpCanonVersion() { canonVersion.Add(1) }
 
 func New(plan *planner.Planner, registry *providers.Registry) *App {
 	return NewWithStore(plan, registry, nil, nil)
@@ -269,8 +283,68 @@ func (a *App) handleFindRoute(ctx context.Context, req mcp.CallToolRequest) (*mc
 		a.logger.InfoContext(ctx, "find_route success", "departure", journey.Departure, "arrival", journey.Arrival, "legs", len(journey.Legs), "transfers", journey.Transfers, "alternatives", len(journey.Alternatives))
 		a.logger.DebugContext(ctx, "journey legs", "legs", journey.Legs)
 	}
+	enrichFuzzyLegs(journey, net)
+	normalizeJourneyTimezones(journey)
 
 	return mcp.NewToolResultJSON(journey)
+}
+
+// normalizeJourneyTimezones — все времена легов/джорни в единый вид
+// RFC3339 UTC: планировщик собирает леги из разных зон (walk — зона
+// запроса, transit — dayBase UTC), смешение "+07:00"/"Z" в одном ответе
+// путает потребителей (issue #7).
+func normalizeJourneyTimezones(j *model.Journey) {
+	if j == nil {
+		return
+	}
+	for i := range j.Legs {
+		j.Legs[i].Departure = j.Legs[i].Departure.UTC()
+		j.Legs[i].Arrival = j.Legs[i].Arrival.UTC()
+	}
+	j.Departure = j.Departure.UTC()
+	j.Arrival = j.Arrival.UTC()
+	for a := range j.Alternatives {
+		normalizeJourneyTimezones(&j.Alternatives[a])
+	}
+}
+
+// enrichFuzzyLegs — контакты перевозчика в TimeHint fuzzy-легов
+// (§5.4 fallback: время интерполировано, показываем «уточняйте у
+// перевозчика» + телефон/сайт/адрес из канона).
+func enrichFuzzyLegs(j *model.Journey, net *model.Network) {
+	if j == nil {
+		return
+	}
+	for i := range j.Legs {
+		if j.Legs[i].TimeHint == "" {
+			continue
+		}
+		if r := net.Routes[j.Legs[i].RouteID]; r != nil && r.CarrierID != "" {
+			if c := net.Carriers[r.CarrierID]; c != nil {
+				contact := c.Phone
+				if c.InfoURL != "" {
+					if contact != "" {
+						contact += ", " + c.InfoURL
+					} else {
+						contact = c.InfoURL
+					}
+				}
+				if c.Address != "" && contact == "" {
+					contact = c.Address
+				}
+				if contact != "" {
+					j.Legs[i].TimeHint = "время ориентировочное — уточняйте у перевозчика (" + c.Name + ": " + contact + ")"
+				} else {
+					j.Legs[i].TimeHint = "время ориентировочное — уточняйте у перевозчика (" + c.Name + ")"
+				}
+				continue
+			}
+		}
+		j.Legs[i].TimeHint = "время ориентировочное — уточняйте у перевозчика"
+	}
+	for a := range j.Alternatives {
+		enrichFuzzyLegs(&j.Alternatives[a], net)
+	}
 }
 
 func (a *App) resolvePointWithPlace(ctx context.Context, args map[string]any, kind string) (model.Coords, *string, error) {
@@ -327,21 +401,28 @@ func (a *App) network() (*model.Network, error) {
 	return a.networkForDay(context.Background(), time.Now())
 }
 
+// InvalidateNetworkCache — канон изменился (сбор скелета/рейсов,
+// правка терминалов): следующий find_route перечитает LoadNetwork.
+func (a *App) InvalidateNetworkCache() {
+	BumpCanonVersion()
+}
+
 func (a *App) networkForDay(ctx context.Context, day time.Time) (*model.Network, error) {
 	if a.logger != nil {
 		a.logger.DebugContext(ctx, "networkForDay", "day", day, "store", a.store != nil, "providers", len(a.registry.List()))
 	}
 	dayKey := day.UTC().Truncate(24 * time.Hour).Format("2006-01-02")
+	cv := canonVersion.Load()
 	a.netMu.RLock()
-	if a.net != nil && a.netDay == dayKey {
+	if a.net != nil && a.netDay == dayKey && a.netV == cv {
 		n := a.net
 		a.netMu.RUnlock()
 		return n, nil
 	}
 	a.netMu.RUnlock()
 	if a.store != nil {
-		ids := make([]string, 0, len(a.registry.List())+1)
-		ids = append(ids, "gov-registry")
+		ids := make([]string, 0, len(a.registry.List())+2)
+		ids = append(ids, "gov-registry", "yandex")
 		for _, p := range a.registry.List() {
 			ids = append(ids, p.ID())
 		}
@@ -357,6 +438,7 @@ func (a *App) networkForDay(ctx context.Context, day time.Time) (*model.Network,
 			}
 			a.netMu.Lock()
 			a.netDay, a.net, a.netErr = dayKey, n, nil
+			a.netV = canonVersion.Load()
 			a.netMu.Unlock()
 			return n, nil
 		} else if a.logger != nil {

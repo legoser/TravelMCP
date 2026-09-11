@@ -15,6 +15,10 @@ type FlatStop struct {
 	Lon    *float64            `json:"lon,omitempty"`
 	ArrMin *int                `json:"arr_min,omitempty"`
 	DepMin *int                `json:"dep_min,omitempty"`
+	// IsFuzzy — время ориентировочное (нет в источнике, интерполировано
+	// по соседям при промоушене): рейс маршрутизируем, пассажиру —
+	// «время уточнять у перевозчика» (план §5.4 fallback).
+	IsFuzzy bool `json:"is_fuzzy,omitempty"`
 }
 
 type FlatTrip struct {

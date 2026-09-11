@@ -163,6 +163,7 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 	mux.Handle("GET /api/v1/review/export.csv", s.auth(http.HandlerFunc(s.handleReviewExport), "mcp:read"))
 	mux.Handle("GET /api/v1/jobs", s.auth(http.HandlerFunc(s.handleListJobs), "admin"))
 	mux.Handle("POST /api/v1/jobs", s.auth(http.HandlerFunc(s.handleEnqueueJob), "admin"))
+	mux.Handle("POST /api/v1/jobs/{id}/reset", s.auth(http.HandlerFunc(s.handleResetJob), "admin"))
 	mux.Handle("GET /api/v1/quotas", s.auth(http.HandlerFunc(s.handleListQuotas), "admin"))
 	mux.Handle("POST /api/v1/import/gtfs", s.auth(http.HandlerFunc(s.handleImportGTFS), "admin"))
 	mux.Handle("POST /api/v1/import/rail", s.auth(http.HandlerFunc(s.handleSyncRail), "admin"))
@@ -177,10 +178,18 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 	mux.Handle("PUT /api/v1/admin/identifier-schemes", s.auth(http.HandlerFunc(s.handleUpsertIdentifierScheme), "admin"))
 	mux.Handle("DELETE /api/v1/admin/identifier-schemes/{code}", s.auth(http.HandlerFunc(s.handleDeleteIdentifierScheme), "admin"))
 	mux.Handle("PUT /api/v1/admin/terminals/{id}", s.auth(http.HandlerFunc(s.handleAdminUpdateTerminal), "admin"))
+	mux.Handle("POST /api/v1/admin/terminals/merge", s.auth(http.HandlerFunc(s.handleAdminMergeTerminals), "admin"))
+	mux.Handle("POST /api/v1/admin/canon/reset", s.auth(http.HandlerFunc(s.handleAdminCanonReset), "admin"))
+	mux.Handle("DELETE /api/v1/admin/terminals/{id}", s.auth(http.HandlerFunc(s.handleAdminDeleteTerminal), "admin"))
 	mux.Handle("GET /api/v1/admin/routes", s.auth(http.HandlerFunc(s.handleAdminListRoutes), "admin"))
 	mux.Handle("GET /api/v1/admin/trips", s.auth(http.HandlerFunc(s.handleAdminListTrips), "admin"))
 	mux.Handle("GET /api/v1/admin/trips/{id}", s.auth(http.HandlerFunc(s.handleAdminGetTrip), "admin"))
 	mux.Handle("POST /api/v1/admin/external-call", s.auth(http.HandlerFunc(s.handleAdminExternalCall), "admin"))
+	mux.Handle("POST /api/v1/collect/skeleton", s.auth(http.HandlerFunc(s.handleCollectSkeleton), "admin"))
+	mux.Handle("POST /api/v1/collect/trips", s.auth(http.HandlerFunc(s.handleCollectTrips), "admin"))
+	mux.Handle("GET /api/v1/collect/regions", s.auth(http.HandlerFunc(s.handleCollectRegions), "admin"))
+	mux.Handle("GET /api/v1/sync/runs", s.auth(http.HandlerFunc(s.handleListSyncRuns), "admin"))
+	mux.Handle("GET /api/v1/sync/runs/{id}", s.auth(http.HandlerFunc(s.handleGetSyncRun), "admin"))
 	mux.Handle("POST /api/v1/route", s.auth(http.HandlerFunc(s.handleRoute), "mcp:read"))
 	adminFS, _ := fs.Sub(webFS, "web")
 	mux.Handle("GET /admin", http.HandlerFunc(s.handleAdminPage))
@@ -597,6 +606,30 @@ func (s *Server) handleEnqueueJob(w http.ResponseWriter, r *http.Request) {
 	writeJSONResponse(w, http.StatusCreated, map[string]any{"id": id, "type": req.Type})
 }
 
+func (s *Server) handleResetJob(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
+		return
+	}
+	resetter, ok := s.store.(interface {
+		ResetJob(ctx context.Context, id int64) error
+	})
+	if !ok {
+		writeJSONResponse(w, http.StatusNotImplemented, map[string]any{"error": "reset not supported by store"})
+		return
+	}
+	jid, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
+		return
+	}
+	if err := resetter.ResetJob(r.Context(), jid); err != nil {
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSONResponse(w, http.StatusOK, map[string]any{"id": jid, "state": "pending"})
+}
+
 func (s *Server) handleListQuotas(w http.ResponseWriter, r *http.Request) {
 	if s.store == nil {
 		writeJSONResponse(w, http.StatusOK, []any{})
@@ -757,9 +790,27 @@ func (s *Server) handleAdminUpdateTerminal(w http.ResponseWriter, r *http.Reques
 		Names      map[string]string `json:"names"`
 		Settlement string            `json:"settlement"`
 		Approve    bool              `json:"approve"`
+		Unapprove  bool              `json:"unapprove"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSONDecodeError(w, err, s.logger, r.URL.Path)
+		return
+	}
+	if req.Unapprove {
+		unlocker, ok := s.store.(interface {
+			UnlockTerminal(ctx context.Context, id int64, actorID *int64) error
+		})
+		if !ok {
+			writeJSONResponse(w, http.StatusNotImplemented, map[string]any{"error": "unlock not supported by store"})
+			return
+		}
+		if err := unlocker.UnlockTerminal(r.Context(), tid, actorID); err != nil {
+			writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		_ = s.store.WriteAuditLog(r.Context(), actorID, "unlock_terminal", "terminal", &tid, fmt.Sprintf(`{"id":%d}`, tid))
+		mcp.BumpCanonVersion()
+		writeJSONResponse(w, http.StatusOK, map[string]any{"id": tid, "is_locked": false, "unapproved": true})
 		return
 	}
 	if req.Name == "" && len(req.Names) == 0 {
@@ -804,6 +855,7 @@ func (s *Server) handleAdminUpdateTerminal(w http.ResponseWriter, r *http.Reques
 			}
 		}
 		_ = s.store.WriteAuditLog(r.Context(), actorID, "approve_terminal", "terminal", &tid, fmt.Sprintf(`{"name":%q,"lat":%f,"lon":%f}`, req.Name, req.Lat, req.Lon))
+		mcp.BumpCanonVersion()
 		writeJSONResponse(w, http.StatusOK, map[string]any{"id": tid, "is_locked": true, "approved": true, "last_verified_at": now})
 		return
 	}
@@ -823,7 +875,126 @@ func (s *Server) handleAdminUpdateTerminal(w http.ResponseWriter, r *http.Reques
 	}
 	_ = s.store.SaveReviewQueue(r.Context(), model.ReviewQueueEntry{EntityType: "terminal", EntityID: tid, Reason: "conflicts_with_confirmed", Score: 1.0})
 	_ = s.store.WriteAuditLog(r.Context(), actorID, "update_terminal", "terminal", &tid, fmt.Sprintf(`{"name":%q,"lat":%f,"lon":%f}`, req.Name, req.Lat, req.Lon))
+	mcp.BumpCanonVersion()
 	writeJSONResponse(w, http.StatusOK, map[string]any{"id": tid, "is_locked": true})
+}
+
+func (s *Server) handleAdminMergeTerminals(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
+		return
+	}
+	merger, ok := s.store.(interface {
+		MergeTerminals(ctx context.Context, oldID, newID int64, reason string, actorID *int64) error
+	})
+	if !ok {
+		writeJSONResponse(w, http.StatusNotImplemented, map[string]any{"error": "merge not supported by store"})
+		return
+	}
+	user, _ := r.Context().Value(ctxUserKey).(*store.UserRow)
+	actorID := func() *int64 {
+		if user != nil && user.ID != 0 {
+			return &user.ID
+		}
+		return nil
+	}()
+	var req struct {
+		OldID  int64  `json:"old_id"`
+		NewID  int64  `json:"new_id"`
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONDecodeError(w, err, s.logger, r.URL.Path)
+		return
+	}
+	if req.OldID == 0 || req.NewID == 0 || req.OldID == req.NewID {
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "old_id и new_id обязательны и различны"})
+		return
+	}
+	if req.Reason == "" {
+		req.Reason = "manual_merge"
+	}
+	if err := merger.MergeTerminals(r.Context(), req.OldID, req.NewID, req.Reason, actorID); err != nil {
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	_ = s.store.WriteAuditLog(r.Context(), actorID, "merge_terminal", "terminal", &req.NewID, fmt.Sprintf(`{"old_id":%d,"new_id":%d,"reason":%q}`, req.OldID, req.NewID, req.Reason))
+	mcp.BumpCanonVersion()
+	writeJSONResponse(w, http.StatusOK, map[string]any{"old_id": req.OldID, "new_id": req.NewID, "reason": req.Reason})
+}
+
+func (s *Server) handleAdminCanonReset(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
+		return
+	}
+	resetter, ok := s.store.(interface {
+		ResetCanonicalData(ctx context.Context, actorID *int64, reason string) (map[string]int, error)
+	})
+	if !ok {
+		writeJSONResponse(w, http.StatusNotImplemented, map[string]any{"error": "reset not supported by store"})
+		return
+	}
+	var req struct {
+		Confirm string `json:"confirm"`
+		Reason  string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONDecodeError(w, err, s.logger, r.URL.Path)
+		return
+	}
+	if req.Confirm != "RESET" {
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "подтверждение обязательно: {\"confirm\":\"RESET\"} — операция необратимо удаляет терминалы и рейсы"})
+		return
+	}
+	user, _ := r.Context().Value(ctxUserKey).(*store.UserRow)
+	actorID := func() *int64 {
+		if user != nil && user.ID != 0 {
+			return &user.ID
+		}
+		return nil
+	}()
+	counts, err := resetter.ResetCanonicalData(r.Context(), actorID, req.Reason)
+	if err != nil {
+		writeJSONResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	_ = s.store.WriteAuditLog(r.Context(), actorID, "canon_reset", "terminal", nil, fmt.Sprintf(`{"reason":%q,"counts":%v}`, req.Reason, counts))
+	mcp.BumpCanonVersion()
+	writeJSONResponse(w, http.StatusOK, map[string]any{"status": "ok", "deleted": counts})
+}
+
+func (s *Server) handleAdminDeleteTerminal(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
+		return
+	}
+	deleter, ok := s.store.(interface {
+		DeleteTerminal(ctx context.Context, id int64, actorID *int64) error
+	})
+	if !ok {
+		writeJSONResponse(w, http.StatusNotImplemented, map[string]any{"error": "delete not supported by store"})
+		return
+	}
+	user, _ := r.Context().Value(ctxUserKey).(*store.UserRow)
+	actorID := func() *int64 {
+		if user != nil && user.ID != 0 {
+			return &user.ID
+		}
+		return nil
+	}()
+	tid, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
+		return
+	}
+	if err := deleter.DeleteTerminal(r.Context(), tid, actorID); err != nil {
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	_ = s.store.WriteAuditLog(r.Context(), actorID, "delete_terminal", "terminal", &tid, fmt.Sprintf(`{"id":%d}`, tid))
+	mcp.BumpCanonVersion()
+	writeJSONResponse(w, http.StatusOK, map[string]any{"id": tid, "deleted": true})
 }
 
 func (s *Server) listTerminalReviewReasons(ctx context.Context, terminalID int64) ([]string, error) {
@@ -874,8 +1045,13 @@ func (s *Server) handleAdminExternalCall(w http.ResponseWriter, r *http.Request)
 		req.Provider = "yandex"
 	}
 	s.logger.Debug("external-call request", "provider", req.Provider, "query", req.Query, "lat", req.Lat, "lon", req.Lon, "actor", userEmail(user))
-	ok, used, _ := s.store.TryConsumeQuota(r.Context(), req.Provider, store.DefaultQuotaLimit)
+	ok, used, qerr := s.store.TryConsumeQuota(r.Context(), req.Provider, store.DefaultQuotaLimit)
 	s.logger.Debug("quota check", "provider", req.Provider, "ok", ok, "used", used)
+	if qerr != nil {
+		s.logger.Error("quota check failed", "provider", req.Provider, "error", qerr)
+		writeJSONResponse(w, http.StatusInternalServerError, map[string]any{"error": "проверка квоты не удалась: " + qerr.Error(), "provider": req.Provider})
+		return
+	}
 	if !ok {
 		s.logger.Warn("quota exhausted", "provider", req.Provider)
 		writeJSONResponse(w, http.StatusTooManyRequests, map[string]any{"error": "quota exhausted", "provider": req.Provider})

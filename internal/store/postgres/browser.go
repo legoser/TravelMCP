@@ -19,14 +19,14 @@ func (p *PostgresStore) ListRoutesAdmin(ctx context.Context, limit, offset int, 
 	hasQ := q != ""
 	var total int
 	if hasQ {
-		_ = p.pool.QueryRow(ctx, `SELECT count(*) FROM routes r WHERE r.short_name ILIKE '%' || $1 || '%' OR r.long_name ILIKE '%' || $1 || '%' OR r.external_route_code ILIKE '%' || $1 || '%'`, q).Scan(&total)
+		_ = p.pool.QueryRow(ctx, `SELECT count(*) FROM routes r WHERE r.short_name ILIKE '%' || $1 || '%' OR r.long_name ILIKE '%' || $1 || '%' OR r.external_route_code ILIKE '%' || $1 || '%' OR EXISTS (SELECT 1 FROM trips t JOIN stop_times st ON st.trip_id=t.id JOIN stops_canonical sc ON sc.id=st.stop_id LEFT JOIN stop_names sn ON sn.stop_id=sc.id LEFT JOIN terminal_names tn ON tn.terminal_id=sc.terminal_id AND tn.lang='ru' WHERE t.route_id=r.id AND t.valid_to IS NULL AND (coalesce(sn.name, tn.name, '') ILIKE '%' || $1 || '%' OR sc.id::text = $1))`, q).Scan(&total)
 	} else {
 		_ = p.pool.QueryRow(ctx, `SELECT count(*) FROM routes`).Scan(&total)
 	}
 	var rows pgx.Rows
 	var err error
 	if hasQ {
-		rows, err = p.pool.Query(ctx, `SELECT r.id, r.source_provider, r.external_route_code, coalesce(r.short_name,''), coalesce(r.long_name,''), coalesce(r.mode,''), coalesce(c.name_ru,''), to_char(r.valid_from,'YYYY-MM-DD'), to_char(r.valid_to,'YYYY-MM-DD'), (SELECT count(*) FROM trips t WHERE t.route_id=r.id AND t.valid_to IS NULL) FROM routes r LEFT JOIN carriers c ON c.id=r.carrier_id WHERE r.short_name ILIKE '%' || $3 || '%' OR r.long_name ILIKE '%' || $3 || '%' OR r.external_route_code ILIKE '%' || $3 || '%' ORDER BY r.id LIMIT $1 OFFSET $2`, limit, offset, q)
+		rows, err = p.pool.Query(ctx, `SELECT r.id, r.source_provider, r.external_route_code, coalesce(r.short_name,''), coalesce(r.long_name,''), coalesce(r.mode,''), coalesce(c.name_ru,''), to_char(r.valid_from,'YYYY-MM-DD'), to_char(r.valid_to,'YYYY-MM-DD'), (SELECT count(*) FROM trips t WHERE t.route_id=r.id AND t.valid_to IS NULL) FROM routes r LEFT JOIN carriers c ON c.id=r.carrier_id WHERE r.short_name ILIKE '%' || $3 || '%' OR r.long_name ILIKE '%' || $3 || '%' OR r.external_route_code ILIKE '%' || $3 || '%' OR EXISTS (SELECT 1 FROM trips t JOIN stop_times st ON st.trip_id=t.id JOIN stops_canonical sc ON sc.id=st.stop_id LEFT JOIN stop_names sn ON sn.stop_id=sc.id LEFT JOIN terminal_names tn ON tn.terminal_id=sc.terminal_id AND tn.lang='ru' WHERE t.route_id=r.id AND t.valid_to IS NULL AND (coalesce(sn.name, tn.name, '') ILIKE '%' || $3 || '%' OR sc.id::text = $3)) ORDER BY r.id LIMIT $1 OFFSET $2`, limit, offset, q)
 	} else {
 		rows, err = p.pool.Query(ctx, `SELECT r.id, r.source_provider, r.external_route_code, coalesce(r.short_name,''), coalesce(r.long_name,''), coalesce(r.mode,''), coalesce(c.name_ru,''), to_char(r.valid_from,'YYYY-MM-DD'), to_char(r.valid_to,'YYYY-MM-DD'), (SELECT count(*) FROM trips t WHERE t.route_id=r.id AND t.valid_to IS NULL) FROM routes r LEFT JOIN carriers c ON c.id=r.carrier_id ORDER BY r.id LIMIT $1 OFFSET $2`, limit, offset)
 	}
@@ -171,11 +171,11 @@ func (p *PostgresStore) ApproveTerminal(ctx context.Context, terminalID int64, t
 		return errNotImplemented
 	}
 	if tr.Lat != 0 || tr.Lon != 0 {
-		if _, err := p.pool.Exec(ctx, `UPDATE terminals SET geom=ST_SetSRID(ST_MakePoint($2,$3),4326)::geography, last_verified_at=to_timestamp($4), is_locked=true WHERE id=$1`, terminalID, tr.Lon, tr.Lat, tr.LastVerifiedAt); err != nil {
+		if _, err := p.pool.Exec(ctx, `UPDATE terminals SET geom=ST_SetSRID(ST_MakePoint($2,$3),4326)::geography, last_verified_at=$4, is_locked=true WHERE id=$1`, terminalID, tr.Lon, tr.Lat, unixTsOrNull(tr.LastVerifiedAt)); err != nil {
 			return err
 		}
 	} else {
-		if _, err := p.pool.Exec(ctx, `UPDATE terminals SET last_verified_at=to_timestamp($2), is_locked=true WHERE id=$1`, terminalID, tr.LastVerifiedAt); err != nil {
+		if _, err := p.pool.Exec(ctx, `UPDATE terminals SET last_verified_at=$2, is_locked=true WHERE id=$1`, terminalID, unixTsOrNull(tr.LastVerifiedAt)); err != nil {
 			return err
 		}
 	}
@@ -198,13 +198,15 @@ func (p *PostgresStore) ListTerminalsByLiveness(ctx context.Context, limit, offs
 	args := []any{limit, offset}
 	switch dead {
 	case "yes":
-		cond = ` WHERE NOT EXISTS (SELECT 1 FROM stops_canonical sc JOIN stop_times st ON st.stop_id=sc.id WHERE sc.terminal_id=t.id)`
+		cond = ` WHERE t.valid_to IS NULL AND NOT EXISTS (SELECT 1 FROM stops_canonical sc JOIN stop_times st ON st.stop_id=sc.id WHERE sc.terminal_id=t.id)`
 	case "no":
-		cond = ` WHERE EXISTS (SELECT 1 FROM stops_canonical sc JOIN stop_times st ON st.stop_id=sc.id WHERE sc.terminal_id=t.id)`
+		cond = ` WHERE t.valid_to IS NULL AND EXISTS (SELECT 1 FROM stops_canonical sc JOIN stop_times st ON st.stop_id=sc.id WHERE sc.terminal_id=t.id)`
+	default:
+		cond = ` WHERE t.valid_to IS NULL`
 	}
 	var total int
 	_ = p.pool.QueryRow(ctx, `SELECT count(*) FROM terminals t`+cond).Scan(&total)
-	rows, err := p.pool.Query(ctx, `SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, coalesce(t.place_id,0)::bigint, (SELECT count(DISTINCT st.trip_id) FROM stops_canonical sc JOIN stop_times st ON st.stop_id=sc.id WHERE sc.terminal_id=t.id) FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru'`+cond+` ORDER BY t.id LIMIT $1 OFFSET $2`, args...)
+	rows, err := p.pool.Query(ctx, `SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, coalesce(t.place_id,0)::bigint, (SELECT count(DISTINCT st.trip_id) FROM stops_canonical sc JOIN stop_times st ON st.stop_id=sc.id WHERE sc.terminal_id=t.id), to_char(t.valid_from,'YYYY-MM-DD'), coalesce(to_char(t.valid_to,'YYYY-MM-DD'),'') FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru'`+cond+` ORDER BY t.id LIMIT $1 OFFSET $2`, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -216,10 +218,11 @@ func (p *PostgresStore) ListTerminalsByLiveness(ctx context.Context, limit, offs
 		var lat, lon float64
 		var locked bool
 		var placeID, tripsServed int64
-		if err := rows.Scan(&id, &name, &lat, &lon, &locked, &placeID, &tripsServed); err != nil {
+		var validFrom, validTo string
+		if err := rows.Scan(&id, &name, &lat, &lon, &locked, &placeID, &tripsServed, &validFrom, &validTo); err != nil {
 			return nil, 0, err
 		}
-		out = append(out, map[string]any{"id": id, "name": name, "lat": lat, "lon": lon, "is_locked": locked, "place_id": placeID, "trips_served": tripsServed, "dead": tripsServed == 0})
+		out = append(out, map[string]any{"id": id, "name": name, "lat": lat, "lon": lon, "is_locked": locked, "place_id": placeID, "trips_served": tripsServed, "dead": tripsServed == 0, "valid_from": validFrom, "valid_to": validTo})
 	}
 	return out, total, nil
 }

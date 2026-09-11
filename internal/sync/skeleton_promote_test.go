@@ -248,6 +248,54 @@ func TestPromoteSkeletonChunkYandexOnlyWithCoords(t *testing.T) {
 	}
 }
 
+func TestPromoteSkeletonChunkDedupByCode(t *testing.T) {
+	ctx := context.Background()
+	ms := memstore.NewMemoryStore()
+	runID, err := BeginSkeletonRun(ctx, ms, "plan-dedup", "sha-dedup", "dedup-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := model.AdaptedRecord{
+		Kind:   model.AdaptedTerminal,
+		NameRu: "Томск, автовокзал",
+		Source: "yandex",
+		Identifiers: []model.AdaptedIdentifier{
+			{System: "yandex", CodeType: "yandex_code", Code: "s9623436"},
+		},
+		Extra: map[string]string{"region": "tomsk", "transport_type": "bus"},
+	}
+	lat, lon := 56.4612, 84.9912
+	rec.Lat, rec.Lon = &lat, &lon
+
+	chunk := SkeletonChunk{Key: "dedup-chunk", Unverified: []model.AdaptedRecord{rec}}
+	if _, err := PromoteSkeletonChunk(ctx, ms, runID, chunk); err != nil {
+		t.Fatal(err)
+	}
+	id1, ok := ms.ListTerminalIDByCode(ctx, "yandex", "s9623436")
+	if !ok {
+		t.Fatal("после первого прогона код обязан быть привязан")
+	}
+	// Повторный прогон той же записи: промоут обязан сматчиться по коду,
+	// а не создать дубликат (баг Кузбасс-пилота: дубль при втором прогоне).
+	if _, err := PromoteSkeletonChunk(ctx, ms, runID, chunk); err != nil {
+		t.Fatal(err)
+	}
+	id2, ok := ms.ListTerminalIDByCode(ctx, "yandex", "s9623436")
+	if !ok || id2 != id1 {
+		t.Fatalf("повторный прогон обязан переиспользовать терминал %d, получен %d (ok=%v)", id1, id2, ok)
+	}
+	list, total, err := ms.ListTerminalsFiltered(ctx, 10, 0, "name", "asc", "Томск, автовокзал")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 {
+		t.Fatalf("дубликатов быть не должно: total=%d", total)
+	}
+	if len(list) > 0 && list[0]["id"].(int64) != id1 {
+		t.Fatalf("канонический id=%d, в списке %v", id1, list[0]["id"])
+	}
+}
+
 func TestSyntheticReviewIDStableNegative(t *testing.T) {
 	a := syntheticReviewID("terminal", "skeleton_unverified", "yandex", "s9999")
 	b := syntheticReviewID("terminal", "skeleton_unverified", "yandex", "s9999")

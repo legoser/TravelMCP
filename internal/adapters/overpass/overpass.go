@@ -243,6 +243,34 @@ out center;`,
 		radiusMeters, lat, lon)
 }
 
+// BuildTerminalStationsQuery — терминальные станции (автовокзалы, ж/д
+// вокзалы, аэропорты) внутри bbox: региональный источник для сбора
+// рейсов без Яндекс-дампа.
+func BuildTerminalStationsQuery(b BBox, timeoutS int) string {
+	if timeoutS <= 0 {
+		timeoutS = defaultStopsTimeoutS
+	}
+	s := b.String()
+	return fmt.Sprintf(`[out:json][timeout:%d];
+(
+  node["amenity"="bus_station"](%s);
+  node["railway"="station"](%s);
+  node["aeroway"="aerodrome"](%s);
+);
+out center;`, timeoutS, s, s, s)
+}
+
+// StationsInBBox — терминальные станции региона из Overpass (сеть:
+// основной URL + зеркало, кэш diskv отсутствует — разовый ручной сбор).
+func (a *Adapter) StationsInBBox(ctx context.Context, b BBox) ([]model.AdaptedRecord, error) {
+	ql := BuildTerminalStationsQuery(b, 0)
+	body, err := a.execQL(ctx, ql)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResponse(body)
+}
+
 // StationsAround queries Overpass for public-transport nodes within radiusMeters of
 // the given point and returns the parsed AdaptedRecords. It performs a single
 // network request with automatic fallback to the mirror endpoint.

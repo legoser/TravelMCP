@@ -18,6 +18,7 @@ import (
 
 type SkeletonStore interface {
 	UpsertTerminal(ctx context.Context, r store.TerminalRow, names map[string]string, identifiers []model.AdaptedIdentifier) (int64, error)
+	ListTerminalIDByCode(ctx context.Context, system, code string) (int64, bool)
 	SetTerminalTag(ctx context.Context, id int64, key, value string) error
 	UpsertTerminalAlias(ctx context.Context, a store.TerminalAliasRow) error
 	UpsertAttributeState(ctx context.Context, a store.AttributeStateRow) error
@@ -289,6 +290,15 @@ func promoteJoined(ctx context.Context, st SkeletonStore, runID int64, j skeleto
 	names := map[string]string{"ru": nameRu}
 	if r.NameEn != "" {
 		names["en"] = r.NameEn
+	}
+	// Дедуп по внешнему коду: повторный прогон промоутит существующий
+	// терминал (идемпотентный UPDATE), а не создаёт дубликат. Иначе
+	// UNIQUE(system, code) молча отнимает идентификатор у новой записи.
+	for _, id := range r.Identifiers {
+		if existing, ok := st.ListTerminalIDByCode(ctx, id.System, id.Code); ok {
+			row.ID = existing
+			break
+		}
 	}
 	id, err := st.UpsertTerminal(ctx, row, names, r.Identifiers)
 	if err != nil {

@@ -43,17 +43,21 @@ const (
 func main() {
 	var configPath, tag, osmOverride, yandexOverride, flatOverride, regionOverride string
 	var resumeRun int64
-	var dryRun, noReverse, noOverpass bool
+	var dryRun, noReverse, noOverpass, noOSM bool
+	var transportsF, stationTypesF string
 	flag.StringVar(&configPath, "config", "configs/config.dev.yaml", "путь к YAML-конфигу")
 	flag.StringVar(&tag, "tag", "pilot-kuzbass", "тег прогона")
 	flag.StringVar(&osmOverride, "osm", "", "переопределить sync.osm_path")
 	flag.StringVar(&yandexOverride, "yandex", "", "переопределить sync.yandex_dump_path")
 	flag.StringVar(&flatOverride, "flat", "", "переопределить sync.flat_trips_path")
 	flag.StringVar(&regionOverride, "region", "", "переопределить sync.skeleton_region")
+	flag.StringVar(&transportsF, "transport", "", "фильтр Яндекс-станций по транспорту через запятую (bus,train,plane,...)")
+	flag.StringVar(&stationTypesF, "station-type", "bus_station,station,train_station,airport", "фильтр Яндекс-станций по типу через запятую; пусто — без фильтра")
 	flag.Int64Var(&resumeRun, "run", 0, "продолжить незавершённый прогон с этим sync_runs.id")
 	flag.BoolVar(&dryRun, "dry-run", false, "построить join и coverage без записи в БД")
 	flag.BoolVar(&noReverse, "no-reverse", false, "не обогащать адреса через Nominatim reverse")
 	flag.BoolVar(&noOverpass, "no-overpass", false, "не обогащать через Overpass StationsAround")
+	flag.BoolVar(&noOSM, "no-osm", false, "скелет только из Яндекс-дампа (без join с OSM; станции идут как unverified)")
 	flag.Parse()
 
 	ctx := context.Background()
@@ -78,6 +82,11 @@ func main() {
 	if regionOverride != "" {
 		sc.SkeletonRegion = regionOverride
 	}
+	if noOSM {
+		sc.OsmPath = ""
+	}
+	transports := parseCSVSet(transportsF)
+	stationTypes := parseCSVSet(stationTypesF)
 
 	// bbox опционален: пустой — без фильтра (весь экстракт), режем регионами
 	var bboxFilter *bbox
@@ -89,10 +98,15 @@ func main() {
 		}
 		bboxFilter = &b
 	}
-	osm, err := skeleton.OSMSource{Path: sc.OsmPath}.Load()
-	if err != nil {
-		slog.Error("osm load failed", "error", err)
-		os.Exit(1)
+	var osm []model.AdaptedRecord
+	if sc.OsmPath != "" {
+		osm, err = skeleton.OSMSource{Path: sc.OsmPath}.Load()
+		if err != nil {
+			slog.Error("osm load failed", "error", err)
+			os.Exit(1)
+		}
+	} else {
+		slog.Info("osm source disabled (-no-osm): yandex-only skeleton, все записи пойдут unverified")
 	}
 	yan, err := skeleton.YandexDumpSource{Path: sc.YandexDumpPath}.Load()
 	if err != nil {
@@ -102,6 +116,16 @@ func main() {
 	regions := parseRegionList(sc.SkeletonRegion)
 	if len(regions) > 0 {
 		yan = filterRegions(yan, regions)
+	}
+	if len(transports) > 0 {
+		before := len(yan)
+		yan = filterExtraAny(yan, "transport_type", transports)
+		slog.Info("transport filter applied", "keep", len(yan), "dropped", before-len(yan), "transports", transports)
+	}
+	if len(stationTypes) > 0 {
+		before := len(yan)
+		yan = filterExtraAny(yan, "station_type", stationTypes)
+		slog.Info("station-type filter applied", "keep", len(yan), "dropped", before-len(yan), "station_types", stationTypes)
 	}
 	// bbox не задан — выводим его автоматически из географии выбранных
 	// регионов Яндекса (+1° запас на периферию), чтобы не тянуть весь
@@ -140,7 +164,8 @@ func main() {
 	if bboxFilter != nil {
 		osm = filterBbox(osm, *bboxFilter)
 	}
-	slog.Info("sources loaded", "osm", len(osm), "yandex", len(yan), "regions", regions)
+	slog.Info("sources loaded", "osm", len(osm), "yandex", len(yan), "regions", regions,
+		"transport_filter", transportsF, "station_type_filter", stationTypesF)
 
 	outcome := joinPaged(osm, yan)
 	slog.Info("join done", "canon", len(outcome.Canon), "unverified", len(outcome.Unverified), "ambiguous", len(outcome.DuplicateAmbiguous))
@@ -411,6 +436,35 @@ func filterRegions(in []model.AdaptedRecord, regions []string) []model.AdaptedRe
 	return out
 }
 
+// parseCSVSet — «a, b, c» → set; пустая строка — nil (без фильтра).
+func parseCSVSet(s string) map[string]bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out[p] = true
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// filterExtraAny — фильтр записей по значению Extra[key] из набора allow.
+func filterExtraAny(in []model.AdaptedRecord, key string, allow map[string]bool) []model.AdaptedRecord {
+	out := make([]model.AdaptedRecord, 0, len(in))
+	for _, r := range in {
+		if r.Extra != nil && allow[r.Extra[key]] {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // joinPaged — Join через пагинированный JoinPager (эквивалентен Join,
 // O(N×M)/cells вместо O(N×M)): страницы по 100 OSM-записей, гео-ячейки 0.5°.
 func joinPaged(osm, yan []model.AdaptedRecord) skeleton.JoinOutcome {
@@ -549,6 +603,15 @@ func runDryCoverage(sc config.Sync, outcome skeleton.JoinOutcome) {
 			lat, lon = *j.Record.Lat, *j.Record.Lon
 		}
 		skels = append(skels, store.SkeletonTerminalRow{NameRu: j.Record.NameRu, Lat: lat, Lon: lon, Settlement: j.Record.Extra["settlement"]})
+	}
+	if sc.FlatTripsPath == "" {
+		raw, _ := json.MarshalIndent(struct {
+			Canon      int `json:"canon"`
+			Unverified int `json:"unverified"`
+			Ambiguous  int `json:"ambiguous"`
+		}{len(outcome.Canon), len(outcome.Unverified), len(outcome.DuplicateAmbiguous)}, "", "  ")
+		fmt.Println(string(raw))
+		return
 	}
 	stops, err := loadFlatStops(sc.FlatTripsPath)
 	if err != nil {

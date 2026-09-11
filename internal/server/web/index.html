@@ -11,7 +11,31 @@
 <div class="row" style="margin-top:10px"><input id="loginEmail" placeholder="email"><input id="loginPass" type="password" placeholder="пароль"><button onclick="doLogin()">Войти → получить токен</button><button class="secondary" onclick="doRegister()">Регистрация</button></div>
 <div id="loginMsg" class="muted" style="margin-top:8px"></div>
 </div>
-<div class="tabs"><div class="tab active" onclick="showTab('users')">Пользователи</div><div class="tab" onclick="showTab('keys')">Ключи</div><div class="tab" onclick="showTab('config')">Конфиг</div><div class="tab" onclick="showTab('dash')">Дашборд</div><div class="tab" onclick="showTab('imports')">Импорты</div><div class="tab" onclick="showTab('terminals')">Терминалы</div><div class="tab" onclick="showTab('schedules')">Расписания</div><div class="tab" onclick="showTab('review')">Ревью</div><div class="tab" onclick="showTab('external')">Внешний API</div><div class="tab" onclick="showTab('quotas')">Квоты/Аудит</div></div>
+<div id="routeCard" class="card" style="border-left:4px solid var(--accent)">
+<div class="row" style="justify-content:space-between;flex-wrap:wrap"><h2 style="margin:0">Поиск маршрута</h2><span class="muted" style="font-size:12px">MCP find_route — живой прогон планировщика по канону</span></div>
+<div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
+<input id="rtFrom" placeholder="Откуда (Юрга / 55.72,84.90)" style="flex:1;min-width:180px">
+<span style="align-self:center">→</span>
+<input id="rtTo" placeholder="Куда (Кемерово / 55.35,86.06)" style="flex:1;min-width:180px">
+<button class="ok" onclick="rtSearch()">Найти маршрут</button>
+</div>
+<div class="row" style="margin-top:6px;gap:8px;flex-wrap:wrap;align-items:center">
+<label class="muted" style="cursor:pointer"><input type="checkbox" id="rtAllowGap" checked> разрешить gap (пешая жила)</label>
+<input id="rtDate" type="date" style="width:150px"><input id="rtTime" type="time" style="width:90px" value="10:00">
+<button class="secondary" style="font-size:12px" onclick="const el=$('rtAdv');el.style.display=el.style.display==='none'?'':'none'">⚙ Расширенные параметры</button>
+</div>
+<div id="rtAdv" style="display:none;margin-top:8px;padding:8px;border:1px solid #ddd;border-radius:6px">
+<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+<label class="muted">макс. пешком, мин</label><input id="rtMaxWalk" type="number" value="30" style="width:80px">
+<label class="muted">макс. пересадок</label><input id="rtMaxTransfers" type="number" value="-1" style="width:70px" title="-1 — без ограничения">
+<label class="muted">предпочтение</label><select id="rtPref" style="width:130px"><option value="">—</option><option value="arrival">arrival (быстрее)</option><option value="transfers">transfers (меньше пересадок)</option></select>
+<label class="muted">режимы</label><input id="rtModes" placeholder="BUS,COACH,RAIL…" style="width:180px" title="через запятую: BUS,COACH,RAIL,SUBWAY,TRAM,FLIGHT">
+</div>
+</div>
+<div id="rtOut" style="margin-top:10px"></div>
+</div>
+
+<div class="tabs"><div class="tab active" onclick="showTab('users')">Пользователи</div><div class="tab" onclick="showTab('keys')">Ключи</div><div class="tab" onclick="showTab('config')">Конфиг</div><div class="tab" onclick="showTab('dash')">Дашборд</div><div class="tab" onclick="showTab('collect')">Сбор</div><div class="tab" onclick="showTab('runs')">Прогоны</div><div class="tab" onclick="showTab('imports')">Импорты</div><div class="tab" onclick="showTab('terminals')">Терминалы</div><div class="tab" onclick="showTab('schedules')">Расписания</div><div class="tab" onclick="showTab('review')">Ревью</div><div class="tab" onclick="showTab('external')">Внешний API</div><div class="tab" onclick="showTab('quotas')">Квоты/Аудит</div></div>
 
 <div id="tab-users" class="card">
 <div class="row" style="justify-content:space-between"><h2>Пользователи</h2><button class="secondary" onclick="loadUsers()">↻ Обновить</button></div>
@@ -56,12 +80,55 @@
 </div>
 </div>
 
+<div id="tab-collect" class="card hidden">
+<div class="row" style="justify-content:space-between"><h2>Сбор региона (ручной режим)</h2><button class="secondary" onclick="loadCollectRegions()">↻ Обновить регионы</button></div>
+<div class="muted" style="font-size:12px;margin-top:6px">Односторонний импорт из Яндекс-дампа → unverified-терминалы в каноне. Затем валидация через внешние API и ручное одобрение во вкладке <b>Терминалы</b>. Сбор рейсов — cache-first (кэш валиден), недостающее добирается через API по квоте. <b>Городские остановки (bus_stop)</b> — только если осознанно хотите плотное городское покрытие: их ~126 тыс. в дампе, расписаний в кэше для них нет — offline их не соберёт, а онлайн сожжёт квоту.</div>
+<div class="grid" style="margin-top:10px">
+<div><label class="muted">Регион (дампа Яндекса)</label><select id="colRegion" style="width:100%" onchange="colRegionChanged()"><option value="">— загрузите список —</option></select></div>
+<div><label class="muted">Дата расписаний (для рейсов)</label><input id="colDate" style="width:100%" placeholder="YYYY-MM-DD (пусто = сегодня)"></div>
+</div>
+<div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
+<label style="cursor:pointer"><input type="checkbox" id="colBus" checked> автобусы</label>
+<label style="cursor:pointer"><input type="checkbox" id="colTrain" checked> поезда</label>
+<label style="cursor:pointer"><input type="checkbox" id="colFlight" checked> самолёты</label>
+<label style="cursor:pointer"><input type="checkbox" id="colOffline" checked> только кэш (offline)</label>
+<label>список станций: <select id="colStations"><option value="yandex">Яндекс-дамп (по коду)</option><option value="overpass">Overpass (bbox, без кодов)</option></select> <span class="muted" style="font-size:11px">расписания — всегда Яндекс Rasp</span></label>
+</div>
+<div class="row" style="margin-top:6px;gap:8px;flex-wrap:wrap">
+<span class="muted">классы станций (пусто = терминальные):</span>
+<label style="cursor:pointer"><input type="checkbox" id="colStBusStation" checked> автовокзал (bus_station)</label>
+<label style="cursor:pointer"><input type="checkbox" id="colStStation" checked> станция (station)</label>
+<label style="cursor:pointer"><input type="checkbox" id="colStTrainStation" checked> ж/д вокзал (train_station)</label>
+<label style="cursor:pointer"><input type="checkbox" id="colStAirport" checked> аэропорт (airport)</label>
+<label style="cursor:pointer" title="городская остановка — только для плотного городского покрытия, не междугородный скелет"><input type="checkbox" id="colStBusStop"> городская остановка (bus_stop)</label>
+</div>
+<div class="row" style="margin-top:12px;gap:8px">
+<button class="ok" onclick="collectSkeleton()">1. Импорт станций региона → скелет</button>
+<button class="ok" style="background:#15803d" onclick="collectTrips()">2. Собрать расписания → рейсы</button>
+<button class="secondary" onclick="loadJobs()">Jobs</button>
+</div>
+<div id="colMsg" class="muted" style="margin-top:10px"></div>
+<div class="row" style="margin-top:14px;gap:8px;border-top:1px solid #ddd;padding-top:10px">
+<button class="danger" onclick="canonReset()">✕ Полный сброс канона (терминалы + рейсы)</button>
+<span class="muted" style="font-size:12px">удаляет терминалы, рейсы, маршруты, стопы, staging, историю синков и ревью; каркас (users/keys/jobs/places/квоты) и кэш Яндекса на диске не трогаются</span>
+</div>
+<div id="colResetMsg" class="muted" style="margin-top:6px"></div>
+<div style="overflow:auto;margin-top:12px"><h3 style="font-size:13px">Регионы дампа (терминальные станции)</h3><table><thead><tr><th>регион</th><th>терминальных станций</th><th></th></tr></thead><tbody id="colRegionsBody"><tr><td colspan="3" class="muted">—</td></tr></tbody></table></div>
+</div>
+
+<div id="tab-runs" class="card hidden">
+<div class="row" style="justify-content:space-between"><h2>Прогоны — сводка качества</h2><button class="secondary" onclick="loadRuns()">↻ Обновить</button></div>
+<div class="muted" style="font-size:12px;margin-top:6px">sync_runs: сборы скелета/рейсов и attach-конвейер. Клик по строке — полная сводка (coverage, promoted/staged/dead по маршрутам, квоты).</div>
+<div style="overflow:auto;margin-top:10px"><table><thead><tr><th>ID</th><th>kind</th><th>tag</th><th>state</th><th>создан</th><th>завершён</th><th></th></tr></thead><tbody id="runsBody"><tr><td colspan="7" class="muted">—</td></tr></tbody></table></div>
+<pre id="runDetail" class="mono hidden" style="margin-top:12px;max-height:420px;overflow:auto">—</pre>
+</div>
+
 <div id="tab-imports" class="card hidden">
 <div class="row" style="justify-content:space-between"><h2>Импорты и Jobs</h2><button class="secondary" onclick="loadImports()">↻ Обновить</button></div>
 <div class="row" style="margin-top:8px;gap:8px"><button onclick="enqueueMintrans()">Обновить автобусы (mintrans)</button><button onclick="enqueueRail()">Обновить ж/д (rail)</button><label class="secondary" style="cursor:pointer;padding:6px 10px;border:1px solid #ccc;border-radius:4px">Выбрать gtfs.zip <input type="file" id="gtfsFile" accept=".zip" style="display:none" onchange="enqueueGTFS(this)"></label><button class="secondary" onclick="document.getElementById('gtfsFile').click()">Upload gtfs.zip</button><button class="secondary" onclick="loadJobs()">Jobs</button><button class="secondary" onclick="loadLogs()">Logs</button></div>
 <div class="muted" style="font-size:11px;margin-top:4px">Выбранный zip загружается в <code>data/tmp/gtfs/&lt;uuid&gt;/&lt;имя&gt;</code> (уникальный каталог), распаковывается в <code>unpacked/</code>; успешно — каталог удаляется, при <code>dead</code> остаётся для дебага. <code>POST /api/v1/import/gtfs</code> → <code>jobs import_gtfs payload={\"path\":...,\"tmp_dir\":...,\"hash\":sha256}</code>.</div>
 <div style="overflow:auto;margin-top:10px"><h3 style="font-size:13px">Последние импорты</h3><table><thead><tr><th>provider</th><th>at</th><th>records</th><th>status</th><th>checksum</th></tr></thead><tbody id="importsBody"><tr><td colspan="5" class="muted">—</td></tr></tbody></table></div>
-<div style="overflow:auto;margin-top:10px"><h3 style="font-size:13px">Jobs (pending/running/retry)</h3><table><thead><tr><th>ID</th><th>type</th><th>region</th><th>state</th><th>attempts</th><th>next_run</th><th>error</th></tr></thead><tbody id="jobsBody"><tr><td colspan="7" class="muted">—</td></tr></tbody></table></div>
+<div style="overflow:auto;margin-top:10px"><h3 style="font-size:13px">Jobs (pending/running/retry)</h3><table><thead><tr><th>ID</th><th>type</th><th>region</th><th>state</th><th>attempts</th><th>next_run</th><th>error</th><th></th></tr></thead><tbody id="jobsBody"><tr><td colspan="8" class="muted">—</td></tr></tbody></table></div>
 <div style="overflow:auto;margin-top:10px"><h3 style="font-size:13px">Import logs (последние 50)</h3><pre id="logsOut" class="mono" style="max-height:240px;overflow:auto">—</pre></div>
 </div>
 
@@ -69,8 +136,9 @@
 <h2>Ручная правка терминалов (пагинация 20, сортировка, поиск по имени)</h2>
 <div class="muted" style="margin-bottom:8px">«Сохранить» — правка с <code>is_locked=true</code> (дальнейший автосинк не перезапишет, конфликт → ревью). «Апрувнуть» — то же + <code>last_verified_at</code> и снятие записей ревью этого терминала.</div>
 <div class="row" style="gap:8px;flex-wrap:wrap"><input id="termSearch" placeholder="Поиск по имени (ru/en) — Enter" style="flex:1;min-width:180px" onkeydown="if(event.key==='Enter'){termPage=1;loadTerminals()}" oninput="if(this.value==='')clearTermSearch()"><button class="secondary" onclick="termPage=1;loadTerminals()">Найти</button><button class="secondary" onclick="clearTermSearch()">✕</button><select id="termDead" onchange="loadTerminals()"><option value="">все</option><option value="yes">мёртвые (0 рейсов)</option><option value="no">живые</option></select><button class="secondary" onclick="loadTerminals()">Загрузить 20</button><span class="muted" style="margin-left:8px">стр. <span id="termPage">1</span></span><button class="secondary" onclick="prevTermPage()">‹</button><button class="secondary" onclick="nextTermPage()">›</button></div>
-<div style="overflow:auto;margin-top:8px"><table><thead><tr><th onclick="sortTerm('id')" style="cursor:pointer;user-select:none">ID <span id="sort-id">↕</span></th><th onclick="sortTerm('name')" style="cursor:pointer;user-select:none">name ru <span id="sort-name">↕</span></th><th>НП</th><th>lat/lon</th><th onclick="sortTerm('is_locked')" style="cursor:pointer;user-select:none">locked <span id="sort-is_locked">↕</span></th><th>рейсов</th><th></th></tr></thead><tbody id="terminalsBody"><tr><td colspan="7" class="muted">— нажми Загрузить</td></tr></tbody></table></div>
-<div class="row" style="gap:8px;margin-top:12px"><input id="termId" placeholder="terminal ID" style="width:120px"><input id="termName" placeholder="Название ru" style="flex:1"><input id="termSettlement" placeholder="НП (нас. пункт)" style="width:160px"><input id="termLat" placeholder="lat" style="width:100px"><input id="termLon" placeholder="lon" style="width:100px"><button class="ok" onclick="updateTerminal()">Сохранить</button><button class="ok" style="background:#15803d" onclick="approveTerminal()">Апрувнуть</button><button class="secondary" onclick="settlementFromApi()" title="Reverse-геокодинг координат → подставить НП">НП из API</button></div>
+<div style="overflow:auto;margin-top:8px"><table><thead><tr><th onclick="sortTerm('id')" style="cursor:pointer;user-select:none">ID <span id="sort-id">↕</span></th><th onclick="sortTerm('name')" style="cursor:pointer;user-select:none">name ru <span id="sort-name">↕</span></th><th>НП</th><th>lat/lon</th><th onclick="sortTerm('is_locked')" style="cursor:pointer;user-select:none">locked <span id="sort-is_locked">↕</span></th><th>рейсов</th><th>добавлен</th><th></th></tr></thead><tbody id="terminalsBody"><tr><td colspan="8" class="muted">— нажми Загрузить</td></tr></tbody></table></div>
+<div class="row" style="gap:8px;margin-top:12px"><input id="termId" placeholder="terminal ID" style="width:120px"><input id="termName" placeholder="Название ru" style="flex:1"><input id="termSettlement" placeholder="НП (нас. пункт)" style="width:160px"><input id="termLat" placeholder="lat" style="width:100px"><input id="termLon" placeholder="lon" style="width:100px"><button class="ok" onclick="updateTerminal()">Сохранить</button><button class="ok" style="background:#15803d" onclick="approveTerminal()">Апрувнуть</button><button class="secondary" onclick="settlementFromApi()" title="Reverse-геокодинг координат → подставить НП">НП из API</button><button class="secondary" style="color:#b45309" onclick="unapproveTerminal()" title="Снять is_locked: терминал вернётся в автосинк (например, перед удалением или merge)">🔓 Снять лок</button></div>
+<div class="row" style="gap:8px;margin-top:8px"><input id="mergeOldId" placeholder="ID дубликата (old)" style="width:160px"><input id="mergeNewId" placeholder="ID канонического (new)" style="width:160px"><input id="mergeReason" placeholder="причина (необяз.)" style="flex:1"><button class="secondary" onclick="mergeTerminals()">⇄ Слить дубликаты</button></div>
 <div id="termMsg" class="muted" style="margin-top:8px"></div>
 <div id="termCard" class="hidden" style="margin-top:16px"></div>
 </div>

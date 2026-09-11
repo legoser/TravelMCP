@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS providers (
   name text NOT NULL
 );
 INSERT INTO providers(code, name) VALUES
-  ('motis','MOTIS/OSM'), ('gov-registry','Реестр Минтранса РФ'), ('yandex','Яндекс'), ('osm','OSM'), ('gtfs','GTFS'), ('nominatim','Nominatim'), ('manual','Ручная правка оператора')
+  ('motis','MOTIS/OSM'), ('gov-registry','Реестр Минтранса РФ'), ('yandex','Яндекс'), ('osm','OSM'), ('gtfs','GTFS'), ('nominatim','Nominatim'), ('overpass','Overpass API'), ('manual','Ручная правка оператора')
 ON CONFLICT DO NOTHING;
 
 -- Справочник типов внешних кодов (единый для terminal_identifiers и
@@ -92,7 +92,10 @@ CREATE TABLE IF NOT EXISTS carriers (
   address text,
   iata text,
   icao text,
-  sirena text
+  sirena text,
+  -- контакты для fuzzy-легов: «время уточнять у перевозчика» (§5.4)
+  phone text,
+  info_url text
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_carriers_inn ON carriers(inn) WHERE inn IS NOT NULL;
 -- uniq_carriers_provider_code removed: carrier_identifiers is source of truth
@@ -341,6 +344,7 @@ CREATE TABLE IF NOT EXISTS stop_times (
   drop_off_type smallint DEFAULT 0 CHECK(drop_off_type IN (0,1,2,3)),
   dwell int,
   is_provisional bool DEFAULT false,
+  is_fuzzy bool DEFAULT false,
   match_score real,
   match_method text CHECK (match_method IS NULL OR match_method IN ('code','scorepair')),
   PRIMARY KEY(trip_id, seq)
@@ -565,7 +569,8 @@ CREATE TABLE IF NOT EXISTS jobs (
   id bigserial PRIMARY KEY,
   type text NOT NULL CHECK (type IN (
     'import_gtfs','sync_rail','notify','cleanup',
-    'sync_stations','sync_refresh','sync_terminals_chunk','sync_trips_attach')),
+    'sync_stations','sync_refresh','sync_terminals_chunk','sync_trips_attach',
+    'sync_collect_region')),
   payload jsonb NOT NULL DEFAULT '{}'::jsonb,
   region text,
   state text NOT NULL CHECK (state IN ('pending','running','retry','done','dead')) DEFAULT 'pending',

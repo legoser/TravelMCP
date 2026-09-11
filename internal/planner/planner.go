@@ -969,6 +969,9 @@ func buildLegs(net *model.Network, arr map[string]time.Time, steps []step) []mod
 			if cur != nil && cur.TripID != "" && cur.TripID == c.TripID {
 				cur.To = legPoint(to)
 				cur.Arrival = c.Arrival
+				if c.Fuzzy {
+					cur.TimeHint = "время ориентировочное — уточняйте у перевозчика"
+				}
 				continue
 			}
 			endLeg()
@@ -981,6 +984,9 @@ func buildLegs(net *model.Network, arr map[string]time.Time, steps []step) []mod
 				To:         legPoint(to),
 				Departure:  c.Departure,
 				Arrival:    c.Arrival,
+			}
+			if c.Fuzzy {
+				leg.TimeHint = "время ориентировочное — уточняйте у перевозчика"
 			}
 			cur = leg
 			continue

@@ -22,6 +22,18 @@ func (p *PostgresStore) ListTerminalIDByCode(ctx context.Context, system, code s
 	return id, true
 }
 
+// TerminalStagingRegion — регион терминала из последнего staging-кэша
+// (скелет сохранял region при импорте дампа; канон-теги могут быть
+// пустыми до enrichment). Пустая строка — регион неизвестен.
+func (p *PostgresStore) TerminalStagingRegion(ctx context.Context, terminalID int64) string {
+	if p.pool == nil {
+		return ""
+	}
+	var region string
+	_ = p.pool.QueryRow(ctx, `SELECT s.region FROM staging_terminals s JOIN terminal_identifiers i ON i.code=s.source_code AND i.system='yandex' WHERE i.terminal_id=$1 ORDER BY s.id DESC LIMIT 1`, terminalID).Scan(&region)
+	return region
+}
+
 // AppendStopTimes — батч-вставка stop_times (pgx.Batch; импорт GTFS:
 // миллионы строк, построчные INSERT недопустимы). Конфликт = повторный
 // импорт той же строки: UPDATE оседает идемпотентно.

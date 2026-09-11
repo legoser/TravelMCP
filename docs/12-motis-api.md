@@ -1,85 +1,89 @@
-# 12. MOTIS API — руководство для локального инстанса
+# 12. MOTIS API — Local Instance Guide
 
-Документация по работе с `MOTIS v2.11.2` на основе `openapi.yaml` (`motis-project/motis` `master/openapi.yaml`, `openapi: 3.1.0`, `version: v6`). Используется как транзитный роутер (GTFS `siberian-fed-district` + `gtfs_bus.zip`) и как источник геокодинга при включённых `tiles`.
+Documentation for working with `MOTIS v2.11.2`, based on `openapi.yaml` (`motis-project/motis` `master/openapi.yaml`, `openapi: 3.1.0`, `version: v6`). MOTIS is used as a transit router (`GTFS siberian-fed-district` + `gtfs_bus.zip`) and as a geocoding source when `tiles` are enabled.
 
-Исходник OpenAPI: `https://raw.githubusercontent.com/motis-project/motis/master/openapi.yaml`
+OpenAPI source: `https://raw.githubusercontent.com/motis-project/motis/master/openapi.yaml`
 
-## 1. Серверы и переменные
+## 1. Servers and Environment Variables
 
-В примерах `IP:PORT` вынесены в переменные — не хардкодьте адрес (конвенция `internal/config/config.go:14` `HTTP_ADDR`).
+In the examples, `IP:PORT` is provided through variables — do not hardcode the address (convention: `internal/config/config.go:14`, `HTTP_ADDR`).
 
 ```bash
 MOTIS_HOST=${MOTIS_HOST:-192.168.57.14}
 MOTIS_PORT=${MOTIS_PORT:-8077}
 BASE="http://${MOTIS_HOST}:${MOTIS_PORT}"
-# Альтернативные серверы из openapi.yaml:
-# https://api.transitous.org — Transitous prod
+
+# Alternative servers from openapi.yaml:
+# https://api.transitous.org — Transitous production
 # https://staging.api.transitous.org — staging
-# http://localhost:8080 — дефолт локальной сборки
+# http://localhost:8080 — default local build
 ```
 
-Проверка доступности (без tiles/geocoding тоже отвечает):
+Availability check (responds even without tiles/geocoding):
 
 ```bash
-curl -i "${BASE}/api/v1/health"          # 200: {rt, gbfs}, 400: не завершён первый цикл импорта
-curl -s "${BASE}/api/v1/map/initial" | jq  # lat/lon/zoom + serverConfig
+curl -i "${BASE}/api/v1/health"          # 200: {rt, gbfs}; 400: first import cycle not completed
+curl -s "${BASE}/api/v1/map/initial" | jq # lat/lon/zoom + serverConfig
 ```
 
-## 2. Версии API
+## 2. API Versions
 
-| Префикс | Статус | Примечание |
+| Prefix | Status | Notes |
 |---|---|---|
-| `/api/v6/plan` `/trip` `/stoptimes` `/one-to-all` `/map/stops` `/map/trips` | current | `level` опционален с `2.9.x` |
-| `/api/v1/geocode` `/reverse-geocode` `/one-to-many` `/rentals` `/map/initial` `/map/levels` | current | геокодинг/карта |
-| `/api/experimental/*` | unstable | `one-to-many-intermodal` `map/routes` |
+| `/api/v6/plan` `/trip` `/stoptimes` `/one-to-all` `/map/stops` `/map/trips` | current | `level` is optional since `2.9.x` |
+| `/api/v1/geocode` `/reverse-geocode` `/one-to-many` `/rentals` `/map/initial` `/map/levels` | current | geocoding/map |
+| `/api/experimental/*` | unstable | `one-to-many-intermodal`, `map/routes` |
 | `/api/v1..v5` | legacy | `METRO→SUBURBAN`, `polyline precision 7→6` |
 
-JS-клиент `@motis-project/motis-client` выбирает свежайшую версию автоматически, `curl` — указывайте `/v6`/`/v1` явно.
+The JS client `@motis-project/motis-client` automatically selects the latest version; with `curl`, specify `/v6` or `/v1` explicitly.
 
-## 3. Кириллица и URL-encoding — обязательно
+## 3. Cyrillic and URL Encoding — Required
 
-Все `text`, `fromPlace`/`toPlace` со `stopId` кириллицей должны быть `percent-encoded UTF-8`. Без кодирования MOTIS возвращает `400 {"error":"malformed URI or request"}` (воспроизведено `curl .../api/address?text=Новосибирск`).
+All `text` parameters and `fromPlace`/`toPlace` values containing Cyrillic `stopId`s must be percent-encoded as UTF-8. Without encoding, MOTIS returns `400 {"error":"malformed URI or request"}` (reproduced with `curl .../api/address?text=Новосибирск`).
 
-Неправильно:
+Incorrect:
 
 ```bash
 curl "${BASE}/api/v1/geocode?text=Новосибирск"  # 400 malformed URI
 ```
 
-Правильно — `curl --data-urlencode` (кодирует автоматически):
+Correct — `curl --data-urlencode` encodes automatically:
 
 ```bash
 curl -G "${BASE}/api/v1/geocode" --data-urlencode "text=Новосибирск автовокзал" --data-urlencode "language=ru" | jq
+
 curl -G "${BASE}/api/v1/geocode" --data-urlencode "text=Барнаул автовокзал" --data-urlencode "numResults=5" | jq
 ```
 
-Альтернативы:
+Alternatives:
 
 ```bash
 # bash: python
 TEXT=$(python3 -c "import urllib.parse; print(urllib.parse.quote('Кемерово автовокзал'))")
+
 curl -s "${BASE}/api/v1/geocode?text=${TEXT}" | jq
 
-# Go: net/url.QueryEscape  (cmd/mcp-server/main.go:138, scripts/extract-minstran.py:449)
-# TEXT := url.QueryEscape("Новосибирск автовокзал")
+# Go: net/url.QueryEscape (cmd/mcp-server/main.go:138, scripts/extract-minstran.py:449)
+# TEXT := url.QueryEscape("Новосибирск")
 
 # JS: encodeURIComponent("Новосибирск")
 ```
 
-Для `/api/v6/plan` c кириллическим `stopId` также кодируйте:
+For `/api/v6/plan`, Cyrillic `stopId` values must also be encoded:
 
 ```bash
 FROM=$(python3 -c "import urllib.parse; print(urllib.parse.quote('Кемерово автовокзал'))")
+
 curl -G "${BASE}/api/v6/plan" --data-urlencode "fromPlace=${FROM}" --data-urlencode "toPlace=55.0084,82.9357" | jq
 ```
 
-Рекомендация: всегда используйте `-G --data-urlencode`, а не ручную конкатенацию `?text=`.
+Recommendation: always use `-G --data-urlencode` instead of manually concatenating `?text=`.
 
-## 4. Эндпоинты и примеры
+## 4. Endpoints and Examples
 
-Все примеры используют `BASE` и `--data-urlencode`.
+All examples use `BASE` and `--data-urlencode`.
 
-### 4.1 `GET /api/v1/geocode` — автокомплит/геокодинг
+### 4.1 `GET /api/v1/geocode` — Autocomplete / Geocoding
 
 ```bash
 curl -G "${BASE}/api/v1/geocode" \
@@ -92,20 +96,20 @@ curl -G "${BASE}/api/v1/geocode" \
   --data-urlencode "type=STOP" \
   --data-urlencode "numResults=5" | jq
 
-# bias к координате Кемерово
+# Bias toward Kemerovo coordinates
 curl -G "${BASE}/api/v1/geocode" \
   --data-urlencode "text=автовокзал" \
   --data-urlencode "place=55.355,86.088" \
   --data-urlencode "placeBias=2" | jq
 
-# bbox фильтр
+# BBox filter
 curl -G "${BASE}/api/v1/geocode" \
   --data-urlencode "text=автовокзал" \
   --data-urlencode "min=54.9,82.8" \
   --data-urlencode "max=55.2,83.2" | jq
 ```
 
-Ответ `200: Match[]` — `type/name/id/lat/lon/score/areas`. Требует `geocoding: true` и импортированных `tiles`; при `geocoding: false` `config.yml` → `404` (норма, используйте `Nominatim` `internal/geocoder`).
+Response: `200: Match[]` — `type/name/id/lat/lon/score/areas`. Requires `geocoding: true` and imported `tiles`; with `geocoding: false`, `config.yml` returns `404` (expected; use `Nominatim` via `internal/geocoder`).
 
 ### 4.2 `GET /api/v1/reverse-geocode`
 
@@ -118,19 +122,19 @@ curl -G "${BASE}/api/v1/reverse-geocode" \
   --data-urlencode "numResults=3" | jq
 ```
 
-### 4.3 `GET /api/v6/plan` — маршрутизация (основной)
+### 4.3 `GET /api/v6/plan` — Routing (Primary)
 
-Координаты — `lat,lon[,level]`, либо `stopId` (из `geocode`/`map/stops`).
+Coordinates are `lat,lon[,level]`, or a `stopId` obtained from `geocode`/`map/stops`.
 
 ```bash
-# Новосибирск → Барнаул, координаты
+# Novosibirsk → Barnaul, coordinates
 curl -G "${BASE}/api/v6/plan" \
   --data-urlencode "fromPlace=55.0084,82.9357" \
   --data-urlencode "toPlace=53.3481,83.7754" \
   --data-urlencode "time=2026-09-04T06:00:00Z" \
   --data-urlencode "maxTransfers=2" | jq
 
-# С кириллицей + временем прибытия
+# With Cyrillic + arrival time constraint
 curl -G "${BASE}/api/v6/plan" \
   --data-urlencode "fromPlace=Кемерово автовокзал" \
   --data-urlencode "toPlace=55.355,86.088" \
@@ -138,44 +142,44 @@ curl -G "${BASE}/api/v6/plan" \
   --data-urlencode "arriveBy=true" \
   --data-urlencode "timetableView=true" | jq
 
-# radius без OSM уличной сети (1.5 м/с, pre/post пешком)
+# Radius without an OSM street network (1.5 m/s, pre/post walking)
 curl -G "${BASE}/api/v6/plan" \
   --data-urlencode "fromPlace=55.0084,82.9357" \
   --data-urlencode "toPlace=53.3481,83.7754" \
   --data-urlencode "radius=1500" | jq
 ```
 
-Параметры `plan` часто используемые: `via`, `viaMinimumStay`, `maxTransfers`, `maxTravelTime`, `minTransferTime`, `useRoutedTransfers`, `pedestrianProfile=FOOT|WHEELCHAIR`, `transitModes=TRANSIT|BUS|RAIL`, `directModes=WALK`, `maxPreTransitTime`, `maxPostTransitTime`, `timetableView`, `searchWindow=900`, `withFares`.
+Commonly used `plan` parameters: `via`, `viaMinimumStay`, `maxTransfers`, `maxTravelTime`, `minTransferTime`, `useRoutedTransfers`, `pedestrianProfile=FOOT|WHEELCHAIR`, `transitModes=TRANSIT|BUS|RAIL`, `directModes=WALK`, `maxPreTransitTime`, `maxPostTransitTime`, `timetableView`, `searchWindow=900`, `withFares`.
 
 ### 4.4 `GET /api/v6/trip`, `stoptimes`, `map/*`
 
 ```bash
-# trip по ID из leg
-curl -G "${BASE}/api/v6/trip" --data-urlencode "tripId=... " | jq
+# trip by ID from a leg
+curl -G "${BASE}/api/v6/trip" --data-urlencode "tripId=..." | jq
 
-# отправления остановки
+# Stop departures
 curl -G "${BASE}/api/v6/stoptimes" \
   --data-urlencode "stopId=..." \
   --data-urlencode "n=10" \
   --data-urlencode "radius=500" | jq
 
-# центр + радиус (если stopId неизвестен)
+# Center + radius (if stopId is unknown)
 curl -G "${BASE}/api/v6/stoptimes" \
   --data-urlencode "center=55.0084,82.9357" \
   --data-urlencode "radius=1000" | jq
 
-# карта — стопы в bbox
+# Map — stops in BBox
 curl -G "${BASE}/api/v6/map/stops" \
   --data-urlencode "min=54.9,82.8" \
   --data-urlencode "max=55.2,83.2" | jq
 
-# уровни
+# Levels
 curl -G "${BASE}/api/v1/map/levels" \
   --data-urlencode "min=54.9,82.8" \
   --data-urlencode "max=55.2,83.2" | jq
 ```
 
-### 4.5 `GET /api/v1/one-to-many` и `experimental/one-to-many-intermodal`
+### 4.5 `GET /api/v1/one-to-many` and `experimental/one-to-many-intermodal`
 
 ```bash
 curl -G "${BASE}/api/v1/one-to-many" \
@@ -187,39 +191,40 @@ curl -G "${BASE}/api/v1/one-to-many" \
   --data-urlencode "arriveBy=false" | jq
 ```
 
-## 5. Конфигурация импорта (важно для `tiles`)
+## 5. Import Configuration (Important for `tiles`)
 
-`tiles` требует профиль:
+`tiles` requires a profile:
 
 ```bash
 docker run --rm -v $(pwd)/input:/input:ro -v $(pwd)/data:/data \
   ghcr.io/motis-project/motis /motis import -c /data/config.yml --tiles-profile /tiles-profiles/full.lua
 
-# альтернативно в config.yml:
+# Alternatively in config.yml:
 # tiles:
-#   profile: /motis/tiles-profiles/full.lua   # или /tiles-profiles/full.lua — проверьте ls в образе
+#   profile: /motis/tiles-profiles/full.lua   # or /tiles-profiles/full.lua — verify with ls in the image
 ```
 
-Ошибка `tiles profile tiles-profiles/full.lua does not exist` → укажите абсолютный `/motis/tiles-profiles/full.lua` или отключите `geocoding: false` `reverse_geocoding: false` `street_routing: false` `osr_footpath: false` для транзитного-only импорта (геокодинг тогда через `Nominatim` `internal/adapters/nominatim`).
+Error `tiles profile tiles-profiles/full.lua does not exist` → specify the absolute path `/motis/tiles-profiles/full.lua` or disable `geocoding: false`, `reverse_geocoding: false`, `street_routing: false`, `osr_footpath: false` for a transit-only import. Geocoding can then be provided through `Nominatim` via `internal/adapters/nominatim`.
 
-Бинарь в образе: `/motis` (файл в корне, не `motis/motis`).
+Binary in the image: `/motis` (file at the root, not `motis/motis`).
 
-## 6. Ошибки и лимиты
+## 6. Errors and Limits
 
-| Код | Тело | Причина |
+| Code | Body | Cause |
 |---|---|---|
-| `400` | `{"error":"malformed URI or request"}` | не закодирована кириллица |
-| `404` | `Not found` | `geocoding:false` в `config.yml` или неверный `/api/vX/*` префикс |
-| `422` | `Error` | невалидные параметры `plan` |
-| `500` | `Error` | внутренняя ошибка |
+| `400` | `{"error":"malformed URI or request"}` | Cyrillic text is not encoded |
+| `404` | `Not found` | `geocoding:false` in `config.yml` or incorrect `/api/vX/*` prefix |
+| `422` | `Error` | Invalid `plan` parameters |
+| `500` | `Error` | Internal error |
 
-Лимиты сервера (`/api/v1/map/initial` `serverConfig`): `maxOneToManySize`, `maxOneToAllTravelTimeLimit`, `maxPrePostTransitTimeLimit`, `maxDirectTimeLimit`.
+Server limits (`/api/v1/map/initial` → `serverConfig`): `maxOneToManySize`, `maxOneToAllTravelTimeLimit`, `maxPrePostTransitTimeLimit`, `maxDirectTimeLimit`.
 
-## 7. Скрипт демо
+## 7. Demo Script
 
-`scripts/motis-demo.sh` — переменные + `--data-urlencode` примеры (см. репозиторий). Запуск:
+`scripts/motis-demo.sh` — variables + `--data-urlencode` examples (see repository). Run:
 
 ```bash
 MOTIS_HOST=192.168.57.14 MOTIS_PORT=8077 ./scripts/motis-demo.sh plan 55.0084,82.9357 53.3481,83.7754
+
 MOTIS_HOST=192.168.57.14 MOTIS_PORT=8077 ./scripts/motis-demo.sh geocode "Барнаул автовокзал"
 ```
