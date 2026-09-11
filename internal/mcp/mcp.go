@@ -284,8 +284,28 @@ func (a *App) handleFindRoute(ctx context.Context, req mcp.CallToolRequest) (*mc
 		a.logger.DebugContext(ctx, "journey legs", "legs", journey.Legs)
 	}
 	enrichFuzzyLegs(journey, net)
+	normalizeJourneyTimezones(journey)
 
 	return mcp.NewToolResultJSON(journey)
+}
+
+// normalizeJourneyTimezones — все времена легов/джорни в единый вид
+// RFC3339 UTC: планировщик собирает леги из разных зон (walk — зона
+// запроса, transit — dayBase UTC), смешение "+07:00"/"Z" в одном ответе
+// путает потребителей (issue #7).
+func normalizeJourneyTimezones(j *model.Journey) {
+	if j == nil {
+		return
+	}
+	for i := range j.Legs {
+		j.Legs[i].Departure = j.Legs[i].Departure.UTC()
+		j.Legs[i].Arrival = j.Legs[i].Arrival.UTC()
+	}
+	j.Departure = j.Departure.UTC()
+	j.Arrival = j.Arrival.UTC()
+	for a := range j.Alternatives {
+		normalizeJourneyTimezones(&j.Alternatives[a])
+	}
 }
 
 // enrichFuzzyLegs — контакты перевозчика в TimeHint fuzzy-легов

@@ -2,6 +2,7 @@ package yandex
 
 import (
 	"fmt"
+	"hash/fnv"
 	"sort"
 	"strconv"
 	"strings"
@@ -136,9 +137,6 @@ func parseRaspClock(s string) (int, bool) {
 	return h*60 + m, true
 }
 
-// RaspTripNK — стабильный ключ нитки: uid Яндекса.
-func RaspTripNK(uid string) string { return uid }
-
 // SyntheticRouteKeyForRasp — route NK без номера нитки: title + перевозчик.
 func SyntheticRouteKeyForRasp(title, carrierTitle string) string {
 	key := title
@@ -250,7 +248,7 @@ func FlattenRaspThread(t *RaspThread, cfg RaspFlattenConfig) RaspFlattenResult {
 		RouteNK:   SyntheticRouteKeyForRasp(t.Title, carrier),
 		RouteReg:  t.Title,
 		Direction: "forward",
-		ServiceID: int64(raspCarrierCode(t.Carrier.Code)),
+		ServiceID: raspServiceID(t.UID),
 		Run:       1,
 		Period:    t.Days,
 		Carrier:   carrier,
@@ -260,6 +258,18 @@ func FlattenRaspThread(t *RaspThread, cfg RaspFlattenConfig) RaspFlattenResult {
 		Weekdays:  week,
 	}
 	return RaspFlattenResult{Trip: trip, State: "promoted"}
+}
+
+// raspServiceID — стабильный ключ нитки для tripNK
+// (route|direction:ServiceID:Run): uid Яндекса уникален и стабилен,
+// carrier code одинаков у всех ниток перевозчика → коллизия ключей
+// (три нитки «Кемерово — Томск» 58030 склеивались в одну, issue #7).
+// Хэш FNV-1a 32-бит в положительном диапазоне int64 (services.id bigint,
+// PK-совместимо; коллизии хэша на uid-пространстве Яндекса пренебрежимы).
+func raspServiceID(uid string) int64 {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(uid))
+	return int64(h.Sum32() & 0x7fffffff)
 }
 
 func clockOf(s *string) (int, bool) {
@@ -278,11 +288,4 @@ func rollMidnight(v, firstDep int) int {
 		return v + 24*60
 	}
 	return v
-}
-
-func raspCarrierCode(code int) int {
-	if code < 0 {
-		return 0
-	}
-	return code
 }

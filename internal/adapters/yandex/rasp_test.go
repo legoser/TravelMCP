@@ -210,6 +210,53 @@ func TestFlattenRaspThreadTzShiftLongTrip(t *testing.T) {
 	}
 }
 
+// Регрессия issue #7: три нитки одного маршрута одного перевозчика
+// обязаны получать разные ServiceID (раньше ServiceID=carrier code —
+// tripNK route|forward:58030:1 коллизировал, в каноне выживала одна
+// нитка из трёх).
+func TestFlattenRaspThreadUniqueTripKeys(t *testing.T) {
+	dep := "2026-09-11 15:10:00"
+	dep2 := "2026-09-11 17:10:00"
+	dep3 := "2026-09-11 18:30:00"
+	mk := func(uid, dep string) *RaspThread {
+		return &RaspThread{
+			UID: uid, Title: "Кемерово — Томск", Days: "ежедневно",
+			Carrier: struct {
+				Code  int    `json:"code"`
+				Title string `json:"title"`
+			}{Code: 58030, Title: "Томскавтоэкспресс ООО"},
+			Stops: []RaspThreadStop{
+				{Station: stationOf("s1", "Кемерово, автовокзал"), Departure: &dep},
+				{Station: stationOf("s2", "Томск, автовокзал"), Arrival: &dep},
+			},
+		}
+	}
+	threads := []*RaspThread{
+		mk("empty_4_f9623379t9623436_168", dep),
+		mk("empty_2_f9623379t9623436_168", dep2),
+		mk("empty_3_f9623379t9623436_168", dep3),
+	}
+	seen := map[int64]bool{}
+	for _, th := range threads {
+		res := FlattenRaspThread(th, RaspFlattenConfig{})
+		if res.State != "promoted" {
+			t.Fatalf("uid %s: state=%s", th.UID, res.State)
+		}
+		if seen[res.Trip.ServiceID] {
+			t.Fatalf("ServiceID %d не уникален между нитками (issue #7)", res.Trip.ServiceID)
+		}
+		seen[res.Trip.ServiceID] = true
+	}
+	if len(seen) != 3 {
+		t.Fatalf("хотим 3 разных ServiceID, got %d", len(seen))
+	}
+	// стабильность ключа между прогонами (idempotent ресинк)
+	res := FlattenRaspThread(threads[0], RaspFlattenConfig{})
+	if !seen[res.Trip.ServiceID] {
+		t.Fatalf("ServiceID нестабилен для uid %s", threads[0].UID)
+	}
+}
+
 func TestFlattenRaspThreadMidnight(t *testing.T) {
 	dep := "2026-09-04 23:50:00"
 	arr := "2026-09-05 00:20:00"

@@ -336,7 +336,9 @@ async function rtSearch(){
   Object.assign(args, from.place?{from_place:from.place}:{from_lat:from.lat,from_lon:from.lon});
   Object.assign(args, to.place?{to_place:to.place}:{to_lat:to.lat,to_lon:to.lon});
   const d=$('rtDate').value||new Date().toISOString().slice(0,10);
-  const dep=new Date(d+'T'+($('rtTime').value||'10:00')+':00Z');
+  // Локальное время пользователя (без Z): браузер резолвит в зону
+  // пользователя и toISOString() даёт RFC3339 с корректным offset.
+  const dep=new Date(d+'T'+($('rtTime').value||'10:00')+':00');
   args.departure=dep.toISOString();
   if($('rtAllowGap').checked) args.allow_gap=true;
   const mw=parseInt($('rtMaxWalk').value); if(mw>0) args.max_walk_minutes=mw;
