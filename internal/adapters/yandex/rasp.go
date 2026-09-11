@@ -75,6 +75,7 @@ type RaspThread struct {
 	Title         string `json:"title"`
 	Number        string `json:"number"`
 	TransportType string `json:"transport_type"`
+	FuzzyTimes    bool   `json:"fuzzy_times"`
 	Carrier       struct {
 		Code  int    `json:"code"`
 		Title string `json:"title"`

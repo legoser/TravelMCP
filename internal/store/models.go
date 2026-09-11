@@ -114,8 +114,11 @@ type StopTimeRow struct {
 	DropOffType   int
 	Dwell         int
 	IsProvisional bool
-	MatchScore    *float64
-	MatchMethod   string
+	// IsFuzzy — время ориентировочное (источник не дал, интерполировано):
+	// маршрутизация работает, пассажиру — «время уточнять у перевозчика».
+	IsFuzzy     bool
+	MatchScore  *float64
+	MatchMethod string
 }
 
 type TransferRow struct {

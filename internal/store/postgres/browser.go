@@ -19,14 +19,14 @@ func (p *PostgresStore) ListRoutesAdmin(ctx context.Context, limit, offset int, 
 	hasQ := q != ""
 	var total int
 	if hasQ {
-		_ = p.pool.QueryRow(ctx, `SELECT count(*) FROM routes r WHERE r.short_name ILIKE '%' || $1 || '%' OR r.long_name ILIKE '%' || $1 || '%' OR r.external_route_code ILIKE '%' || $1 || '%'`, q).Scan(&total)
+		_ = p.pool.QueryRow(ctx, `SELECT count(*) FROM routes r WHERE r.short_name ILIKE '%' || $1 || '%' OR r.long_name ILIKE '%' || $1 || '%' OR r.external_route_code ILIKE '%' || $1 || '%' OR EXISTS (SELECT 1 FROM trips t JOIN stop_times st ON st.trip_id=t.id JOIN stops_canonical sc ON sc.id=st.stop_id LEFT JOIN stop_names sn ON sn.stop_id=sc.id LEFT JOIN terminal_names tn ON tn.terminal_id=sc.terminal_id AND tn.lang='ru' WHERE t.route_id=r.id AND t.valid_to IS NULL AND (coalesce(sn.name, tn.name, '') ILIKE '%' || $1 || '%' OR sc.id::text = $1))`, q).Scan(&total)
 	} else {
 		_ = p.pool.QueryRow(ctx, `SELECT count(*) FROM routes`).Scan(&total)
 	}
 	var rows pgx.Rows
 	var err error
 	if hasQ {
-		rows, err = p.pool.Query(ctx, `SELECT r.id, r.source_provider, r.external_route_code, coalesce(r.short_name,''), coalesce(r.long_name,''), coalesce(r.mode,''), coalesce(c.name_ru,''), to_char(r.valid_from,'YYYY-MM-DD'), to_char(r.valid_to,'YYYY-MM-DD'), (SELECT count(*) FROM trips t WHERE t.route_id=r.id AND t.valid_to IS NULL) FROM routes r LEFT JOIN carriers c ON c.id=r.carrier_id WHERE r.short_name ILIKE '%' || $3 || '%' OR r.long_name ILIKE '%' || $3 || '%' OR r.external_route_code ILIKE '%' || $3 || '%' ORDER BY r.id LIMIT $1 OFFSET $2`, limit, offset, q)
+		rows, err = p.pool.Query(ctx, `SELECT r.id, r.source_provider, r.external_route_code, coalesce(r.short_name,''), coalesce(r.long_name,''), coalesce(r.mode,''), coalesce(c.name_ru,''), to_char(r.valid_from,'YYYY-MM-DD'), to_char(r.valid_to,'YYYY-MM-DD'), (SELECT count(*) FROM trips t WHERE t.route_id=r.id AND t.valid_to IS NULL) FROM routes r LEFT JOIN carriers c ON c.id=r.carrier_id WHERE r.short_name ILIKE '%' || $3 || '%' OR r.long_name ILIKE '%' || $3 || '%' OR r.external_route_code ILIKE '%' || $3 || '%' OR EXISTS (SELECT 1 FROM trips t JOIN stop_times st ON st.trip_id=t.id JOIN stops_canonical sc ON sc.id=st.stop_id LEFT JOIN stop_names sn ON sn.stop_id=sc.id LEFT JOIN terminal_names tn ON tn.terminal_id=sc.terminal_id AND tn.lang='ru' WHERE t.route_id=r.id AND t.valid_to IS NULL AND (coalesce(sn.name, tn.name, '') ILIKE '%' || $3 || '%' OR sc.id::text = $3)) ORDER BY r.id LIMIT $1 OFFSET $2`, limit, offset, q)
 	} else {
 		rows, err = p.pool.Query(ctx, `SELECT r.id, r.source_provider, r.external_route_code, coalesce(r.short_name,''), coalesce(r.long_name,''), coalesce(r.mode,''), coalesce(c.name_ru,''), to_char(r.valid_from,'YYYY-MM-DD'), to_char(r.valid_to,'YYYY-MM-DD'), (SELECT count(*) FROM trips t WHERE t.route_id=r.id AND t.valid_to IS NULL) FROM routes r LEFT JOIN carriers c ON c.id=r.carrier_id ORDER BY r.id LIMIT $1 OFFSET $2`, limit, offset)
 	}

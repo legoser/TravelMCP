@@ -92,7 +92,10 @@ CREATE TABLE IF NOT EXISTS carriers (
   address text,
   iata text,
   icao text,
-  sirena text
+  sirena text,
+  -- контакты для fuzzy-легов: «время уточнять у перевозчика» (§5.4)
+  phone text,
+  info_url text
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_carriers_inn ON carriers(inn) WHERE inn IS NOT NULL;
 -- uniq_carriers_provider_code removed: carrier_identifiers is source of truth
@@ -341,6 +344,7 @@ CREATE TABLE IF NOT EXISTS stop_times (
   drop_off_type smallint DEFAULT 0 CHECK(drop_off_type IN (0,1,2,3)),
   dwell int,
   is_provisional bool DEFAULT false,
+  is_fuzzy bool DEFAULT false,
   match_score real,
   match_method text CHECK (match_method IS NULL OR match_method IN ('code','scorepair')),
   PRIMARY KEY(trip_id, seq)

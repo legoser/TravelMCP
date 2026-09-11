@@ -11,6 +11,30 @@
 <div class="row" style="margin-top:10px"><input id="loginEmail" placeholder="email"><input id="loginPass" type="password" placeholder="пароль"><button onclick="doLogin()">Войти → получить токен</button><button class="secondary" onclick="doRegister()">Регистрация</button></div>
 <div id="loginMsg" class="muted" style="margin-top:8px"></div>
 </div>
+<div id="routeCard" class="card" style="border-left:4px solid var(--accent)">
+<div class="row" style="justify-content:space-between;flex-wrap:wrap"><h2 style="margin:0">Поиск маршрута</h2><span class="muted" style="font-size:12px">MCP find_route — живой прогон планировщика по канону</span></div>
+<div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
+<input id="rtFrom" placeholder="Откуда (Юрга / 55.72,84.90)" style="flex:1;min-width:180px">
+<span style="align-self:center">→</span>
+<input id="rtTo" placeholder="Куда (Кемерово / 55.35,86.06)" style="flex:1;min-width:180px">
+<button class="ok" onclick="rtSearch()">Найти маршрут</button>
+</div>
+<div class="row" style="margin-top:6px;gap:8px;flex-wrap:wrap;align-items:center">
+<label class="muted" style="cursor:pointer"><input type="checkbox" id="rtAllowGap" checked> разрешить gap (пешая жила)</label>
+<input id="rtDate" type="date" style="width:150px"><input id="rtTime" type="time" style="width:90px" value="10:00">
+<button class="secondary" style="font-size:12px" onclick="const el=$('rtAdv');el.style.display=el.style.display==='none'?'':'none'">⚙ Расширенные параметры</button>
+</div>
+<div id="rtAdv" style="display:none;margin-top:8px;padding:8px;border:1px solid #ddd;border-radius:6px">
+<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+<label class="muted">макс. пешком, мин</label><input id="rtMaxWalk" type="number" value="30" style="width:80px">
+<label class="muted">макс. пересадок</label><input id="rtMaxTransfers" type="number" value="-1" style="width:70px" title="-1 — без ограничения">
+<label class="muted">предпочтение</label><select id="rtPref" style="width:130px"><option value="">—</option><option value="arrival">arrival (быстрее)</option><option value="transfers">transfers (меньше пересадок)</option></select>
+<label class="muted">режимы</label><input id="rtModes" placeholder="BUS,COACH,RAIL…" style="width:180px" title="через запятую: BUS,COACH,RAIL,SUBWAY,TRAM,FLIGHT">
+</div>
+</div>
+<div id="rtOut" style="margin-top:10px"></div>
+</div>
+
 <div class="tabs"><div class="tab active" onclick="showTab('users')">Пользователи</div><div class="tab" onclick="showTab('keys')">Ключи</div><div class="tab" onclick="showTab('config')">Конфиг</div><div class="tab" onclick="showTab('dash')">Дашборд</div><div class="tab" onclick="showTab('collect')">Сбор</div><div class="tab" onclick="showTab('runs')">Прогоны</div><div class="tab" onclick="showTab('imports')">Импорты</div><div class="tab" onclick="showTab('terminals')">Терминалы</div><div class="tab" onclick="showTab('schedules')">Расписания</div><div class="tab" onclick="showTab('review')">Ревью</div><div class="tab" onclick="showTab('external')">Внешний API</div><div class="tab" onclick="showTab('quotas')">Квоты/Аудит</div></div>
 
 <div id="tab-users" class="card">

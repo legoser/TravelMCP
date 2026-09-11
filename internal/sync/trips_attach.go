@@ -51,8 +51,12 @@ type MatchedStopTime struct {
 	DepartureS    int                       `json:"departure_s"`
 	Codes         []model.AdaptedIdentifier `json:"codes,omitempty"`
 	IsProvisional bool                      `json:"is_provisional,omitempty"`
-	MatchScore    float64                   `json:"match_score,omitempty"`
-	MatchMethod   string                    `json:"match_method,omitempty"`
+	// IsFuzzy — время ориентировочное (источник не дал, интерполировано
+	// по timed-соседям в interpolateFuzzyTimes): маршрутизация работает,
+	// пассажиру показываем «время уточнять у перевозчика».
+	IsFuzzy     bool    `json:"is_fuzzy,omitempty"`
+	MatchScore  float64 `json:"match_score,omitempty"`
+	MatchMethod string  `json:"match_method,omitempty"`
 }
 
 type PromotableTrip struct {
@@ -113,6 +117,9 @@ type AttachReport struct {
 	Alert          bool                     `json:"alert"`
 	MidGaps        int                      `json:"mid_gaps"`
 	GappedPromoted int                      `json:"gapped_promoted"`
+	// FuzzyPromoted — рейсы, промоутнутые с интерполированными временами
+	// (стопы без времён в источнике, fallback §5.4).
+	FuzzyPromoted int `json:"fuzzy_promoted"`
 }
 
 // backbonePromotable — D-3: трип промоутится с дырками в середине, если оба
@@ -180,7 +187,7 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 			})
 			continue
 		}
-		if len(ft.Untimed) > 0 {
+		if len(ft.Untimed) > 0 && untimedPositions(ft) == 0 {
 			rep.Staged = append(rep.Staged, StagedTrip{
 				RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg,
 				Direction: ft.Direction, ServiceID: ft.ServiceID, Run: ft.Run,
@@ -221,6 +228,24 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 			rep.MidGaps += len(unmatched)
 			rep.GappedPromoted++
 			tripTag.Warn("trip backbone-promoted with mid_gaps", "matched_stops", len(matched), "gap_stops", len(unmatched))
+		}
+		// Fallback §5.4: стопы без времён сматчены — интерполируем по
+		// timed-соседям и помечаем is_fuzzy. Рейс маршрутизируем, время
+		// ориентировочное (пассажир: «время уточнять у перевозчика»).
+		if fuzzy := countFuzzy(matched); fuzzy > 0 {
+			if err := interpolateFuzzyTimes(matched); err != nil {
+				rep.Staged = append(rep.Staged, StagedTrip{
+					RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg,
+					Direction: ft.Direction, ServiceID: ft.ServiceID, Run: ft.Run,
+					State:          "incomplete_trip",
+					Reason:         err.Error(),
+					Unmatched:      append([]string{}, ft.Untimed...),
+					IsSyntheticKey: true, Carrier: ft.Carrier, CarrierINN: ft.CarrierINN, Weekdays: ft.Weekdays,
+				})
+				continue
+			}
+			rep.FuzzyPromoted++
+			tripTag.Info("trip promoted with fuzzy times", "fuzzy_stops", fuzzy)
 		}
 		collapsed := collapseConsecutive(matched)
 		if bad := checkMonotonic(collapsed); bad != "" {
@@ -371,6 +396,7 @@ func matchStops(ft model.FlatTrip, idx *matchIndex, source string, classFor func
 		}
 		used[matchedID] = true
 		arr, dep := 0, 0
+		fuzzy := s.ArrMin == nil && s.DepMin == nil
 		if s.ArrMin != nil {
 			arr = *s.ArrMin * 60
 		}
@@ -402,6 +428,7 @@ func matchStops(ft model.FlatTrip, idx *matchIndex, source string, classFor func
 			ArrivalS: arr, DepartureS: dep,
 			Codes:         pairCodes,
 			IsProvisional: !t.GeomFinalized,
+			IsFuzzy:       fuzzy,
 			MatchScore:    score.Value,
 			MatchMethod:   method,
 		})
@@ -410,6 +437,71 @@ func matchStops(ft model.FlatTrip, idx *matchIndex, source string, classFor func
 		matched[i].Seq = i
 	}
 	return matched, worstReason, worstScore, unmatched
+}
+
+// untimedPositions — сколько untimed-стопов присутствует в Stops с
+// сохранённой позицией (fallback-форма registry-parser). 0 — старый
+// формат: untimed только списком имён, позиций нет, промоутить нечего.
+func untimedPositions(ft model.FlatTrip) int {
+	n := 0
+	for _, s := range ft.Stops {
+		if s.ArrMin == nil && s.DepMin == nil {
+			n++
+		}
+	}
+	return n
+}
+
+// countFuzzy — число сматченных стопов с ориентировочным временем.
+func countFuzzy(matched []MatchedStopTime) int {
+	n := 0
+	for _, m := range matched {
+		if m.IsFuzzy {
+			n++
+		}
+	}
+	return n
+}
+
+// interpolateFuzzyTimes — линейная интерполяция времен fuzzy-стопов по
+// ближайшим timed-соседям (по позиции). Оба конца fuzzy — ошибка:
+// время цеплять не к чему, рейс не промоутится. Внутренний fuzzy-стоп
+// получает arrival=departure=интерполяция sec; цепочки подряд идущих
+// fuzzy-стопов делят интервал по числу перегонов.
+func interpolateFuzzyTimes(matched []MatchedStopTime) error {
+	if len(matched) == 0 {
+		return nil
+	}
+	if matched[0].IsFuzzy || matched[len(matched)-1].IsFuzzy {
+		return fmt.Errorf("крайний стоп без времени: интерполяция невозможна")
+	}
+	i := 0
+	for i < len(matched) {
+		if !matched[i].IsFuzzy {
+			i++
+			continue
+		}
+		start := i
+		for i < len(matched) && matched[i].IsFuzzy {
+			i++
+		}
+		if i >= len(matched) {
+			break
+		}
+		left := matched[start-1]
+		right := matched[i]
+		gaps := i - start + 1
+		span := right.DepartureS - left.ArrivalS
+		if span < 0 {
+			return fmt.Errorf("интерполяция: отрицательный интервал (%ds)", span)
+		}
+		for k, pos := 0, start; pos < i; k, pos = k+1, pos+1 {
+			t := left.ArrivalS + span*(k+1)/gaps
+			matched[pos].ArrivalS = t
+			matched[pos].DepartureS = t
+		}
+	}
+	return nil
 }
 
 func reasonRank(r string) int {

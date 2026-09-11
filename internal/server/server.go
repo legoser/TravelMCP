@@ -809,6 +809,7 @@ func (s *Server) handleAdminUpdateTerminal(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		_ = s.store.WriteAuditLog(r.Context(), actorID, "unlock_terminal", "terminal", &tid, fmt.Sprintf(`{"id":%d}`, tid))
+		mcp.BumpCanonVersion()
 		writeJSONResponse(w, http.StatusOK, map[string]any{"id": tid, "is_locked": false, "unapproved": true})
 		return
 	}
@@ -854,6 +855,7 @@ func (s *Server) handleAdminUpdateTerminal(w http.ResponseWriter, r *http.Reques
 			}
 		}
 		_ = s.store.WriteAuditLog(r.Context(), actorID, "approve_terminal", "terminal", &tid, fmt.Sprintf(`{"name":%q,"lat":%f,"lon":%f}`, req.Name, req.Lat, req.Lon))
+		mcp.BumpCanonVersion()
 		writeJSONResponse(w, http.StatusOK, map[string]any{"id": tid, "is_locked": true, "approved": true, "last_verified_at": now})
 		return
 	}
@@ -873,6 +875,7 @@ func (s *Server) handleAdminUpdateTerminal(w http.ResponseWriter, r *http.Reques
 	}
 	_ = s.store.SaveReviewQueue(r.Context(), model.ReviewQueueEntry{EntityType: "terminal", EntityID: tid, Reason: "conflicts_with_confirmed", Score: 1.0})
 	_ = s.store.WriteAuditLog(r.Context(), actorID, "update_terminal", "terminal", &tid, fmt.Sprintf(`{"name":%q,"lat":%f,"lon":%f}`, req.Name, req.Lat, req.Lon))
+	mcp.BumpCanonVersion()
 	writeJSONResponse(w, http.StatusOK, map[string]any{"id": tid, "is_locked": true})
 }
 
@@ -916,6 +919,7 @@ func (s *Server) handleAdminMergeTerminals(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	_ = s.store.WriteAuditLog(r.Context(), actorID, "merge_terminal", "terminal", &req.NewID, fmt.Sprintf(`{"old_id":%d,"new_id":%d,"reason":%q}`, req.OldID, req.NewID, req.Reason))
+	mcp.BumpCanonVersion()
 	writeJSONResponse(w, http.StatusOK, map[string]any{"old_id": req.OldID, "new_id": req.NewID, "reason": req.Reason})
 }
 
@@ -956,6 +960,7 @@ func (s *Server) handleAdminCanonReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.store.WriteAuditLog(r.Context(), actorID, "canon_reset", "terminal", nil, fmt.Sprintf(`{"reason":%q,"counts":%v}`, req.Reason, counts))
+	mcp.BumpCanonVersion()
 	writeJSONResponse(w, http.StatusOK, map[string]any{"status": "ok", "deleted": counts})
 }
 
@@ -988,6 +993,7 @@ func (s *Server) handleAdminDeleteTerminal(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	_ = s.store.WriteAuditLog(r.Context(), actorID, "delete_terminal", "terminal", &tid, fmt.Sprintf(`{"id":%d}`, tid))
+	mcp.BumpCanonVersion()
 	writeJSONResponse(w, http.StatusOK, map[string]any{"id": tid, "deleted": true})
 }
 

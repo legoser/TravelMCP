@@ -195,6 +195,55 @@ func TestAttachDuplicateAmbiguousReviews(t *testing.T) {
 
 func intPtr(v int) *int { return &v }
 
+// TestAttachFuzzyFallback — §5.4: стыковочный стоп без времени (untimed,
+// позиция сохранена) матчится на терминал, время интерполируется по
+// timed-соседям, стоп помечается is_fuzzy — рейс промоутится и
+// маршрутизируется с пометкой «время уточнять у перевозчика».
+func TestAttachFuzzyFallback(t *testing.T) {
+	latA, lonA := 55.0, 86.0
+	latB, lonB := 55.5, 86.5
+	latC, lonC := 56.0, 87.0
+	terms := []AttachTerminal{
+		{ID: 1, Name: "Альфа", Lat: &latA, Lon: &lonA, Settlement: "альфа", Transport: "bus", Source: "osm", GeomFinalized: true},
+		{ID: 2, Name: "Бета", Lat: &latB, Lon: &lonB, Settlement: "бета", Transport: "bus", Source: "osm", GeomFinalized: true},
+		{ID: 3, Name: "Гамма", Lat: &latC, Lon: &lonC, Settlement: "гамма", Transport: "bus", Source: "osm", GeomFinalized: true},
+	}
+	trips := []model.FlatTrip{{
+		RouteReg: "42.10.100", Direction: "forward", ServiceID: 1, Period: "winter",
+		Stops: []model.FlatStop{
+			{StopID: "a", Name: "Альфа", Region: "42", Lat: &latA, Lon: &lonA, ArrMin: intPtr(600), DepMin: intPtr(600)},
+			{StopID: "b", Name: "Бета", Region: "42", Lat: &latB, Lon: &lonB, IsFuzzy: true},
+			{StopID: "c", Name: "Гамма", Region: "42", Lat: &latC, Lon: &lonC, ArrMin: intPtr(780), DepMin: intPtr(780)},
+		},
+		Untimed: []string{"Бета"},
+	}}
+	in := baseInput(trips, terms)
+	in.ClassForRegion = func(string) model.DensityClass { return model.DensityRural }
+	rep, err := AttachTrips(context.Background(), in)
+	if err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	if len(rep.Promoted) != 1 {
+		t.Fatalf("fuzzy-рейс должен промоутиться: promoted=%d staged=%+v", len(rep.Promoted), rep.Staged)
+	}
+	if rep.FuzzyPromoted != 1 {
+		t.Fatalf("fuzzy_promoted=%d", rep.FuzzyPromoted)
+	}
+	sts := rep.Promoted[0].StopTimes
+	if len(sts) != 3 {
+		t.Fatalf("stop_times=%d", len(sts))
+	}
+	if !sts[1].IsFuzzy {
+		t.Fatalf("средний стоп должен быть is_fuzzy")
+	}
+	if sts[1].ArrivalS != 690*60 {
+		t.Fatalf("интерполяция: середина 10:00→13:00 → 11:30=41400s, got arr=%d dep=%d", sts[1].ArrivalS, sts[1].DepartureS)
+	}
+	if msg := checkMonotonic(sts); msg != "" {
+		t.Fatalf("монотонность после интерполяции: %s", msg)
+	}
+}
+
 func TestAttachNonMonotonicDead(t *testing.T) {
 	lat, lon := 55.34, 86.06
 	lat2, lon2 := 55.03, 82.89

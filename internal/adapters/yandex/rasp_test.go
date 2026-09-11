@@ -92,11 +92,11 @@ func TestFlattenRaspThread(t *testing.T) {
 	if len(ft.Stops) != 2 {
 		t.Fatalf("stops=%d", len(ft.Stops))
 	}
-	if ft.Stops[0].DepMin == nil || *ft.Stops[0].DepMin != 0 {
-		t.Fatalf("первый стоп dep_min=0, got %v", ft.Stops[0].DepMin)
+	if ft.Stops[0].DepMin == nil || *ft.Stops[0].DepMin != 15 {
+		t.Fatalf("первый стоп dep_min=15 (00:15 от полуночи), got %v", ft.Stops[0].DepMin)
 	}
-	if ft.Stops[1].ArrMin == nil || *ft.Stops[1].ArrMin != 3*60+15 {
-		t.Fatalf("второй стоп arr_min=195, got %v", ft.Stops[1].ArrMin)
+	if ft.Stops[1].ArrMin == nil || *ft.Stops[1].ArrMin != 3*60+30 {
+		t.Fatalf("второй стоп arr_min=210 (03:30 от полуночи), got %v", ft.Stops[1].ArrMin)
 	}
 	if ft.Weekdays[0] != 0 || len(ft.Weekdays) != 7 {
 		t.Fatalf("weekdays=%v", ft.Weekdays)
@@ -122,8 +122,8 @@ func TestFlattenRaspThreadMidnight(t *testing.T) {
 	if res.State != "promoted" {
 		t.Fatalf("state=%s", res.State)
 	}
-	if got := res.Trip.Stops[1].ArrMin; got == nil || *got != 30 {
-		t.Fatalf("переход через полночь: 00:20 после 23:50 → 30 мин, got %v", got)
+	if got := res.Trip.Stops[1].ArrMin; got == nil || *got != 24*60+20 {
+		t.Fatalf("переход через полночь: 00:20 после 23:50 → 24*60+20 мин, got %v", got)
 	}
 }
 

@@ -81,11 +81,13 @@ func FlattenTrips(ds reestrDataset, source string) ([]FlatTrip, FlattenStats) {
 				b := blockOf(s, period)
 				if b == nil {
 					ft.Untimed = append(ft.Untimed, s.Stop)
+					ft.Stops = append(ft.Stops, untimedFlatStop(s, stops, source))
 					continue
 				}
 				bd, _ := ParseBlockDays(blockDaysOf(b))
 				if bd.None {
 					ft.Untimed = append(ft.Untimed, s.Stop)
+					ft.Stops = append(ft.Stops, untimedFlatStop(s, stops, source))
 					continue
 				}
 				if bd.Parity {
@@ -95,6 +97,7 @@ func FlattenTrips(ds reestrDataset, source string) ([]FlatTrip, FlattenStats) {
 				depMin, depDays, depHasDays, hasDep := cellAt(b.Dep, run)
 				if !hasArr && !hasDep {
 					ft.Untimed = append(ft.Untimed, s.Stop)
+					ft.Stops = append(ft.Stops, untimedFlatStop(s, stops, source))
 					continue
 				}
 				if !hasArr {
@@ -163,6 +166,25 @@ func blockOf(st reestrSchedStop, period string) *reestrBlock {
 		return st.Winter
 	}
 	return st.Summer
+}
+
+// untimedFlatStop — стоп без времён сохраняет позицию в последовательности
+// (fallback §5.4): attach сматчит терминал и интерполирует время по соседям,
+// пометив is_fuzzy (пассажиру — «время уточнять у перевозчика»).
+func untimedFlatStop(s reestrSchedStop, stops map[string]reestrStop, source string) FlatStop {
+	st := stops[s.Stop]
+	fs := FlatStop{
+		StopID: s.Stop,
+		Name:   st.Name,
+		Region: s.Region,
+		Lat:    st.Lat,
+		Lon:    st.Lon,
+		IsFuzzy: true,
+	}
+	if st.OpReg != "" {
+		fs.Codes = []AdaptedIdentifier{{System: source, CodeType: "op_reg", Code: st.OpReg}}
+	}
+	return fs
 }
 
 func blockHasTimes(b *reestrBlock) bool {

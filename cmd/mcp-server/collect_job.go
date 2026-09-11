@@ -16,6 +16,7 @@ import (
 	"travelmcp/internal/adapters/yandex"
 	"travelmcp/internal/config"
 	"travelmcp/internal/jobs"
+	"travelmcp/internal/mcp"
 	"travelmcp/internal/model"
 	"travelmcp/internal/skeleton"
 	"travelmcp/internal/store"
@@ -94,6 +95,7 @@ func (cr *CollectRunner) runSkeleton(ctx context.Context, p collectPayload, logg
 		return err
 	}
 	logger.Info("collect skeleton complete", "in", sum.In, "written", sum.Written, "review", sum.Review, "chunks", sum.Chunks)
+	mcp.BumpCanonVersion()
 	return nil
 }
 
@@ -266,6 +268,7 @@ func (cr *CollectRunner) runTrips(ctx context.Context, p collectPayload, logger 
 	}
 	logger.Info("collect trips complete", "routes", sum.Routes, "full_rate", sum.FullTripRate,
 		"promoted", lenSumByRoute(sum, "Promoted"), "staged", lenSumByRoute(sum, "Staged"))
+	mcp.BumpCanonVersion()
 	return nil
 }
 

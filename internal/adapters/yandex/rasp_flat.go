@@ -181,21 +181,17 @@ func FlattenRaspThread(t *RaspThread, cfg RaspFlattenConfig) RaspFlattenResult {
 			},
 		}
 		if hasArr {
-			a := arr
+			a := rollMidnight(arr, firstDep)
 			stop.ArrMin = &a
 		}
 		if hasDep {
-			d := dep
+			d := rollMidnight(dep, firstDep)
 			stop.DepMin = &d
 		}
 		stops = append(stops, stop)
 	}
 	if timed < 2 || firstDep < 0 {
 		return RaspFlattenResult{State: "no_times", Detail: "нет двух timed-стопов"}
-	}
-	for i := range stops {
-		stops[i].ArrMin = shiftFromBase(stops[i].ArrMin, firstDep)
-		stops[i].DepMin = shiftFromBase(stops[i].DepMin, firstDep)
 	}
 	first := stops[0]
 	if first.DepMin == nil {
@@ -226,17 +222,15 @@ func clockOf(s *string) (int, bool) {
 	return parseRaspClock(*s)
 }
 
-// shiftFromBase — абсолютные минуты суток → относительные от base;
-// откат за полночь получает +1440 (вечерний рейс, прибывающий завтра).
-func shiftFromBase(v *int, base int) *int {
-	if v == nil {
-		return nil
+// rollMidnight — абсолютные минуты суток с коррекцией перехода через
+// полночь: время раньше первого отправления нитки означает следующие
+// сутки (+1440). Времена остаются абсолютными от полуночи: attach и
+// LoadNetwork трактуют их как секунды/минуты суток без сдвига базы.
+func rollMidnight(v, firstDep int) int {
+	if v < firstDep {
+		return v + 24*60
 	}
-	out := *v - base
-	if out < 0 {
-		out += 24 * 60
-	}
-	return &out
+	return v
 }
 
 func raspCarrierCode(code int) int {

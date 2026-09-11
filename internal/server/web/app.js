@@ -307,7 +307,7 @@ async function callExternal(){
 function useExtCand(lat,lon){$('extLat').value=lat;$('extLon').value=lon;toast('Координаты подставлены: '+lat+','+lon)}
 async function loadQuotas(){try{const q=await api('/api/v1/quotas');const tb=$('quotasBody');tb.innerHTML='';(q||[]).forEach(r=>{const tr=document.createElement('tr');tr.innerHTML='<td>'+r.Provider+'</td><td>'+r.Day+'</td><td>'+r.Used+'/'+r.Limit+'</td><td>'+(r.ResetAt||'—')+'</td>';tb.appendChild(tr)});if((q||[]).length===0) tb.innerHTML='<tr><td colspan="4" class="muted">нет данных</td></tr>'}catch(e){$('quotasBody').innerHTML='<tr><td colspan="4" class="muted">'+e.message+'</td></tr>'}}
 async function loadAudit(){try{const a=await api('/api/v1/admin/audit');const tb=$('auditBody');tb.innerHTML='';(a||[]).forEach(r=>{const tr=document.createElement('tr');tr.innerHTML='<td>'+r.ID+'</td><td>'+(r.UserID||'—')+'</td><td>'+r.Action+'</td><td>'+(r.EntityType||'—')+':'+(r.EntityID||'—')+'</td><td>'+fmtTime(r.At)+'</td>';tb.appendChild(tr)});if((a||[]).length===0) tb.innerHTML='<tr><td colspan="5" class="muted">пусто</td></tr>'}catch(e){$('auditBody').innerHTML='<tr><td colspan="5" class="muted">'+e.message+'</td></tr>'}}
-(async()=>{await updateWho();loadUsers();loadDash();})();
+(async()=>{await updateWho();loadUsers();loadDash();const rd=$('rtDate');if(rd&&!rd.value) rd.value=new Date().toISOString().slice(0,10);})();
 
 async function loadCollectRegions(){try{const j=await api('/api/v1/collect/regions');const sel=$('colRegion');const cur=sel.value;sel.innerHTML='';if(!(j||[]).length){sel.innerHTML='<option value="">— дампа нет —</option>';$('colRegionsBody').innerHTML='<tr><td colspan="3" class="muted">Яндекс-дамп не найден (sync.yandex_dump_path)</td></tr>';return}j.forEach(r=>{const o=document.createElement('option');o.value=r.region;o.textContent=r.region+' ('+r.terminal_stations+')';sel.appendChild(o)});if(cur) sel.value=cur;const tb=$('colRegionsBody');tb.innerHTML='';j.forEach(r=>{const tr=document.createElement('tr');tr.innerHTML='<td>'+r.region+'</td><td>'+r.terminal_stations+'</td><td><button class="secondary" onclick="pickRegion(\''+r.region.replace(/'/g,"\\'")+'\')">выбрать</button></td>';tb.appendChild(tr)})}catch(e){$('colRegionsBody').innerHTML='<tr><td colspan="3" class="muted">'+e.message+'</td></tr>'}}
 function pickRegion(r){$('colRegion').value=r;toast('Регион выбран: '+r)}
@@ -320,6 +320,74 @@ async function collectTrips(){const region=$('colRegion').value;if(!region) retu
 async function canonReset(){if(!confirm('УДАЛИТЬ ВСЕ терминалы и рейсы? Дубликаты после пересбора не вернуть — история синков тоже стирается. Кэш Яндекса останется.')) return;if(prompt('Введите RESET для подтверждения:')!=='RESET') return toast('Подтверждение не введено — отмена',true);try{const j=await api('/api/v1/admin/canon/reset',{method:'POST',body:JSON.stringify({confirm:'RESET',reason:'ui reset'})});const d=j.deleted||{};const total=Object.values(d).reduce((a,b)=>a+b,0);$('colResetMsg').textContent='Канон очищен: удалено '+total+' строк (терминалов: '+(d.terminals||0)+', рейсов: '+(d.trips||0)+', маршрутов: '+(d.routes||0)+')';toast('Канон очищен ('+total+' строк)');loadCollectRegions()}catch(e){$('colResetMsg').textContent='Ошибка: '+e.message;toast(e.message,true)}}
 
 async function loadRuns(){try{const j=await api('/api/v1/sync/runs?limit=50');const tb=$('runsBody');tb.innerHTML='';(j||[]).forEach(r=>{const tr=document.createElement('tr');const st='<span class="badge '+(r.State==='done'?'active':(r.State==='dead'?'blocked':'pending'))+'">'+r.State+'</span>';tr.innerHTML='<td>'+r.ID+'</td><td><code>'+r.Kind+'</code></td><td>'+(r.Tag||'—')+'</td><td>'+st+'</td><td>'+(r.CreatedAt||'—')+'</td><td>'+(r.FinishedAt||'—')+'</td><td><button class="secondary" onclick="showRunDetail('+r.ID+')">сводка →</button></td>';tb.appendChild(tr)});if((j||[]).length===0) tb.innerHTML='<tr><td colspan="7" class="muted">прогонов нет</td></tr>'}catch(e){$('runsBody').innerHTML='<tr><td colspan="7" class="muted">'+e.message+'</td></tr>'}}
+
+// ── Поиск маршрута (MCP find_route через /mcp) ─────────────────────
+function rtParsePoint(v){
+  v=(v||'').trim(); if(!v) return null;
+  const m=v.match(/^(-?\d+(\.\d+)?),\s*(-?\d+(\.\d+)?)$/);
+  if(m) return {lat:parseFloat(m[1]),lon:parseFloat(m[3])};
+  return {place:v};
+}
+function rtHM(d){const t=new Date(d);return ('0'+t.getHours()).slice(-2)+':'+('0'+t.getMinutes()).slice(-2)}
+async function rtSearch(){
+  const from=rtParsePoint($('rtFrom').value), to=rtParsePoint($('rtTo').value), out=$('rtOut');
+  if(!from||!to) return toast('Укажите откуда и куда',true);
+  const args={};
+  Object.assign(args, from.place?{from_place:from.place}:{from_lat:from.lat,from_lon:from.lon});
+  Object.assign(args, to.place?{to_place:to.place}:{to_lat:to.lat,to_lon:to.lon});
+  const d=$('rtDate').value||new Date().toISOString().slice(0,10);
+  const dep=new Date(d+'T'+($('rtTime').value||'10:00')+':00Z');
+  args.departure=dep.toISOString();
+  if($('rtAllowGap').checked) args.allow_gap=true;
+  const mw=parseInt($('rtMaxWalk').value); if(mw>0) args.max_walk_minutes=mw;
+  const mt=parseInt($('rtMaxTransfers').value); if(mt>=0) args.max_transfers=mt;
+  if($('rtPref').value) args.preference=$('rtPref').value;
+  if(($('rtModes').value||'').trim()) args.transit_modes=$('rtModes').value.trim();
+  out.innerHTML='<span class="muted">поиск…</span>';
+  try{
+    const r=await fetch('/mcp',{method:'POST',headers:authHeaders({'Accept':'application/json'}),body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'find_route',arguments:args}})});
+    const j=await r.json();
+    if(!j.result||!j.result.content){out.innerHTML='<b style="color:var(--bad)">MCP: '+(j.error?JSON.stringify(j.error):'пустой ответ')+'</b>';return}
+    let text=j.result.content[0].text, journey=null;
+    try{journey=JSON.parse(text)}catch(e){}
+    if(!journey||!journey.legs){
+      const isErr=j.result.isError;
+      out.innerHTML='<div style="border-left:4px solid '+(isErr?'var(--bad)':'var(--bad)')+';padding:8px;background:#fef2f2;border-radius:4px"><b>'+(isErr?'Маршрут не найден':'Ошибка')+'</b><br><span style="font-size:13px">'+(isErr?text:JSON.stringify(j.result))+'</span></div>';
+      return;
+    }
+    out.innerHTML=rtRenderJourney(journey,from,to);
+  }catch(e){out.innerHTML='<b style="color:var(--bad)">Ошибка: '+e.message+'</b>'}
+}
+function rtModeBadge(m){
+  const map={BUS:'🚌',COACH:'🚍',RAIL:'🚆',SUBWAY:'🚇',TRAM:'🚊',FLIGHT:'✈️',TAXI:'🚕',CAR:'🚗',WALK:'🚶',BICYCLE:'🚲',SCOOTER:'🛴',TRANSFER:'⇄'};
+  return '<span class="badge pending" style="font-size:11px">'+(map[m]||'')+' '+m+'</span>';
+}
+function rtLegRow(l){
+  const nm=x=>x.name||x.stop_id||'—';
+  const coord=x=>(+x.lat).toFixed(3)+','+(+x.lon).toFixed(3);
+  const hint=l.time_hint?' <span class="badge pending" style="font-size:11px" title="'+l.time_hint+'">⚠ время уточнить</span>':'';
+  return '<tr>'
+    +'<td style="white-space:nowrap"><b>'+rtHM(l.departure)+'</b> → <b>'+rtHM(l.arrival)+'</b>'+hint+'</td>'
+    +'<td style="white-space:nowrap">'+rtModeBadge(l.mode)+'</td>'
+    +'<td>'+nm(l.from)+' <span class="muted" style="font-size:11px">'+coord(l.from)+'</span><br>↓ '+Math.round((new Date(l.arrival)-new Date(l.departure))/60000)+' мин'+(l.cost&&l.cost.amount?' • '+l.cost.amount+' '+l.cost.currency:'')+'</td>'
+    +'<td>'+nm(l.to)+' <span class="muted" style="font-size:11px">'+coord(l.to)+'</span></td>'
+    +'<td class="muted" style="font-size:12px">'+(l.route_id?'<code>'+l.route_id+'</code>':'')+(l.trip_id?'<br>trip '+l.trip_id:'')+'</td>'
+    +'</tr>';
+}
+function rtRenderJourney(j,from,to){
+  let h='<div style="border-left:4px solid var(--ok);padding:8px;background:#f0fdf4;border-radius:4px;margin-bottom:8px">'
+    +'<b>✓ Маршрут найден</b>: '+rtHM(j.departure)+' → '+rtHM(j.arrival)
+    +' • в пути '+Math.round((new Date(j.arrival)-new Date(j.departure))/60000)+' мин'
+    +' • пересадок: '+j.transfers
+    +' • легов: '+j.legs.length+'</div>';
+  h+='<div style="overflow:auto"><table style="font-size:13px"><thead><tr><th>время</th><th>режим</th><th>откуда</th><th>куда</th><th>рейс</th></tr></thead><tbody>';
+  j.legs.forEach(l=>h+=rtLegRow(l));
+  h+='</tbody></table></div>';
+  if(j.alternatives&&j.alternatives.length){
+    h+='<div class="muted" style="margin-top:6px;font-size:12px">Альтернативы: '+j.alternatives.length+' (не показаны)</div>';
+  }
+  return h;
+}
 async function showRunDetail(id){const box=$('runDetail');box.classList.remove('hidden');box.textContent='загрузка…';try{const j=await api('/api/v1/sync/runs/'+id);let sum={};try{sum=JSON.parse(j.Summary||'{}')}catch(e){sum={}};const pretty={run:j.ID,kind:j.Kind,tag:j.Tag,state:j.State,created:j.CreatedAt,finished:j.FinishedAt,summary:sum};box.textContent=JSON.stringify(pretty,null,2)}catch(e){box.textContent='Ошибка: '+e.message}}
 
 async function validateTermExternal(id){const box=$('termValidateOut');if(!box) return;box.innerHTML='<span class="muted">проверка через Overpass/Nominatim…</span>';try{const card=await api('/api/v1/admin/terminals/'+id+'/card');const prov=$('termValProvider')&&$('termValProvider').value||'overpass';const j=await api('/api/v1/admin/external-call',{method:'POST',body:JSON.stringify({provider:prov,query:card.name||'',lat:card.lat,lon:card.lon})});let h='';if(j.candidates&&j.candidates.length){h='<table style="margin-top:6px"><thead><tr><th>имя ('+prov+')</th><th>lat/lon</th><th>sim</th><th></th></tr></thead><tbody>';j.candidates.forEach(c=>{h+='<tr><td>'+c.name+'</td><td>'+c.lat+','+c.lon+'</td><td>'+(c.similarity!=null?(+c.similarity).toFixed(2):'—')+'</td><td><button class="secondary" onclick="fillTerm('+id+',\''+(c.name||'').replace(/'/g,"\\'")+'\',\'\', '+c.lat+','+c.lon+')">в поля правки →</button></td></tr>'});h+='</tbody></table>';if(j.settlement) h+='<div class="muted" style="margin-top:4px">НП из геокодера: <b>'+j.settlement+'</b></div>';if(j.validated) h+='<div class="muted" style="margin-top:2px">Сверка имени: <b style="color:var(--ok)">совпадение ≥ порога</b></div>';else h+='<div class="muted" style="margin-top:2px">Сверка имени: ниже порога — проверьте кандидатов вручную</div>'}else{h='<span class="muted">кандидатов нет (квота исчерпана или ничего не найдено)</span>'}box.innerHTML=h}catch(e){box.innerHTML='<span class="muted">Ошибка: '+e.message+'</span>';toast(e.message,true)}}
