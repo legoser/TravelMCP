@@ -1,6 +1,6 @@
-# 05. Дорожная карта
+No. 05. Roadmap
 
-> Актуально: `13-mission.md` — миссия, `14-plan.md` — план, структура БД и действия. Этот файл оставлен как указатель.
+> Current: `13-mission.md` — mission, `14-plan.md` — plan, database structure, and actions. This file remains as a pointer.
 
-См. `docs/13-mission.md` и `docs/14-plan.md`. Старые этапы `0–6` и консолидированный рефакторинг `09` утратили актуальность и очищены. Новые фазы — в `14-plan.md:2`.
+See `docs/13-mission.md` and `docs/14-plan.md`.
 

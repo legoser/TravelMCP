@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -16,6 +17,13 @@ func nullIfEmpty(s string) sql.NullString {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: s, Valid: true}
+}
+
+func unixTsOrNull(ts *int64) any {
+	if ts == nil {
+		return nil
+	}
+	return time.Unix(*ts, 0).UTC()
 }
 
 func transportTypesValue(types []string) []string {
@@ -74,6 +82,29 @@ func (p *PostgresStore) FinishSyncRun(ctx context.Context, id int64, state, summ
 	}
 	_, err := p.pool.Exec(ctx, `UPDATE sync_runs SET state=$2, finished_at=now(), summary=$3::jsonb WHERE id=$1`, id, state, summaryOrEmpty(summary))
 	return err
+}
+
+func (p *PostgresStore) ListSyncRuns(ctx context.Context, limit int) ([]store.SyncRunRow, error) {
+	if p.pool == nil {
+		return nil, errNotImplemented
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := p.pool.Query(ctx, `SELECT id, plan_id, kind, coalesce(input_sha,''), coalesce(tag,''), state, summary::text, to_char(created_at,'YYYY-MM-DD HH24:MI:SS'), coalesce(to_char(finished_at,'YYYY-MM-DD HH24:MI:SS'),'') FROM sync_runs ORDER BY id DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.SyncRunRow
+	for rows.Next() {
+		var r store.SyncRunRow
+		if err := rows.Scan(&r.ID, &r.PlanID, &r.Kind, &r.InputSHA, &r.Tag, &r.State, &r.Summary, &r.CreatedAt, &r.FinishedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 func summaryOrEmpty(s string) string {
@@ -191,6 +222,10 @@ func (t *pgTxStore) CreateSyncRun(ctx context.Context, r store.SyncRunRow) (int6
 func (t *pgTxStore) FinishSyncRun(ctx context.Context, id int64, state, summary string) error {
 	_, err := t.tx.Exec(ctx, `UPDATE sync_runs SET state=$2, finished_at=now(), summary=$3::jsonb WHERE id=$1`, id, state, summaryOrEmpty(summary))
 	return err
+}
+
+func (t *pgTxStore) ListSyncRuns(ctx context.Context, limit int) ([]store.SyncRunRow, error) {
+	return t.parent.ListSyncRuns(ctx, limit)
 }
 
 func (p *PostgresStore) EnsureSyncChunk(ctx context.Context, runID int64, entity, chunkKey string) (int64, error) {

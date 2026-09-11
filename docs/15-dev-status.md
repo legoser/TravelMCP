@@ -53,6 +53,7 @@
 
 ```
 cmd/trips-sync/        раннер массового attach Фазы 4.4 (конфиг → контракт → план → coverage/gate → attach → персист → sync_runs + ops-лог; флаги --regions/--wait/--force/--dry-run/--trust-nk)
+cmd/mcp-server/collect_job.go   job sync_collect_region (ручной сбор региона §5.3-dev: skeleton|trips из Яндекс-дампа/кэша Rasp через квоты)
 cmd/gtfs-validate/    CI-gate производственного GTFS: fixture-zip через provenance-gate + MobilityData gtfs-validator (make gtfs-validate, GTFS_VALIDATOR_BIN)
 internal/providers/     Provider-интерфейс, Registry, synth (мок), gtfs (адаптер-обёртка; legacy intercity вырезан, Фаза 6)
 internal/geo/           гаверсин, ближайшие остановки, время пешего доступа, таблица кодов регионов (общие геодезические константы: MetersPerDegree, JoinCellSizeDeg, JoinGeoWindowM)
@@ -97,6 +98,7 @@ scripts/parity-check.py      паритет store vs legacy-срез реест�
 | `SYNC_ATTACH_WAIT` | таймаут барьера attach: ждать прохождения coverage-gate до истечения (например `5m`), пусто — не ждать, пропущенные регионы — в `skipped_routes` + starvation-warning (план §4.2/§5.4; конфиг `sync.attach_wait`, Фаза 4.4) |
 | `VERIFICATION_SCORE_MARGIN` / `VERIFICATION_SCORE_AMBIGUITY` | полоса ниже порога → `low_confidence` (0.1) и зазор top1−top2 → `duplicate_ambiguous` (0.05); конфиг `verification.score_margin` / `verification.score_ambiguity` (ScorePair, Фаза 4.1) |
 | `SYNC_TRIPS_MAX_SPEED_KMH` | физический предел скорости автобуса для hard-валидатора, старт 200 (план §5.1; конфиг `sync.trips_max_speed_kmh`, Фаза 4.2) |
+| `YANDEX_RASP_CACHE_DIR` | каталог дискового кэша Rasp API (`schedule_*`/`thread_*`, cache-first; конфиг `yandex.rasp_cache_dir`, дефолт `data/yandex/cache`) |
 | `GEOCODER_TTL_VERIFIED` / `GEOCODER_TTL_DISPUTED` | 90д / 7д для `geocode_cache` (план, Фаза 2; конфиг `geocoder.ttl_*`) |
 | *(конфиг-файл, не env)* | `density_thresholds` + `trust[pair]` ScorePair — путь в `configs/`, не env (план §3.8) |
 
@@ -188,6 +190,182 @@ scripts/parity-check.py      паритет store vs legacy-срез реест�
   rail»: OSM-скелет — канонический гео-факт, route_type фида — claim
   маршрута; recompute `transport_types` объединяет (union), subway-терминал
   с rail-маршрутом честно носит `rail+subway`.
+
+### 5.3 Ручной режим сбора «Яндекс-первыми» (выполнено 2026-09-11)
+
+Пилот одного источника: дамп Яндекс-станций → unverified-скелет →
+cache-first сбор расписаний → attach по code-match → канон + live-пробы
+`find_route`. Валидация и одобрение терминалов — руками оператора в UI
+(CRM-карточка), автопереверификация залоченное не трогает (инвариант §5).
+
+- **Режимы конвейера разделены:** ручной (single-source, терминалы
+  score 0.4 IdentityOnly, не залочены; оператор валидирует через
+  `POST /api/v1/admin/external-call` и одобряет `PUT .../terminals/{id}`) и
+  автоматический (skeleton-sync join + coverage-gate, без изменений).
+- **`cmd/skeleton-sync`:** флаги `-no-osm` (Yandex-only скелет, все записи —
+  `Unverified` через `FlushUnverified`, путь уже существовал; юнит
+  `TestJoinPagerEmptyOSM`), `-transport`, `-station-type` (дефолт —
+  терминальные классы `bus_station,station,train_station,airport`; без
+  городских `bus_stop/stop`). Dry-run без flat-файла печатает сводку join.
+- **Фикс `OverpassEnrich`:** апгрейд unverified-записи через
+  `StationsAround` больше не теряет идентификаторы исходника
+  (`yandex_code`) — мердж `rec.Identifiers ∪ osm.Identifiers` + перенос
+  settlement/region (`internal/skeleton/overpass_enrich.go`, тест
+  `TestOverpassEnrichKeepsIdentifiers`); без кода терминал терял точный
+  code-match на attach.
+- **Адаптер `internal/adapters/yandex/rasp.go`:** клиент `/schedule`
+  (догон пагинации: существующий кэш-файл = первая страница, дополнительные
+  сохраняются `schedule_<code>_<date>_<offset>.json` и мержатся) и
+  `/thread`; cache-first (кэш = валидные данные), miss → API строго через
+  `TryConsumeQuota("yandex", 500)` (`QuotaFunc` инжектится, адаптер не
+  зависит от store), ответ сохраняется в кэш. Конвертер `rasp_flat.go`:
+  thread → `FlatTrip` (RouteNK — синтетический из title+перевозчик, номера
+  у ниток пустые; дни «ежедневно/кроме/список» — парсер дней недели,
+  календарные даты и чётность → `restricted_days` со счётчиком в stats,
+  решение: дропать честно; времена — минуты от первого отправления,
+  переход через полночь +1440; стоп-коды → `FlatStop.Codes
+  {yandex, yandex_code}`).
+- **Фикс `matchStops` (GTFS-конвенция):** стоп с единственным временем
+  (конечный — только arrival, первый — только departure) получает парное
+  время `arr=dep`; раньше конечный стоп с одним arrival ронял hard-валидатор
+  монотонности (`прибытие после отправления`) — 179 ложных dead на пилоте
+  Кузбасса, после фикса — 4.
+- **Churn-эскалация:** `AttachInput.AllowChurnGrowth` (передаётся из
+  `Force`): подавляет churn-алерт от чистого роста канона
+  (added>>removed, disappearance=0) — первый прогон после частичного
+  наследия давал churn 0.917 при 0 исчезновений; disappearance-алерт
+  остаётся hard и эскалацией не гасится (`TestAttachChurnGrowthSuppressedByEscalation`).
+- **Job `sync_collect_region`** (`cmd/mcp-server/collect_job.go`, в CHECK
+  `jobs.type` 001 — БД dev пересоздана DROP+миграцией по §6): payload
+  `{kind: skeleton|trips, regions/region, date, transports,
+  station_types, offline, force, tag}`. skeleton — `RunCollectSkeleton`
+  (фильтры дампа → чанковый промоут unverified), trips — `runTrips`
+  (терминальные станции региона → `Schedule` → уникальные uid → `Thread` →
+  `FlattenRaspThread` → `RunCollectTrips` = полный attach-конвейер).
+- **API:** `POST /api/v1/collect/skeleton|trips` → job,
+  `GET /api/v1/collect/regions` (регион-лист дампа с терминальными
+  станциями), `GET /api/v1/sync/runs[?limit]` и `/{id}` — сводки качества
+  (`store.ListSyncRuns`, postgres+memory). Конфиг: `yandex.rasp_cache_dir`
+  (env `YANDEX_RASP_CACHE_DIR`, дефолт `data/yandex/cache`).
+- **UI (админка):** вкладка «Сбор» (регион-селектор, дата, чекбоксы
+  транспорта, offline-флаг, две кнопки → jobs), вкладка «Прогоны»
+  (sync_runs + развёрнутая сводка: coverage, promoted/staged/dead, квоты),
+  CRM-карточка терминала: панель валидации через внешний API
+  (overpass/nominatim/yandex, кандидаты с similarity → «в поля правки»),
+  полный доступ ко всем атрибутам (имена/алиасы, идентификаторы, теги,
+  ревью, liveness, расписание).
+- **`networkForDay`:** allow-list провайдеров канона расширен
+  `yandex` — рейсы, прикреплённые источником `yandex`, попадают в сеть
+  планировщика (до этого фильтровались на LOAD, сеть собиралась с trips=0).
+- **Пилот Кузбасс (offline, кэш 2026-09-04):** скелет СФО 9 регионов —
+  195 терминальных станций → 192 канон + 3 review (0 квот); расширенный
+  скелет Кузбасса с bus_stop — 1341 терминал; рейсы — 264 flat-трипа
+  (276 ниток, 12 restricted) → **147 promoted / 113 staged / 4 dead,
+  full_rate 0.557, coverage 621/632 = 98.3%, gate_pass=true**;
+  конвергенция повторного прогона — идентичный persist, tombstoned=0.
+  Live-проба: Кемерово → Томск по канону `find_route` находит
+  автобусный маршрут (белово—томск, 13→106, 0 пересадок).
+
+### 5.4 Правка терминалов, merge/delete, дедуп скелета (2026-09-11)
+
+- **Фикс pgx-encode `*int64`→timestamptz:** `TerminalRow.LastVerifiedAt`
+  (unix-сек) передавался напрямую в колонку timestamptz в 4 INSERT-путях
+  `UpsertTerminal` (pool+tx) — pgx не имеет encode-плана int64→timestamptz;
+  до UI-правки поле всегда было nil и кодирование не требовалось. Хелпер
+  `unixTsOrNull` (skeleton.go) → `time.Unix(...)`; `ApproveTerminal`
+  перешёл с `to_timestamp($4)` на тот же хелпер (голый int64 не кодируется
+  и во float8). Conflict-ветка INSERT'а более не теряет операторские
+  `last_verified_at`/`is_locked` (COALESCE + OR) и не затирает geom нулями
+  при правке без координат (guard ST_X/ST_Y=0 → сохранить прежний).
+- **Дедуп промоута скелета по внешнему коду:** повторный прогон
+  `PromoteSkeletonChunk` промоутит существующий терминал (резолв
+  `ListTerminalIDByCode` по любому идентификатору записи → идемпотентный
+  UPDATE), а не создаёт дубликат. Баг пилота: дубль «Томск, автовокзал»
+  (180/1561 — идентичные имя+координаты, код UNIQUE остался за старым,
+  новый терминал остался без идентификатора). `SkeletonStore` расширен
+  `ListTerminalIDByCode`. Тест `TestPromoteSkeletonChunkDedupByCode`.
+- **MergeTerminals (план §3.1, internal/store/postgres/merge.go):**
+  транзакция — flatten карты redirect (`terminal_merges`), удаление
+  конфликтующих по NK строк old в пользу new (identifiers/aliases/names/
+  attribute_state/tags/review), репойнт всех зависимых таблиц, копия
+  недостающих provenance (DO NOTHING — голоса new не перезаписываются),
+  тумстоун old (SCD2 `valid_to`). Залоченные — только с `force`.
+  `ResolveTerminalID` — bounded-обход карты redirect (32 хопа).
+- **DeleteTerminal:** операторский тумстоун SCD2 (`valid_to=CURRENT_DATE`,
+  `is_locked=false`), не физическое удаление; залоченный — с `force`.
+### 5.5 Изоляция ручных операций от is_locked; надёжность сбора (2026-09-11)
+
+- **Семантика `is_locked` (§0):** лок — барьер только для автоматики.
+  Ручные merge/delete в UI выполняются безусловно (оператор — автор
+  лока); force-флаги удалены из API. Ошибки называют точную причину:
+  `не существует / уже удалён (тумстоун) / уже слит в N` (helper
+  `terminalState`), а не «не найден или не залочен».
+- **Тумстоуны исключены из выдачи:** списки терминалов (filtered/liveness,
+  pool+tx) и `LoadNetwork` (стопы удалённого терминала не попадают в сеть
+  планировщика) фильтруют `valid_to IS NULL`. До фикса удалённые
+  показывались в поиске и кликались повторно → «не найден или уже удалён».
+- **`trips_served` в поисковом списке** (filtered, pool+tx): счётчик живых
+  рейсов и dead-бейдж прямо в поиске — быстрая диагностика пустых
+  терминалов без открытия карточки (совпадает с liveness-режимом).
+- **Tx-обёртка `ListTerminalIDByCode`:** дедуп скелета по коду (§5.4)
+  упал на промоут-транзакции — «транзакция не умеет промоушен скелета»
+  (jobs 12–15 dead наSkeleton-прогонах НСО/Кузбасса). Форвард добавлен.
+- **Churn от чистого роста подавляется безусловно:** disappearance=0
+  (исчезновений нет) больше не dead-letter независимо от force — первый
+  полный прогон после частичного наследия легитимен (job 15: churn 0.336,
+  disappearance 0 → done). Исчезновения остаются hard-алертом (§5.3).
+- **Атомарный конвейер сбора рейсов:** станция → schedule → её нитки →
+  flatten — обработка станции сразу после ответа, а не вторым проходом.
+  Обрыв на любой точке не сжигает квоты: собранное оседает в кэш
+  постранично и переиспользуется.
+- **Источник станций `stations: yandex|overpass`** (job payload + UI
+  «Сбор»): overpass-режим берёт терминальные станции bbox'а
+  (`BuildTerminalStationsQuery`: bus_station/railway station/aerodrome,
+  конфиг `sync.bbox`), станции без yandex_code резолвятся координатой
+  через Rasp `nearest_stations` (новый `Rasp.NearestStation`,
+  cache-first, та же квота). Станции из дампа — по-прежнему по коду.
+- **Надёжность jobs:** `RecoverStuckJobs` — running-задачи после
+  рестарта процесса возвращаются в retry (однопроцессный воркер,
+  orphaned running); `ResetJob` `POST /api/v1/jobs/{id}/reset` +
+  кнопка ↻ в UI — операторский перезапуск dead/retry/running с
+  обнулением attempts.
+- **API:** `POST /api/v1/admin/terminals/merge` `{old_id,new_id,reason,force}`,
+  `DELETE /api/v1/admin/terminals/{id}[?force=1]`; обе операции в
+  `audit_log`. Списки терминалов (filtered/liveness, pool+tx) отдают
+  `valid_from`/`valid_to`.
+- **UI (Терминалы):** колонка «добавлен» (+`→valid_to` для тумстоунов),
+  кнопки в строке «⇄» (быстрый merge: old=строка, new=по промпту) и «✕»
+  (delete с confirm), панель merge (old/new/reason).
+
+### 5.6 Точечная загрузка расписания терминала; сброс канона; квоты провайдеров (2026-09-11)
+
+- **Точечный сбор рейсов** (job payload `terminal_id`+`transport`,
+  UI-карточка терминала): один терминал из канона вместо всего региона —
+  `terminalStation` берёт `yandex_code` из `terminal_identifiers`,
+  регион фолбэком из staging (`TerminalStagingRegion`), транспорт
+  фильтрует нитки (`TransportCompatibleRasp`: suburban→rail,
+  plane→flight). При нескольких `transport_types` на терминале UI даёт
+  селектор. `region` в запросе не обязателен при `terminal_id`.
+- **`TerminalScope` churn-гейта:** точечный прогон сравнивает churn
+  только по затронутым маршрутам (`PrevCanon` обрезается до
+  `RouteReg` входных рейсов), иначе «исчезновение» всего остального
+  канона давало churn-alert при каждом точечном прогоне. Coverage-gate
+  при пустом регионе (не enriched терминал) не применяется.
+- **Сброс канона:** `POST /api/v1/admin/canon/reset`
+  `{"confirm":"RESET","reason"}` (+ кнопка в UI «Сбор» с двойным
+  подтверждением) — операторская полная очистка терминалов/рейсов/
+  staging/истории синков/ревью в одной транзакции; каркас (users, keys,
+  jobs, places, квоты) и дисковый кэш Яндекса не трогаются. В
+  `audit_log` с counts по таблицам.
+- **Квоты провайдеров:** строка `overpass` добавлена в справочник
+  `providers` (FK `api_quotas.provider` молча падал, а
+  `TryConsumeQuota` превращал ошибку БД в «quota exhausted» при
+  used=0/1000). Ошибки квоты больше не маскируются: pool/tx возвращают
+  её наружу (только `ErrNoRows` = реальный лимит), хендлер
+  external-call и jobs-worker отличают 500 от 429.
+- **Таймаут httpx 10s → 90s:** Overpass QL заявляет 30–60s на запрос;
+  прежний хардкод рвал ответ раньше, чем перегруженный endpoint
+  отвечал («context deadline exceeded» на живом зеркале).
 
 ## 6. Чек-лист устаревания (актуальные паттерны)
 

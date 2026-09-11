@@ -319,12 +319,12 @@ func (p *PostgresStore) UpsertTerminal(ctx context.Context, r TerminalRow, names
 	}
 	var id int64
 	if r.ID != 0 {
-		err := p.pool.QueryRow(ctx, `INSERT INTO terminals(id, place_id, geom, tz, validity, valid_from, valid_to, last_verified_at, is_locked, address, transport_types, object_type, enrichment_status) VALUES($1,$2,ST_SetSRID(ST_MakePoint($3,$4),4326)::geography,$5, daterange($6::date, $7::date, '[]'), $8, $9, $10, $11, $12, $13, $14, $15) ON CONFLICT(id) DO UPDATE SET place_id=EXCLUDED.place_id, geom=EXCLUDED.geom, tz=EXCLUDED.tz, is_locked=terminals.is_locked, address=EXCLUDED.address, transport_types=EXCLUDED.transport_types, object_type=EXCLUDED.object_type, enrichment_status=EXCLUDED.enrichment_status RETURNING id`, r.ID, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.ValidFrom, r.ValidTo, r.LastVerifiedAt, r.IsLocked, nullIfEmpty(r.Address), transportTypesValue(r.TransportTypes), nullIfEmpty(r.ObjectType), status).Scan(&id)
+		err := p.pool.QueryRow(ctx, `INSERT INTO terminals(id, place_id, geom, tz, validity, valid_from, valid_to, last_verified_at, is_locked, address, transport_types, object_type, enrichment_status) VALUES($1,$2,ST_SetSRID(ST_MakePoint($3,$4),4326)::geography,$5, daterange($6::date, $7::date, '[]'), $8, $9, $10, $11, $12, $13, $14, $15) ON CONFLICT(id) DO UPDATE SET place_id=EXCLUDED.place_id, geom=CASE WHEN ST_X(EXCLUDED.geom::geometry)=0 AND ST_Y(EXCLUDED.geom::geometry)=0 THEN terminals.geom ELSE EXCLUDED.geom END, tz=EXCLUDED.tz, last_verified_at=COALESCE(EXCLUDED.last_verified_at, terminals.last_verified_at), is_locked=terminals.is_locked OR EXCLUDED.is_locked, address=EXCLUDED.address, transport_types=EXCLUDED.transport_types, object_type=EXCLUDED.object_type, enrichment_status=EXCLUDED.enrichment_status RETURNING id`, r.ID, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.ValidFrom, r.ValidTo, unixTsOrNull(r.LastVerifiedAt), r.IsLocked, nullIfEmpty(r.Address), transportTypesValue(r.TransportTypes), nullIfEmpty(r.ObjectType), status).Scan(&id)
 		if err != nil {
 			return 0, err
 		}
 	} else {
-		err := p.pool.QueryRow(ctx, `INSERT INTO terminals(place_id, geom, tz, validity, valid_from, valid_to, last_verified_at, is_locked, address, transport_types, object_type, enrichment_status) VALUES($1,ST_SetSRID(ST_MakePoint($2,$3),4326)::geography,$4, daterange($5::date, $6::date, '[]'), $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.ValidFrom, r.ValidTo, r.LastVerifiedAt, r.IsLocked, nullIfEmpty(r.Address), transportTypesValue(r.TransportTypes), nullIfEmpty(r.ObjectType), status).Scan(&id)
+		err := p.pool.QueryRow(ctx, `INSERT INTO terminals(place_id, geom, tz, validity, valid_from, valid_to, last_verified_at, is_locked, address, transport_types, object_type, enrichment_status) VALUES($1,ST_SetSRID(ST_MakePoint($2,$3),4326)::geography,$4, daterange($5::date, $6::date, '[]'), $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.ValidFrom, r.ValidTo, unixTsOrNull(r.LastVerifiedAt), r.IsLocked, nullIfEmpty(r.Address), transportTypesValue(r.TransportTypes), nullIfEmpty(r.ObjectType), status).Scan(&id)
 		if err != nil {
 			return 0, err
 		}
@@ -352,11 +352,12 @@ func (p *PostgresStore) GetTerminal(ctx context.Context, id int64) (map[string]a
 	var lat, lon float64
 	var locked bool
 	var placeID *int64
-	err := p.pool.QueryRow(ctx, `SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' WHERE t.id=$1`, id).Scan(&id, &name, &lat, &lon, &locked, &placeID)
+	var transports []string
+	err := p.pool.QueryRow(ctx, `SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id, t.transport_types FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' WHERE t.id=$1`, id).Scan(&id, &name, &lat, &lon, &locked, &placeID, &transports)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"id": id, "name": name, "lat": lat, "lon": lon, "is_locked": locked, "place_id": placeID}, nil
+	return map[string]any{"id": id, "name": name, "lat": lat, "lon": lon, "is_locked": locked, "place_id": placeID, "transport_types": transports}, nil
 }
 func (p *PostgresStore) GetTerminalTags(ctx context.Context, id int64) (map[string]string, error) {
 	out := map[string]string{}
@@ -527,16 +528,16 @@ func (p *PostgresStore) ListTerminalsFiltered(ctx context.Context, limit, offset
 	hasQ := q != ""
 	var total int
 	if hasQ {
-		_ = p.pool.QueryRow(ctx, `SELECT count(*) FROM terminals t WHERE EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE '%' || $1 || '%') OR EXISTS (SELECT 1 FROM terminal_aliases ta WHERE ta.terminal_id=t.id AND ta.alias ILIKE '%' || $1 || '%')`, q).Scan(&total)
+		_ = p.pool.QueryRow(ctx, `SELECT count(*) FROM terminals t WHERE t.valid_to IS NULL AND (EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE '%' || $1 || '%') OR EXISTS (SELECT 1 FROM terminal_aliases ta WHERE ta.terminal_id=t.id AND ta.alias ILIKE '%' || $1 || '%'))`, q).Scan(&total)
 	} else {
-		_ = p.pool.QueryRow(ctx, `SELECT count(*) FROM terminals`).Scan(&total)
+		_ = p.pool.QueryRow(ctx, `SELECT count(*) FROM terminals WHERE valid_to IS NULL`).Scan(&total)
 	}
 	var rows pgx.Rows
 	var err error
 	if hasQ {
-		rows, err = p.pool.Query(ctx, fmt.Sprintf(`SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' WHERE EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE '%%' || $3 || '%%') OR EXISTS (SELECT 1 FROM terminal_aliases ta WHERE ta.terminal_id=t.id AND ta.alias ILIKE '%%' || $3 || '%%') ORDER BY %s LIMIT $1 OFFSET $2`, orderClause), limit, offset, q)
+		rows, err = p.pool.Query(ctx, fmt.Sprintf(`SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id, to_char(t.valid_from,'YYYY-MM-DD'), coalesce(to_char(t.valid_to,'YYYY-MM-DD'),''), (SELECT count(DISTINCT st.trip_id) FROM stops_canonical sc JOIN stop_times st ON st.stop_id=sc.id WHERE sc.terminal_id=t.id) FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' WHERE t.valid_to IS NULL AND (EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE '%%' || $3 || '%%') OR EXISTS (SELECT 1 FROM terminal_aliases ta WHERE ta.terminal_id=t.id AND ta.alias ILIKE '%%' || $3 || '%%')) ORDER BY %s LIMIT $1 OFFSET $2`, orderClause), limit, offset, q)
 	} else {
-		rows, err = p.pool.Query(ctx, fmt.Sprintf(`SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' ORDER BY %s LIMIT $1 OFFSET $2`, orderClause), limit, offset)
+		rows, err = p.pool.Query(ctx, fmt.Sprintf(`SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id, to_char(t.valid_from,'YYYY-MM-DD'), coalesce(to_char(t.valid_to,'YYYY-MM-DD'),''), (SELECT count(DISTINCT st.trip_id) FROM stops_canonical sc JOIN stop_times st ON st.stop_id=sc.id WHERE sc.terminal_id=t.id) FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' WHERE t.valid_to IS NULL ORDER BY %s LIMIT $1 OFFSET $2`, orderClause), limit, offset)
 	}
 	if err != nil {
 		return nil, 0, err
@@ -549,8 +550,10 @@ func (p *PostgresStore) ListTerminalsFiltered(ctx context.Context, limit, offset
 		var lat, lon float64
 		var locked bool
 		var placeID *int64
-		_ = rows.Scan(&id, &name, &lat, &lon, &locked, &placeID)
-		out = append(out, map[string]any{"id": id, "name": name, "lat": lat, "lon": lon, "is_locked": locked, "place_id": placeID})
+		var validFrom, validTo string
+		var tripsServed int64
+		_ = rows.Scan(&id, &name, &lat, &lon, &locked, &placeID, &validFrom, &validTo, &tripsServed)
+		out = append(out, map[string]any{"id": id, "name": name, "lat": lat, "lon": lon, "is_locked": locked, "place_id": placeID, "valid_from": validFrom, "valid_to": validTo, "trips_served": tripsServed, "dead": tripsServed == 0})
 	}
 	return out, total, nil
 }
@@ -597,7 +600,7 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 	net := model.NewNetwork()
 	stopIDMap := map[int64]string{}
 	// canonical stops: stops_canonical + stop_names + terminals geom
-	srows, err := p.pool.Query(ctx, `SELECT sc.id, sc.terminal_id, ST_Y(sc.geom::geometry) as lat, ST_X(sc.geom::geometry) as lon, sc.stop_type, coalesce(sn.name, tname.name, 'stop') as name FROM stops_canonical sc LEFT JOIN stop_names sn ON sn.stop_id=sc.id AND sn.lang='ru' LEFT JOIN terminal_names tname ON tname.terminal_id=sc.terminal_id AND tname.lang='ru'`)
+	srows, err := p.pool.Query(ctx, `SELECT sc.id, sc.terminal_id, ST_Y(sc.geom::geometry) as lat, ST_X(sc.geom::geometry) as lon, sc.stop_type, coalesce(sn.name, tname.name, 'stop') as name FROM stops_canonical sc JOIN terminals t ON t.id=sc.terminal_id AND t.valid_to IS NULL LEFT JOIN stop_names sn ON sn.stop_id=sc.id AND sn.lang='ru' LEFT JOIN terminal_names tname ON tname.terminal_id=sc.terminal_id AND tname.lang='ru'`)
 	if err != nil {
 		return nil, err
 	}
@@ -906,8 +909,11 @@ func (p *PostgresStore) TryConsumeQuota(ctx context.Context, provider string, li
 	}
 	var used int
 	err := p.pool.QueryRow(ctx, `INSERT INTO api_quotas(provider, day, used, quota_limit, reset_at) VALUES($1, CURRENT_DATE, 1, $2, (CURRENT_DATE + INTERVAL '1 day')::timestamptz AT TIME ZONE 'Europe/Moscow') ON CONFLICT (provider, day) DO UPDATE SET used = api_quotas.used + 1 WHERE api_quotas.used < api_quotas.quota_limit RETURNING used`, provider, limit).Scan(&used)
-	if err != nil {
+	if err == pgx.ErrNoRows {
 		return false, 0, nil
+	}
+	if err != nil {
+		return false, 0, fmt.Errorf("consume quota %s: %w", provider, err)
 	}
 	_, _ = p.pool.Exec(ctx, `INSERT INTO api_calls(provider, endpoint, at, cost) VALUES($1,'quota_consume', now(), 1)`, provider)
 	return true, used, nil
@@ -1126,6 +1132,36 @@ func (p *PostgresStore) MarkJobDead(ctx context.Context, id int64, errMsg string
 	return err
 }
 
+// RecoverStuckJobs — running-задачи без исполнителя (после рестарта
+// процесса) возвращаются в очередь. Воркер однопроцессный, running при
+// старте сервера может быть только осиротевшим.
+func (p *PostgresStore) RecoverStuckJobs(ctx context.Context) (int, error) {
+	if p.pool == nil {
+		return 0, nil
+	}
+	ct, err := p.pool.Exec(ctx, `UPDATE jobs SET state='retry', last_error='recovered: orphaned running after restart', next_run=now(), updated_at=now() WHERE state='running'`)
+	if err != nil {
+		return 0, err
+	}
+	return int(ct.RowsAffected()), nil
+}
+
+// ResetJob — операторский перезапуск: dead/retry/running → pending,
+// счётчик попыток с нуля (запуск заново по кнопке в UI).
+func (p *PostgresStore) ResetJob(ctx context.Context, id int64) error {
+	if p.pool == nil {
+		return nil
+	}
+	ct, err := p.pool.Exec(ctx, `UPDATE jobs SET state='pending', attempts=0, next_run=now(), last_error='', updated_at=now() WHERE id=$1 AND state IN ('dead','retry','running','pending')`, id)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return fmt.Errorf("job %d не найден или уже завершён (done)", id)
+	}
+	return nil
+}
+
 func (p *PostgresStore) ListJobs(ctx context.Context, limit int) ([]store.JobRow, error) {
 	if p.pool == nil {
 		return nil, nil
@@ -1298,12 +1334,12 @@ func (t *pgTxStore) UpsertTerminal(ctx context.Context, r TerminalRow, names map
 	}
 	var id int64
 	if r.ID != 0 {
-		err := t.tx.QueryRow(ctx, `INSERT INTO terminals(id, place_id, geom, tz, validity, valid_from, valid_to, last_verified_at, is_locked, address, transport_types, object_type, enrichment_status) VALUES($1,$2,ST_SetSRID(ST_MakePoint($3,$4),4326)::geography,$5, daterange($6::date, $7::date, '[]'), $8, $9, $10, $11, $12, $13, $14, $15) ON CONFLICT(id) DO UPDATE SET place_id=EXCLUDED.place_id, geom=EXCLUDED.geom, tz=EXCLUDED.tz, is_locked=terminals.is_locked, address=EXCLUDED.address, transport_types=EXCLUDED.transport_types, object_type=EXCLUDED.object_type, enrichment_status=EXCLUDED.enrichment_status RETURNING id`, r.ID, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.ValidFrom, r.ValidTo, r.LastVerifiedAt, r.IsLocked, nullIfEmpty(r.Address), transportTypesValue(r.TransportTypes), nullIfEmpty(r.ObjectType), status).Scan(&id)
+		err := t.tx.QueryRow(ctx, `INSERT INTO terminals(id, place_id, geom, tz, validity, valid_from, valid_to, last_verified_at, is_locked, address, transport_types, object_type, enrichment_status) VALUES($1,$2,ST_SetSRID(ST_MakePoint($3,$4),4326)::geography,$5, daterange($6::date, $7::date, '[]'), $8, $9, $10, $11, $12, $13, $14, $15) ON CONFLICT(id) DO UPDATE SET place_id=EXCLUDED.place_id, geom=CASE WHEN ST_X(EXCLUDED.geom::geometry)=0 AND ST_Y(EXCLUDED.geom::geometry)=0 THEN terminals.geom ELSE EXCLUDED.geom END, tz=EXCLUDED.tz, last_verified_at=COALESCE(EXCLUDED.last_verified_at, terminals.last_verified_at), is_locked=terminals.is_locked OR EXCLUDED.is_locked, address=EXCLUDED.address, transport_types=EXCLUDED.transport_types, object_type=EXCLUDED.object_type, enrichment_status=EXCLUDED.enrichment_status RETURNING id`, r.ID, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.ValidFrom, r.ValidTo, unixTsOrNull(r.LastVerifiedAt), r.IsLocked, nullIfEmpty(r.Address), transportTypesValue(r.TransportTypes), nullIfEmpty(r.ObjectType), status).Scan(&id)
 		if err != nil {
 			return 0, err
 		}
 	} else {
-		err := t.tx.QueryRow(ctx, `INSERT INTO terminals(place_id, geom, tz, validity, valid_from, valid_to, last_verified_at, is_locked, address, transport_types, object_type, enrichment_status) VALUES($1,ST_SetSRID(ST_MakePoint($2,$3),4326)::geography,$4, daterange($5::date, $6::date, '[]'), $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.ValidFrom, r.ValidTo, r.LastVerifiedAt, r.IsLocked, nullIfEmpty(r.Address), transportTypesValue(r.TransportTypes), nullIfEmpty(r.ObjectType), status).Scan(&id)
+		err := t.tx.QueryRow(ctx, `INSERT INTO terminals(place_id, geom, tz, validity, valid_from, valid_to, last_verified_at, is_locked, address, transport_types, object_type, enrichment_status) VALUES($1,ST_SetSRID(ST_MakePoint($2,$3),4326)::geography,$4, daterange($5::date, $6::date, '[]'), $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`, r.PlaceID, r.Lon, r.Lat, r.Tz, r.ValidityFrom, r.ValidityTo, r.ValidFrom, r.ValidTo, unixTsOrNull(r.LastVerifiedAt), r.IsLocked, nullIfEmpty(r.Address), transportTypesValue(r.TransportTypes), nullIfEmpty(r.ObjectType), status).Scan(&id)
 		if err != nil {
 			return 0, err
 		}
@@ -1333,6 +1369,16 @@ func (t *pgTxStore) SaveProvenance(ctx context.Context, p model.Provenance) erro
 	}
 	_, err := t.tx.Exec(ctx, `INSERT INTO provenance(entity_type, entity_id, source, confidence, observed_at, raw, actor_id, channel) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(entity_type, entity_id, source) DO UPDATE SET confidence=EXCLUDED.confidence, channel=EXCLUDED.channel`, p.EntityType, p.EntityID, p.Source, p.Confidence, p.ObservedAt, raw, p.ActorID, p.Channel)
 	return err
+}
+
+// ListTerminalIDByCode — tx-форвард резолва по коду (дедуп скелета
+// внутри промоут-транзакции, skeleton_promote.go).
+func (t *pgTxStore) ListTerminalIDByCode(ctx context.Context, system, code string) (int64, bool) {
+	var id int64
+	if err := t.tx.QueryRow(ctx, `SELECT terminal_id FROM terminal_identifiers WHERE system=$1 AND code=$2 ORDER BY is_primary DESC, terminal_id LIMIT 1`, system, code).Scan(&id); err != nil {
+		return 0, false
+	}
+	return id, true
 }
 func (t *pgTxStore) SaveReviewQueue(ctx context.Context, e model.ReviewQueueEntry) error {
 	_, err := t.tx.Exec(ctx, `INSERT INTO review_queue(entity_type, entity_id, reason, score, fingerprint) VALUES($1,$2,$3,$4,$5) ON CONFLICT(entity_type, entity_id, reason) DO UPDATE SET score=EXCLUDED.score, fingerprint=CASE WHEN EXCLUDED.fingerprint<>'' THEN EXCLUDED.fingerprint ELSE review_queue.fingerprint END, observed_at=now(), count=review_queue.count+1`, e.EntityType, e.EntityID, e.Reason, e.Score, e.Fingerprint)
@@ -1379,16 +1425,16 @@ func (t *pgTxStore) ListTerminalsFiltered(ctx context.Context, limit, offset int
 	hasQ := q != ""
 	var total int
 	if hasQ {
-		_ = t.tx.QueryRow(ctx, `SELECT count(*) FROM terminals t WHERE EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE '%' || $1 || '%')`, q).Scan(&total)
+		_ = t.tx.QueryRow(ctx, `SELECT count(*) FROM terminals t WHERE t.valid_to IS NULL AND (EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE '%' || $1 || '%') OR EXISTS (SELECT 1 FROM terminal_aliases ta WHERE ta.terminal_id=t.id AND ta.alias ILIKE '%' || $1 || '%'))`, q).Scan(&total)
 	} else {
-		_ = t.tx.QueryRow(ctx, `SELECT count(*) FROM terminals`).Scan(&total)
+		_ = t.tx.QueryRow(ctx, `SELECT count(*) FROM terminals WHERE valid_to IS NULL`).Scan(&total)
 	}
 	var rows pgx.Rows
 	var err error
 	if hasQ {
-		rows, err = t.tx.Query(ctx, fmt.Sprintf(`SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' WHERE EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE '%%' || $3 || '%%') ORDER BY %s LIMIT $1 OFFSET $2`, orderClause), limit, offset, q)
+		rows, err = t.tx.Query(ctx, fmt.Sprintf(`SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id, to_char(t.valid_from,'YYYY-MM-DD'), coalesce(to_char(t.valid_to,'YYYY-MM-DD'),''), (SELECT count(DISTINCT st.trip_id) FROM stops_canonical sc JOIN stop_times st ON st.stop_id=sc.id WHERE sc.terminal_id=t.id) FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' WHERE t.valid_to IS NULL AND (EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE '%%' || $3 || '%%') OR EXISTS (SELECT 1 FROM terminal_aliases ta WHERE ta.terminal_id=t.id AND ta.alias ILIKE '%%' || $3 || '%%')) ORDER BY %s LIMIT $1 OFFSET $2`, orderClause), limit, offset, q)
 	} else {
-		rows, err = t.tx.Query(ctx, fmt.Sprintf(`SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' ORDER BY %s LIMIT $1 OFFSET $2`, orderClause), limit, offset)
+		rows, err = t.tx.Query(ctx, fmt.Sprintf(`SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id, to_char(t.valid_from,'YYYY-MM-DD'), coalesce(to_char(t.valid_to,'YYYY-MM-DD'),''), (SELECT count(DISTINCT st.trip_id) FROM stops_canonical sc JOIN stop_times st ON st.stop_id=sc.id WHERE sc.terminal_id=t.id) FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' WHERE t.valid_to IS NULL ORDER BY %s LIMIT $1 OFFSET $2`, orderClause), limit, offset)
 	}
 	if err != nil {
 		return nil, 0, err
@@ -1401,8 +1447,10 @@ func (t *pgTxStore) ListTerminalsFiltered(ctx context.Context, limit, offset int
 		var lat, lon float64
 		var locked bool
 		var placeID *int64
-		_ = rows.Scan(&id, &name, &lat, &lon, &locked, &placeID)
-		out = append(out, map[string]any{"id": id, "name": name, "lat": lat, "lon": lon, "is_locked": locked, "place_id": placeID})
+		var validFrom, validTo string
+		var tripsServed int64
+		_ = rows.Scan(&id, &name, &lat, &lon, &locked, &placeID, &validFrom, &validTo, &tripsServed)
+		out = append(out, map[string]any{"id": id, "name": name, "lat": lat, "lon": lon, "is_locked": locked, "place_id": placeID, "valid_from": validFrom, "valid_to": validTo, "trips_served": tripsServed, "dead": tripsServed == 0})
 	}
 	return out, total, nil
 }
@@ -1477,8 +1525,11 @@ func (t *pgTxStore) TouchApiKey(ctx context.Context, key string) error { return 
 func (t *pgTxStore) TryConsumeQuota(ctx context.Context, provider string, limit int) (bool, int, error) {
 	var used int
 	err := t.tx.QueryRow(ctx, `INSERT INTO api_quotas(provider, day, used, quota_limit, reset_at) VALUES($1, CURRENT_DATE, 1, $2, (CURRENT_DATE + INTERVAL '1 day')::timestamptz AT TIME ZONE 'Europe/Moscow') ON CONFLICT (provider, day) DO UPDATE SET used = api_quotas.used + 1 WHERE api_quotas.used < api_quotas.quota_limit RETURNING used`, provider, limit).Scan(&used)
-	if err != nil {
+	if err == pgx.ErrNoRows {
 		return false, 0, nil
+	}
+	if err != nil {
+		return false, 0, fmt.Errorf("consume quota %s: %w", provider, err)
 	}
 	_, _ = t.tx.Exec(ctx, `INSERT INTO api_calls(provider, endpoint, at, cost) VALUES($1,'quota_consume', now(), 1)`, provider)
 	return true, used, nil

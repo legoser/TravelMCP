@@ -137,3 +137,28 @@ func TestJoinPagerNoCoordsFallback(t *testing.T) {
 		t.Fatalf("Yandex без verified-пары — unverified: %v", unv)
 	}
 }
+
+func TestJoinPagerEmptyOSM(t *testing.T) {
+	// Yandex-only скелет: пустой OSM → все Яндекс-записи обязаны уйти в
+	// Unverified (FlushUnverified), без паник и пропусков
+	cfg := DefaultJoinConfig()
+	yandex := []model.AdaptedRecord{
+		rec("Кемерово, автовокзал", 55.35, 86.08, map[string]string{"transport_type": "bus", "settlement": "Кемерово"},
+			model.AdaptedIdentifier{System: "yandex", CodeType: "yandex_code", Code: "s9623379"}),
+		rec("Кемерово-Пасс.", 55.36, 86.07, map[string]string{"transport_type": "rail", "settlement": "Кемерово"},
+			model.AdaptedIdentifier{System: "yandex", CodeType: "yandex_code", Code: "s2028001"}),
+	}
+	pager := NewJoinPager(nil, yandex, cfg, 100)
+	if _, ok := pager.NextPage(); ok {
+		t.Fatal("пустой OSM — страниц быть не должно")
+	}
+	unv := pager.FlushUnverified()
+	if len(unv) != 2 {
+		t.Fatalf("все Яндекс-записи обязаны быть unverified: %d", len(unv))
+	}
+	for i, want := range []string{"s9623379", "s2028001"} {
+		if unv[i].PrimaryCode() != want {
+			t.Fatalf("unverified[%d]: got %s want %s", i, unv[i].PrimaryCode(), want)
+		}
+	}
+}

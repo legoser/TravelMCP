@@ -309,6 +309,44 @@ func TestAttachTombstoneAndChurn(t *testing.T) {
 	}
 }
 
+func TestAttachChurnGrowthSuppressedByEscalation(t *testing.T) {
+	trips := loadFlatTrips(t)
+	terms := indexFromFixture(t, trips)
+	first, err := AttachTrips(context.Background(), baseInput(trips, terms))
+	if err != nil {
+		t.Fatalf("first attach: %v", err)
+	}
+	prev := currentNKs(first)
+	// минимальный prev: один трип (как после частичного прогона)
+	one := map[string][]string{}
+	for route, list := range prev {
+		one[route] = []string{list[0]}
+		break
+	}
+	// чистый рост без исчезновений — не алерт независимо от эскалации:
+	// первый полный прогон после частичного наследия (баг пилота: job
+	// падал dead при churn 0.336/0.917 с disappearance=0).
+	grow := baseInput(trips, terms)
+	grow.PrevCanon = one
+	rep, err := AttachTrips(context.Background(), grow)
+	if err != nil {
+		t.Fatalf("чистый рост без исчезновений не алерт: %v", err)
+	}
+	if rep.Alert {
+		t.Fatal("alert обязан быть снят при чистом росте")
+	}
+	if len(rep.Promoted) == 0 {
+		t.Fatal("трипы должны промоутиться")
+	}
+
+	// disappearance-алерт не подавляется (§5.3 hard)
+	dis := baseInput(trips[:1], terms)
+	dis.PrevCanon = prev
+	if _, err := AttachTrips(context.Background(), dis); err == nil {
+		t.Fatal("массовое исчезновение обязано алертить")
+	}
+}
+
 func TestAttachRequiresParams(t *testing.T) {
 	in := baseInput(nil, nil)
 	in.ParamsFor = nil

@@ -74,10 +74,11 @@ type Auth struct {
 }
 
 type Yandex struct {
-	RaspKey    string `yaml:"rasp_key"`
-	RaspURL    string `yaml:"rasp_url"`
-	GeocodeKey string `yaml:"geocode_key"`
-	GeocodeURL string `yaml:"geocode_url"`
+	RaspKey      string `yaml:"rasp_key"`
+	RaspURL      string `yaml:"rasp_url"`
+	GeocodeKey   string `yaml:"geocode_key"`
+	GeocodeURL   string `yaml:"geocode_url"`
+	RaspCacheDir string `yaml:"rasp_cache_dir"`
 }
 
 type Nominatim struct {
@@ -197,7 +198,7 @@ func Defaults() *Config {
 			Enabled: []string{},
 		},
 		Geocoder:  Geocoder{Kind: "", Attempts: 3, Limit: 5, MaxCalls: 0, TTLVerified: "2160h", TTLDisputed: "168h"},
-		Yandex:    Yandex{RaspURL: "https://api.rasp.yandex.net/v3.0", GeocodeURL: "https://geocode-maps.yandex.ru/1.x"},
+		Yandex:    Yandex{RaspURL: "https://api.rasp.yandex.net/v3.0", GeocodeURL: "https://geocode-maps.yandex.ru/1.x", RaspCacheDir: "data/yandex/cache"},
 		Nominatim: Nominatim{URL: "https://nominatim.openstreetmap.org"},
 		Overpass: Overpass{
 			URL:       "https://overpass-api.de/api/interpreter",
@@ -404,6 +405,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("YANDEX_RASP_URL"); v != "" {
 		cfg.Yandex.RaspURL = v
+	}
+	if v := os.Getenv("YANDEX_RASP_CACHE_DIR"); v != "" {
+		cfg.Yandex.RaspCacheDir = v
 	}
 	if v := os.Getenv("YANDEX_GEOCODE_KEY"); v != "" {
 		cfg.Yandex.GeocodeKey = v
@@ -793,6 +797,9 @@ func setByPath(cfg *Config, parts []string, v string) {
 		}
 		if len(parts) == 2 && parts[1] == "rasp_url" {
 			cfg.Yandex.RaspURL = v
+		}
+		if len(parts) == 2 && parts[1] == "rasp_cache_dir" {
+			cfg.Yandex.RaspCacheDir = v
 		}
 		if len(parts) == 2 && parts[1] == "geocode_key" {
 			cfg.Yandex.GeocodeKey = v

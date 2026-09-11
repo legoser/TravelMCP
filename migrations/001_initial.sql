@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS providers (
   name text NOT NULL
 );
 INSERT INTO providers(code, name) VALUES
-  ('motis','MOTIS/OSM'), ('gov-registry','Реестр Минтранса РФ'), ('yandex','Яндекс'), ('osm','OSM'), ('gtfs','GTFS'), ('nominatim','Nominatim'), ('manual','Ручная правка оператора')
+  ('motis','MOTIS/OSM'), ('gov-registry','Реестр Минтранса РФ'), ('yandex','Яндекс'), ('osm','OSM'), ('gtfs','GTFS'), ('nominatim','Nominatim'), ('overpass','Overpass API'), ('manual','Ручная правка оператора')
 ON CONFLICT DO NOTHING;
 
 -- Справочник типов внешних кодов (единый для terminal_identifiers и
@@ -565,7 +565,8 @@ CREATE TABLE IF NOT EXISTS jobs (
   id bigserial PRIMARY KEY,
   type text NOT NULL CHECK (type IN (
     'import_gtfs','sync_rail','notify','cleanup',
-    'sync_stations','sync_refresh','sync_terminals_chunk','sync_trips_attach')),
+    'sync_stations','sync_refresh','sync_terminals_chunk','sync_trips_attach',
+    'sync_collect_region')),
   payload jsonb NOT NULL DEFAULT '{}'::jsonb,
   region text,
   state text NOT NULL CHECK (state IN ('pending','running','retry','done','dead')) DEFAULT 'pending',

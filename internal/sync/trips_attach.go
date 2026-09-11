@@ -33,9 +33,14 @@ type AttachInput struct {
 	Source         string
 	ChurnThreshold float64
 	MaxSpeedKmh    float64
-	ParamsFor      func(model.DensityClass) verification.Params
-	ClassForRegion func(string) model.DensityClass
-	Logger         *slog.Logger
+	// AllowChurnGrowth — legacy-эскалация оператора (сохранена для
+	// совместимости): чистый рост канона (disappearance=0) больше не
+	// алерт по определению — suppression применяется безусловно;
+	// исчезновения трипов остаются hard-алертом без исключений (§5.3).
+	AllowChurnGrowth bool
+	ParamsFor        func(model.DensityClass) verification.Params
+	ClassForRegion   func(string) model.DensityClass
+	Logger           *slog.Logger
 }
 
 type MatchedStopTime struct {
@@ -262,6 +267,11 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 		return rep, fmt.Errorf("sync attach: несходимость строк: in=%d promoted=%d staged=%d dead=%d (source=%s)",
 			rep.In, len(rep.Promoted), len(rep.Staged), len(rep.Dead), source)
 	}
+	if rep.Alert && rep.Disappearance == 0 {
+		logger.Warn("churn-alert suppressed: pure growth without disappearances",
+			"churn", rep.Churn, "added", len(rep.Promoted), "escalation", in.AllowChurnGrowth)
+		rep.Alert = false
+	}
 	if rep.Alert {
 		return rep, fmt.Errorf("sync attach: churn-alert: churn=%.3f disappearance=%.3f выше порога %.3f (source=%s)",
 			rep.Churn, rep.Disappearance, threshold, source)
@@ -366,6 +376,15 @@ func matchStops(ft model.FlatTrip, idx *matchIndex, source string, classFor func
 		}
 		if s.DepMin != nil {
 			dep = *s.DepMin * 60
+		}
+		// GTFS-конвенция «минимум одно время»: конечный стоп с одним arrival
+		// (депо-прибытие) и первый с одним departure получают парное время,
+		// иначе arr>dep роняет валидатор монотонности.
+		if s.ArrMin != nil && s.DepMin == nil {
+			dep = arr
+		}
+		if s.DepMin != nil && s.ArrMin == nil {
+			arr = dep
 		}
 		t := terms[poolIdx[idxBest]]
 		method := "scorepair"

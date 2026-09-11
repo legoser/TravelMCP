@@ -18,6 +18,41 @@ const (
 	enrichedScore    = 0.75
 )
 
+// mergeIdentifiers — идентификаторы исходной unverified-записи (например
+// yandex_code) обязаны переживать Overpass-апгрейд: без них терминал
+// теряет точный code-match на attach рейсов. Дедуп по system|code_type|code.
+func mergeIdentifiers(rec, osmRec model.AdaptedRecord) []model.AdaptedIdentifier {
+	seen := map[string]bool{}
+	out := make([]model.AdaptedIdentifier, 0, len(rec.Identifiers)+len(osmRec.Identifiers))
+	for _, id := range rec.Identifiers {
+		k := id.System + "|" + id.CodeType + "|" + id.Code
+		if id.Code != "" && !seen[k] {
+			seen[k] = true
+			out = append(out, id)
+		}
+	}
+	for _, id := range osmRec.Identifiers {
+		k := id.System + "|" + id.CodeType + "|" + id.Code
+		if id.Code != "" && !seen[k] {
+			seen[k] = true
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// extraOr — значение из OSM-записи, иначе из исходной (settlement/region
+// Яндекс знает всегда, OSM — не всегда).
+func extraOr(osmRec, rec model.AdaptedRecord, key string) string {
+	if osmRec.Extra != nil && osmRec.Extra[key] != "" {
+		return osmRec.Extra[key]
+	}
+	if rec.Extra != nil {
+		return rec.Extra[key]
+	}
+	return ""
+}
+
 func OverpassEnrich(ctx context.Context, outcome *JoinOutcome, provider *geocoder.CachedStationsProvider, maxPoints int, logger *slog.Logger) int {
 	if provider == nil {
 		return 0
@@ -60,24 +95,29 @@ func OverpassEnrich(ctx context.Context, outcome *JoinOutcome, provider *geocode
 		}
 
 		best := nearby[0]
-		upgrades = append(upgrades, JoinedRecord{
-			Record: model.AdaptedRecord{
-				Kind:        model.AdaptedTerminal,
-				NameRu:      best.NameRu,
-				NameEn:      best.NameEn,
-				Lat:         best.Lat,
-				Lon:         best.Lon,
-				Source:      "osm",
-				Identifiers: best.Identifiers,
-				Extra: map[string]string{
-					"settlement":     best.Extra["settlement"],
-					"transport_type": best.Extra["transport_type"],
-					"object_type":    best.Extra["object_type"],
-					"osm_kind":       best.Extra["osm_kind"],
-					"enrich_source":  "overpass",
-					"yandex_name":    rec.NameRu,
-				},
+		merged := model.AdaptedRecord{
+			Kind:        model.AdaptedTerminal,
+			NameRu:      best.NameRu,
+			NameEn:      best.NameEn,
+			Lat:         best.Lat,
+			Lon:         best.Lon,
+			Source:      "osm",
+			Identifiers: mergeIdentifiers(rec, best),
+			Extra: map[string]string{
+				"transport_type": extraOr(best, rec, "transport_type"),
+				"object_type":    best.Extra["object_type"],
+				"osm_kind":       best.Extra["osm_kind"],
+				"enrich_source":  "overpass",
+				"yandex_name":    rec.NameRu,
 			},
+		}
+		for _, k := range []string{"settlement", "region"} {
+			if v := extraOr(best, rec, k); v != "" {
+				merged.Extra[k] = v
+			}
+		}
+		upgrades = append(upgrades, JoinedRecord{
+			Record:     merged,
 			Score:      enrichedScore,
 			Enrichment: IdentityOnly,
 		})

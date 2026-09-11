@@ -126,4 +126,65 @@ func TestOverpassEnrichSkipsNoCoords(t *testing.T) {
 	}
 }
 
+func TestOverpassEnrichKeepsIdentifiers(t *testing.T) {
+	// Апгрейд через Overpass обязан сохранять идентификаторы исходной
+	// unverified-записи (yandex_code): без него терминал теряет точный
+	// code-match на attach рейсов
+	prov := &fakeStationsProviderForEnrich{
+		resp: []model.AdaptedRecord{
+			{
+				NameRu: "Кемерово, автовокзал",
+				Lat:    float64Ptr(55.35),
+				Lon:    float64Ptr(86.08),
+				Identifiers: []model.AdaptedIdentifier{
+					{System: "osm", CodeType: "osm_id", Code: "12345"},
+				},
+				Extra: map[string]string{
+					"transport_type": "bus",
+					"osm_kind":       "node",
+				},
+			},
+		},
+	}
+	cached := geocoder.NewCachedStationsProvider(prov, nil, nil, 0)
+
+	lat, lon := 55.35, 86.08
+	outcome := &JoinOutcome{
+		Unverified: []model.AdaptedRecord{{
+			NameRu: "автовокзал Кемерово",
+			Lat:    &lat,
+			Lon:    &lon,
+			Identifiers: []model.AdaptedIdentifier{
+				{System: "yandex", CodeType: "yandex_code", Code: "s9623379"},
+			},
+			Extra: map[string]string{
+				"settlement": "Кемерово",
+				"region":     "Кемеровская область - Кузбасс",
+			},
+		}},
+	}
+
+	n := OverpassEnrich(context.Background(), outcome, cached, 200, slog.Default())
+	if n != 1 {
+		t.Fatalf("want 1 recovered, got %d", n)
+	}
+	rec := outcome.Canon[len(outcome.Canon)-1].Record
+	seen := map[string]bool{}
+	for _, id := range rec.Identifiers {
+		seen[id.System+"|"+id.CodeType+"|"+id.Code] = true
+	}
+	if !seen["yandex|yandex_code|s9623379"] {
+		t.Errorf("yandex_code потерян при Overpass-апгрейде: %+v", rec.Identifiers)
+	}
+	if !seen["osm|osm_id|12345"] {
+		t.Errorf("osm_id не перенесён из Overpass: %+v", rec.Identifiers)
+	}
+	if rec.Extra["settlement"] != "Кемерово" || rec.Extra["region"] != "Кемеровская область - Кузбасс" {
+		t.Errorf("settlement/region не сохранены: %+v", rec.Extra)
+	}
+	if rec.Extra["transport_type"] != "bus" {
+		t.Errorf("transport_type не из Overpass: %q", rec.Extra["transport_type"])
+	}
+}
+
 func float64Ptr(v float64) *float64 { return &v }

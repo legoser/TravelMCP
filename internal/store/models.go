@@ -272,13 +272,15 @@ type AttributeStateRow struct {
 }
 
 type SyncRunRow struct {
-	ID       int64
-	PlanID   string
-	Kind     string
-	InputSHA string
-	Tag      string
-	State    string
-	Summary  string
+	ID         int64
+	PlanID     string
+	Kind       string
+	InputSHA   string
+	Tag        string
+	State      string
+	Summary    string
+	CreatedAt  string
+	FinishedAt string
 }
 
 type SyncChunkRow struct {

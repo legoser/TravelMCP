@@ -75,7 +75,10 @@ func (w *Worker) withQuota(ctx context.Context, job *store.JobRow, h Handler) er
 	var lastErr error
 	for _, p := range providers {
 		limit := store.DefaultQuotaLimit
-		ok, _, _ := w.store.TryConsumeQuota(ctx, p, limit)
+		ok, _, qerr := w.store.TryConsumeQuota(ctx, p, limit)
+		if qerr != nil {
+			return fmt.Errorf("проверка квоты %s: %w", p, qerr)
+		}
 		if !ok {
 			lastErr = fmt.Errorf("429 quota exhausted for %s", p)
 			continue
@@ -135,6 +138,15 @@ func contains(s, sub string) bool {
 func (w *Worker) Run(ctx context.Context, interval time.Duration) {
 	if interval == 0 {
 		interval = defaultPollInterval
+	}
+	// Однопроцессный воркер: running-задачи, оставшиеся от прошлого
+	// процесса (краш/рестарт), осиротели — вернуть в очередь.
+	if rec, ok := w.store.(interface {
+		RecoverStuckJobs(ctx context.Context) (int, error)
+	}); ok {
+		if n, err := rec.RecoverStuckJobs(ctx); err == nil && n > 0 {
+			w.logger.Warn("recovered orphaned running jobs", "count", n)
+		}
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()

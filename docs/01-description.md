@@ -1,89 +1,231 @@
-# 01. Описание проекта
+# 01. Project Description
 
-Документ для понимания проекта без погружения в код. Предполагает начальное знакомство с транспортной логистикой и терминами (словарь — в `02-glossary.md`).
+This document provides a high-level understanding of the project without requiring
+knowledge of the implementation. Basic public-transport terminology is assumed;
+see `02-glossary.md` for definitions.
 
-## Цель
+## Goal
 
-Построить **MCP-сервер**, который по двум точкам (откуда / куда) находит маршрут общественного транспорта «дверь-в-дверь»: из ближайшего к точке отправления пункта посадки в ближайший к точке назначения пункт высадки, через один или несколько видов транспорта с учётом стыковок.
+Build an **MCP server** that finds door-to-door public-transport itineraries
+between an origin and a destination.
 
-Запрос может приходить от ИИ-агента (Claude и подобных) через протокол MCP; пользователь идентифицируется по API-ключу и имеет собственные настройки поиска.
+A route may combine multiple transport modes and operators, including walking
+connections. The system selects suitable boarding and alighting points near the
+requested locations and accounts for transfers and connection times.
 
-## Ключевая идея маршрута
+Requests may come from an AI agent such as Claude through MCP. Users are
+identified by API key and may have individual search preferences.
 
-Маршрут — это всегда цепочка **leg'ов** (этапов), в сумме дающая перемещение из точки А в точку Б:
+## Route Model
 
+An itinerary is an ordered sequence of **legs** connecting the origin and
+destination:
+
+```text
+origin
+  → walking
+  → stop 1
+  → transit leg
+  → stop 2
+  → transfer
+  → stop 3
+  → transit leg
+  → stop 4
+  → walking
+  → destination
 ```
-удобное для А → (пешком) → остановка 1 → ОТ №1 → остановка 2
-   → (пешая стыковка) → остановка 3 → ОТ №2 → остановка 4 → (пешком) → Б
+
+A leg is one continuous part of the itinerary:
+
+1. **Access / egress** — walking from the origin to the first boarding point and
+   from the final alighting point to the destination.
+2. **Transit legs** — travel by public transport such as bus, tram, train, or
+   other supported modes.
+3. **Transfers** — connections between transit legs that are valid only when the
+   arrival time plus the required transfer time is no later than the next
+   departure.
+4. **Self-leg** — a gap where no supported transit connection exists. The user
+   must cover the gap independently, for example by walking, cycling, taxi, or
+   car. The itinerary remains continuous instead of being discarded.
+
+An itinerary may contain one or multiple transit legs and may combine different
+transport modes and data providers.
+
+## Core Principles
+
+### 1. Provider Independence
+
+Each external data source is implemented as a separate provider or adapter.
+Examples include GTFS feeds, government registries, carrier websites, and future
+REST APIs.
+
+All providers convert source-specific data into the **canonical domain model**.
+The planning engine does not depend on provider-specific formats.
+
+Adding, replacing, or disabling a provider must not require changes to the
+planning core.
+
+### 2. Source-Independent Planning Core
+
+The planning engine operates only on the canonical model.
+
+It is responsible for building the required transfer structures, finding
+itineraries using algorithms such as CSA or RAPTOR, and identifying gaps in
+available coverage.
+
+Source-specific properties affect planning only through the data they provide,
+not through provider-specific logic in the planner.
+
+### 3. Runtime Configuration
+
+Provider configuration, feature flags, and default search parameters must be
+changeable without rebuilding the service.
+
+User-specific settings are stored separately and override system defaults where
+applicable.
+
+### 4. Authentication and User Scope
+
+Users access the service through API keys.
+
+Each key belongs to a specific user, whose search preferences and other
+user-scoped settings are isolated from those of other users.
+
+User registration is self-service and may require subsequent administrator
+moderation.
+
+### 5. Honest Results
+
+The system must not fabricate connectivity where source data does not provide
+it.
+
+When coverage is incomplete, the missing section is represented explicitly as a
+self-leg rather than silently inventing a transit connection or discarding the
+rest of the itinerary.
+
+Provider health must be observable, including availability, latency, data
+freshness, and remaining quotas where applicable.
+
+### 6. Extensible Cost Model
+
+Each leg has an extensible cost field.
+
+The domain model must support future fare calculation based on real or estimated
+prices without requiring structural changes to the itinerary model.
+
+Fare calculation itself is outside the initial implementation scope.
+
+## Primary Use Case
+
+### City-to-City Route
+
+The initial target scenario is a journey between two cities.
+
+Example request:
+
+```text
+Origin address: city N
+Destination address: city M
+Departure time: T
 ```
 
-1. **Access/egress** — пешеходные этапы от/до адреса (ближайшие точки посадки/высадки).
-2. **Транзитные leg'и** — собственно поездки на общественном транспорте (автобус, трамвай, электричка и т.д.).
-3. **Пересадки (transfers)** — стыковки между leg'ами, допустимые по времени (`прибытие + минимальное время пересадки <= отправление`).
-4. **Self-leg ('белое пятно')** — если между двумя точками цепочки нет цифровизованного сообщения общественного транспорта, такой участок помечается как самостоятельный: его преодолевает пользователь (пешком, вело, такси, авто). Цепочка при этом не обрывается.
+The resulting itinerary may look like:
 
-Цепочка может состоять из одной поездки или из нескольких, разных видов транспорта, от разных провайдеров данных.
+```text
+origin address
+  → walking
+  → local stop in city N
+  → city transit
+  → intercity terminal
+  → intercity service
+  → terminal in city M
+  → walking transfer
+  → local transit
+  → nearest stop to destination
+  → walking
+  → destination address
+```
 
-## Принципы
+The intercity connection may come from a government registry, GTFS feed, or
+another supported provider.
 
-1. **Модульность источников данных.** Каждый источник (GTFS-фид города, реестр Минтранса, сайт перевозчика, будущие REST API) — отдельный адаптер-провайдер. Все адаптеры приводят данные к **единой канонической модели** (остановки, маршруты, рейсы, расписания, пересадки). Подключение/отключение источника не затрагивает ядро планирования.
+When no supported intercity connection exists, that section becomes a self-leg,
+while the system still constructs the surrounding parts of the journey where
+sufficient data is available.
 
-2. **Ядро планирования не зависит от источников.** Ядро работает с канонической моделью: строит трансфер-граф, ищет маршруты алгоритмами CSA/RAPTOR, детектирует пробелы покрытия. Свойства источников влияют только через данные.
+## Future Use Cases
 
-3. **Динамическая конфигурация.** Конфигурация (список источников, feature-флаги, параметры поиска по умолчанию) меняется без пересборки и перезапуска; per-user настройки хранятся отдельно и переопределяют значения по умолчанию.
+The following scenarios are planned for later phases:
 
-4. **Идентификация и права.** Пользователь работает по API-ключу. Каждый ключ скоуплен на пользователя; пользователь может иметь персональные настройки поиска. Регистрация — саморегистрация с последующей модерацией администратором.
+* city-wide address-to-address routing using local GTFS data;
+* journeys to a specific settlement using multiple transfers and transport
+  modes;
+* arrival-by-time search in addition to departure-after-time search.
 
-5. **Честность данных.** Система не выдаёт нарисованный маршрут там, где данных нет: пробел покрытия явно помечается как участок ответственности пользователя. Жизнеспособность каждого источника контролируется (up/down, латентность, свежесть данных, остаток лимитов).
+## Initial Scope
 
-6. **Готовность к стоимости.** Каждый leg в модели несёт расширяемое поле стоимости; заложен интерфейс расчёта стоимости (реальные тарифы/оценки). На первом этапе расчёт стоимости не реализуется, но модель не требует переработки при его появлении.
+The first implementation does **not** include:
 
-## Сценарии
+* ticket booking or ticket sales;
+* fare calculation beyond the extensible data model;
+* real-time transit data such as GTFS-RT delays and cancellations;
+* payment integrations;
+* end-user mobile or web applications;
+* commercial international APIs.
 
-### Первый сценарий (целевой для первой итерации): «город → город»
-Запрос: адрес в городе N, адрес в городе M, желаемое время отправления.
-Ожидаемый ответ: цепочка, например:
-- пешком от адреса до остановки рядом (ближайший пункт отправления);
-- автобус внутри города N до автовокзала (или транзитом до пригородного узла);
-- междугородний маршрут (из реестра Минтранса / GTFS) до города M;
-- пешая стыковка до остановки городского транспорта M;
-- городской транспорт M до ближайшей к адресу остановки;
-- пешком до адреса.
+The initial system focuses on route planning through MCP and administrative
+interfaces using open and freely accessible data sources.
 
-Если междугородного маршрута нет — система честно помечает участок как self-leg (например, «добраться до города M самостоятельно»), а оставшиеся части маршрута строит там, где данные есть.
+## Non-Functional Requirements
 
-### Следующие сценарии (позже)
-- Внутригородской «адрес → адрес» на GTFS одного города.
-- «До конкретного населённого пункта с пересадкой» с несколькими видами транспорта.
-- Поиск «прибыть к времени T» (в дополнение к «отправиться после T»).
+### Configuration
 
-## Границы проекта (что мы НЕ делаем на первом этапе)
+Service and user configuration must be changeable without rebuilding the
+application.
 
-- Организацию и продажу билетов (поиск и построение маршрута — да, бронирование — нет).
-- Обработку цен (тарифы) в первой итерации — только интерфейс для них.
-- Realtime-данные (GTFS-RT: задержки, отмены) — только статические расписания.
-- Платёжные интеграции.
-- Мобильные/веб-приложения для конечных пользователей — только MCP-интерфейс и админ-панель.
-- Поддержку зарубежных коммерческих API в первой итерации — только открытые бесплатные источники.
+### Observability
 
-## Нефункциональные требования (стартовые)
+The service must provide observability from the beginning, including:
 
-- Конфигурация и настройки пользователей изменяются без пересборки сервиса.
-- Сервис наблюдается с первого дня: health-эндпоинты, метрики запросов к внешним источникам, метрики нагрузки, структурированные логи, трейсы.
-- Изоляция источников: падение/деградация одного провайдера не роняет сервис и не скрывает ошибку (метрики и понятные ошибки в ответе).
-- Формат данных между системой и ИИ-агентом — через MCP (инструменты и ресурсы), stateless Streamable HTTP.
+* health and readiness endpoints;
+* metrics for external providers and service load;
+* structured logging;
+* tracing where applicable.
 
-## Стек
+### Provider Isolation
 
-- **Go** (модуль `travelmcp`), официальный Go-MCP SDK (`modelcontextprotocol/go-sdk`), `mark3labs/mcp-go` для HTTP-транспорта.
-- **PostgreSQL + PostGIS** — пользователи, ключи, конфигурация, кэш расписаний, счётчики метрик, пространственные запросы (ближайшие остановки, пешие стыковки).
-- Адаптеры источников данных первой волны:
-  - синтетический (тестовый, всегда доступен);
-  - Реестр межрегиональных автобусных маршрутов Минтранса РФ (CSV);
-  - GTFS Москвы и Санкт-Петербурга;
-  - OSM — остановки, пешеходная сеть для ближайших точек и пересадок.
-  - Скрейпинг сайтов перевозчиков — позже, точечно, с метриками здоровья.
+Failure or degradation of one provider must not bring down the service as a
+whole.
 
-## Глоссарий
+Provider failures must remain visible through metrics and explicit errors where
+they affect a request.
 
-Термины (leg, transfer, gap, self-leg, GTFS, CSA, RAPTOR и др.) — в [`02-glossary.md`](02-glossary.md).
+### MCP Interface
+
+Communication between the system and AI agents uses MCP over stateless
+Streamable HTTP.
+
+## Initial Technology Stack
+
+* **Go** — primary implementation language and `travelmcp` module.
+* **MCP** — official Go SDK (`modelcontextprotocol/go-sdk`) with
+  `mark3labs/mcp-go` where required for HTTP transport.
+* **PostgreSQL + PostGIS** — users, API keys, configuration, schedule cache,
+  quota/usage counters, and spatial queries such as nearest-stop and transfer
+  calculations.
+
+### Initial Data Providers
+
+The first provider set includes:
+
+* synthetic provider for deterministic testing;
+* Russian Ministry of Transport interregional bus-route registry (CSV);
+* GTFS data for Moscow and Saint Petersburg;
+* OSM data for stops and pedestrian-network information;
+* carrier-site scraping as a later, targeted integration with explicit health
+  monitoring.
+
+## Terminology
+
+Domain terminology such as `leg`, `transfer`, `gap`, `self-leg`, `GTFS`, `CSA`,
+and `RAPTOR` is defined in [`02-glossary.md`](02-glossary.md).

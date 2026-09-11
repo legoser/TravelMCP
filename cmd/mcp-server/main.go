@@ -159,6 +159,7 @@ func parseDuration(s string, def time.Duration) time.Duration {
 
 func newJobsWorker(st store.Store, cfg *config.Config, l *slog.Logger) *jobs.Worker {
 	w := jobs.NewWorker(st, l)
+	registerCollectWorker(w, st, cfg, l)
 	w.Register("import_gtfs", func(ctx context.Context, job store.JobRow) error {
 		l.Info("handling import_gtfs", "id", job.ID, "payload", job.Payload)
 		var p map[string]any

@@ -1,228 +1,229 @@
 # AGENTS.md
 
-Контекст проекта для opencode-агента. Работаем только в этом репозитории.
+## Project
 
-## Что за проект
+`travelmcp` is a Go MCP server for multimodal public-transport route planning.
+The server accepts origin/destination points and search parameters, then builds
+door-to-door itineraries (bus, tram, train, flight, and walking legs) using the
+CSA planner over a canonical provider network.
 
-`travelmcp` — MCP-сервер на Go для мультимодального поиска маршрутов
-общественного транспорта «дверь-в-дверь». Агент (или REST-клиент) передаёт
-точки отправления/назначения и параметры поиска; сервер строит цепочку
-перемещений (автобус/трамвай/поезд/самолёт + пешие подходы) через ядро
-CSA-планировщика по канонической сети провайдеров данных.
+## Source of Truth
 
-## Источник истины по плану и архитектуре
+This file contains stable project constraints only. Phase-specific details belong
+in `docs/` and must not be duplicated here.
 
-**Этот файл описывает то, что не зависит от текущей фазы разработки.**
-Всё, что меняется по мере выполнения плана (дерево пакетов, состав
-коннекторов, стратегия миграций БД, пороги верификации, статус перехода
-JSON→Postgres) — не дублируется здесь, а живёт в `docs/`.
+* `docs/00-index.md` is the entry point to the current documentation and plan.
+* Before an architecture-level change (new package, changed `Store`/`Provider`
+  interface, new external integration, data-model change), read the current plan
+  in `docs/`.
+* If this file conflicts with the current plan, the plan is authoritative and
+  this file should be updated to restore consistency.
 
-- `docs/00-index.md` — точка входа: какой файл плана сейчас актуален, что
-  архивно. Если его ещё нет — свериться со списком в конце этого файла и
-  завести его при следующей крупной ревизии плана.
-- Перед архитектурно значимым изменением (новый пакет, смена интерфейса
-  `Store`/`Provider`, новая внешняя интеграция) — сначала прочитать текущий
-  план в `docs/`, а не полагаться на дерево пакетов ниже: оно описывает
-  только стабильное ядро, не текущую фазу.
-- Если инструкция в этом файле противоречит текущему плану в `docs/` —
-  актуален план; несоответствие — повод исправить AGENTS.md, а не обойти
-  план.
+## Technology
 
-## Технологии и среда
+* Go module: `travelmcp`; toolchain requirements are defined by `go.mod`.
+* `github.com/mark3labs/mcp-go`: MCP protocol, Streamable HTTP, JSON-RPC 2.0,
+  stateless transport (`WithStateLess`), API-key authentication.
+* `gopkg.in/yaml.v3`: configuration.
+* PostgreSQL + PostGIS: target production store; PostGIS is used for geographic
+  data such as `places` and `terminals`.
+* External paid APIs are not used; only open data sources are allowed.
+* Add a new dependency only when the standard library and existing dependencies
+  do not reasonably cover the requirement.
 
-- Go (модуль `travelmcp`, требования в `go.mod`; тулчейн по умолчанию).
-- `github.com/mark3labs/mcp-go` — протокол MCP: Streamable HTTP,
-  JSON-RPC 2.0, инструменты (`Tools`); транспорт stateless (`WithStateLess`)
-  — без `initialize`/сессий, вместо сессий — API-ключ в запросе.
-- `gopkg.in/yaml.v3` — конфигурация.
-- PostgreSQL + PostGIS — целевой прод-стор (см. текущий план в `docs/` за
-  структурой БД и статусом перехода). PostGIS — для гео `places/terminals`.
-- Внешние платные API не используются (только открытые источники).
-- Новую внешнюю зависимость добавлять только когда стандартная библиотека
-  или уже используемый пакет реально не покрывают задачу — обосновать в PR.
+## Architecture Invariants
 
-## Архитектурные инварианты (не меняются от фазы к фазе)
+* The canonical domain model lives only in `internal/model` and has no external
+  dependencies. Adapters convert external data into the canonical model instead
+  of defining duplicate domain types.
+* Dependency direction is downward:
+  `cmd` → `server` → `mcp`/`planner` → `providers`/`store`/`geo` → `model`.
+* Upper layers must not depend on `server`, `mcp`, or `cmd`.
+* External I/O (HTTP, files, database) belongs behind adapters and the designated
+  data-access layer, not directly in business logic.
+* Keep responsibilities isolated. Prefer small, consumer-focused interfaces;
+  implementations of an interface must remain interchangeable; upper layers
+  depend on interfaces rather than concrete database or transport types.
+* Use `make check-layers` for dependency-boundary validation.
+* Remove obsolete implementations as the migration plan progresses. After a
+  completed migration step, run `make check-deprecated`.
+* Identifiers, codes, and enum-like values use Latin characters. User-facing
+  names, error text, and MCP tool descriptions remain in Russian.
+* Configuration precedence is strictly `default → YAML → env`. Secrets must
+  come from environment variables and must not be committed.
+* Behavioral parameters such as thresholds, limits, and weights must have one
+  authoritative configuration location.
 
-- **Каноническая модель** живёт только в `internal/model`, не имеет внешних
-  зависимостей; адаптеры приводят внешние данные к ней, а не дублируют типы
-  в своих пакетах.
-- **Направление зависимостей «сверху вниз»**: `cmd` → `server` →
-  `mcp`/`planner` → `providers`/`store`/`geo` → `model`. Никто не
-  импортирует `server`/`mcp`/`cmd` наверх. Внешние вызовы (HTTP/файлы/БД) —
-  только через адаптеры и единый слой доступа к данным, не напрямую из
-  бизнес-логики.
-- **SOLID и изоляция слоёв**: один тип/файл = одна ответственность; новая
-  функциональность — через расширение интерфейсов (`Store`, `Provider`,
-  и т.п.), а не правкой `internal/model`; реализации одного интерфейса
-  взаимозаменяемы; интерфейсы узкие, под конкретного потребителя; верхние
-  слои зависят от интерфейсов, не от конкретных структур/`*sql.DB`.
-  Проверка — `make check-layers` (актуальные grep/vet-правила живут в
-  `Makefile`, не здесь, чтобы не расходиться с реальными именами файлов).
-- **Устаревший код вычищается по ходу плана**: после каждого закрытого
-  пункта текущего плана — прогнать `make check-deprecated` и убедиться, что
-  замена (например, legacy JSON-провайдер → канон в Postgres) не осталась
-  лежать рядом с новым кодом без явной пометки `Deprecated`.
-- Идентификаторы и коды — латиницей (`a-cen`, `900`, `ModeFlight`).
-  Человекочитаемые строки (названия остановок, тексты ошибок, описания
-  инструментов MCP) — по-русски.
-- Конфигурация — строго `default → YAML → env`; секреты — только через env,
-  в репозиторий не попадают. Актуальный список ключей — в `configs/` и
-  текущем плане, не перечисляется здесь во избежание рассинхронизации.
-- Значения, определяющие параметры поведения (пороги, лимиты, веса) —
-  в едином месте конфигурации, не разбросаны по коду.
+## Domain Invariants
 
-## Инварианты домена (перенесено из ревью плана — не переопределять точечно)
+* New data enters the canonical model only through the common pipeline:
+  collection → normalization → enrichment → deduplication → verification →
+  canonicalization.
+* Manually confirmed data must not be silently overwritten by automatic
+  re-verification. Conflicts require review.
+* Quota-limited external APIs must use the shared database-backed quota counter,
+  not process-local state.
+* Database migrations are additive by default. Do not use destructive `ALTER`
+  operations that discard populated data unless the current phase explicitly
+  approves them.
+* Polymorphic references must have compensating integrity controls; do not rely
+  on an unprotected `(entity_type, entity_id)` pair.
+* Keep identity confidence and geometry/time confidence as separate concepts.
 
-Эти правила — результат намеренных архитектурных решений по итогам ревью
-плана; их нарушение откатывает уже принятые решения, а не «мелкая правка»:
+## Architecture Decision Discipline
 
-- Любые новые данные попадают в канон только через единый конвейер адаптации
-  (сбор → нормализация → обогащение → дедуп → верификация → канон), а не
-  прямой записью в `Store` из коннектора.
-- Запись, подтверждённая человеком вручную, не перезаписывается тихо
-  автоматической переверификацией — конфликт уходит в очередь на review,
-  а не заменяет подтверждённое значение.
-- Обращения к квотируемым внешним API — только через общий счётчик с
-  атомарным инкрementом на уровне БД, не через локальное состояние в
-  процессе.
-- Миграции БД — аддитивные (новые таблицы/колонки), без `ALTER`,
-  разрушающего уже заполненные данные, если явно не согласовано иное в
-  плане на конкретную фазу.
-- Полиморфные связи (сущность+тип) — только с компенсирующим контролем
-  (constraint на допустимые типы, триггер против «сирот»), а не голым
-  `(entity_type, entity_id)` без защиты.
+* A decision that changes source trust, source priority, canonical field
+  semantics, or entity-existence rules is not considered final until the
+  corresponding decision is recorded in `docs/14-plan.md` in the same
+  commit/PR as the code change.
+* External API calls from deterministic pipelines such as skeleton sync,
+  attachment, and verification must use the existing cache+quota path
+  (`geocode_cache` / `api_quotas`).
+* A new provider must implement the existing abstraction and reuse the existing
+  integration path; do not create one-off external API call paths.
+* Before changing the grouping or shape of data in a validated pipeline, verify
+  and explicitly test that existing hard validators (for example monotonicity
+  and speed checks) remain valid for the new representation.
+* If the plan already specifies a missing mechanism, implement that mechanism
+  instead of replacing it with a one-off manual operation.
+* Avoid endless diagnostic/planning loops. Each investigation round must end
+  with either:
 
-Конкретные текущие значения (пороги, форматы файлов, схема миграций на
-данный момент) — в `docs/`, здесь фиксируется только сам принцип.
+  1. an implemented and validated change, or
+  2. an explicit blocker that prevents safe implementation.
 
-## Дисциплина архитектурных решений (добавлено по итогам ревью trips-sync)
+## Execution Discipline
 
-- Решение, меняющее trust-матрицу, приоритет источников, семантику поля в
-  канонической модели или правило существования сущности — **не считается
-  принятым**, пока не оформлено диффом в docs/14-plan.md (соответствующий §)
-  в том же коммите/PR, что и код. Устное/чат-решение — черновик, не источник
-  истины.
-- Любой вызов внешнего API из детерминированного конвейера (skeleton-sync,
-  attach, verify-стадия) обязан идти через уже существующий путь
-  cache+quota (geocode_cache/api_quotas), без исключений "точечно, в обход".
-  Новый источник (например Overpass) не добавляет новый путь вызова — он
-  реализует существующий интерфейс (geocoder.MultiGeocoder) и подключается
-  туда же, где Nominatim/Yandex.
-- Прежде чем менять форму/группировку данных в уже провалидированном
-  конвейере (например: схлопывание/пропуск стопов в трипе), проверить и
-  явно протестировать, что существующие hard-валидаторы (монотонность,
-  скорость) остаются корректными на новой форме данных — они писались под
-  конкретную структуру входа и молча "просто сработают" не гарантированно.
-- Если задача обнаруживает недостающий механизм, уже описанный в плане
-  (например §5.3 expiry job), реализовать механизм, а не разовую ручную
-  операцию поверх симптома. Ручная операция — это красный флаг "план и код
-  разошлись", а не решение.
-- Разграничивать в данных два разных вида неопределённости — "это тот ли
-  объект" (identity confidence) и "точны ли координаты/время" (geometry
-  confidence) — они не должны схлопываться в один флаг: агрегированный
-  флаг скрывает, какая часть системы должна была отказаться помогать.
-- Цикл "продиагностировали → предложили план → 4 новых открытых вопроса"
-  не должен повторяться бесконечно. Каждый раунд обязан заканчиваться либо
-  реализованным и проверенным диффом, либо явным списком decision blockers
-  с ответственным и сроком — не новым слоем вопросов поверх старых.
+For implementation tasks, prefer execution over extended deliberation.
 
-## Структура (стабильное ядро)
+1. Inspect only the code and documentation required to understand the task.
+2. Make a reasonable implementation decision once the available evidence is
+   sufficient.
+3. Edit the code.
+4. Inspect the diff.
+5. Run focused validation.
+6. Stop when the task is complete.
 
-```
-cmd/mcp-server/        точка входа (конфиг → реестр → HTTP+MCP → shutdown)
-internal/model/        каноническая модель (ядро, без внешних зависимостей)
-internal/mcp/          MCP-инструменты
-internal/server/       http-роутер: /healthz, /readyz, /api/v1/*, монтаж /mcp
-internal/config/       конфиг: default → YAML → env
-internal/telemetry/    метрики
-test/common/           заготовленные сценарии и хелперы (integration + smoke)
-test/integration/      тесты HTTP+MCP in-process (httptest)
-test/smoke/            тесты с реальным бинарником (отдельный процесс)
-testdata/              эталонные фикстуры (коммитятся)
-tools/                 вспомогательные Go-модули (например, osm-extract)
-scripts/               ручные демо/сборщики (не источник правды по тестам)
-configs/               YAML-конфиги
-migrations/            DDL (стратегия и статус — см. текущий план в docs/)
-docs/                  живая документация: миссия, план, глоссарий, API-рефы
-```
+Do not:
 
-Пакеты для данных/импорта/верификации/компиляции GTFS (`internal/store`,
-`internal/providers`, `internal/adapters/*`, `internal/verification`,
-`internal/import`, `internal/gtfs`, `internal/jobs` и т.п.) активно
-эволюционируют по фазам плана — их фактический состав и границы
-ответственности смотреть в текущем плане, не в этом дереве.
+* repeat equivalent searches or file reads;
+* gather information only to increase confidence;
+* reopen a decision that is already supported by the available evidence;
+* create multiple implementation plans for a straightforward change;
+* restart the analysis from the beginning after each tool result;
+* refactor unrelated code.
 
-## Тестирование
+If one missing fact blocks a safe implementation, obtain that fact with one
+targeted inspection, then proceed.
 
-- `Makefile`-цели — основной способ сборки/тестов; Go-тесты — основной
-  способ проверки API, shell-скрипты — только ручное демо, не источник
-  истины по корректности.
-- Тест-сценарии не генерировать на лету: фиксированные заготовки в
-  `test/common` одинаково исполняются в integration и smoke.
-- Новое поле/инструмент MCP — дополнить сценарии в `test/common` и
-  проверить актуальность `scripts/api-demo.sh`.
-- Конкурентные/атомарные механизмы (квоты, очереди) — покрывать явным
-  race-тестом (например, параллельные горутины на инкремент счётчика), а
-  не полагаться на визуальную проверку кода.
+Prefer the smallest correct change that satisfies the request.
 
-## Наблюдаемость
+## Testing
 
-- Структурированное логирование (`slog` или эквивалент) с корреляцией по
-  идентификатору задачи/сущности — конкретная схема полей может меняться
-  по фазам, актуальная — в текущем плане.
-- Любая долгая/фоновая операция принимает `context.Context` и уважает его
-  отмену.
+* `Makefile` targets are the preferred entry points for build and test commands.
+* Go tests are the source of truth for API and behavioral correctness.
+* Shell scripts under `scripts/` are manual demos, not correctness tests.
+* Shared test scenarios belong in `test/common` and should be reusable by both
+  integration and smoke tests.
+* New MCP tools or fields must update the relevant shared scenarios and keep
+  `scripts/api-demo.sh` current.
+* Concurrency-sensitive mechanisms such as quotas and queues require explicit
+  race-oriented tests.
 
-## Безопасность
+## Observability
 
-- Секреты — только через env, не в репозитории.
-- Доступ к административным операциям (импорт, ручная правка, вызов
-  внешнего API) — с аутентификацией и записью, кто и когда внёс изменение;
-  конкретный механизм (токен/JWT/роли) и его статус — в текущем плане.
+* Use structured logging (`slog` or an equivalent) with correlation to the
+  relevant task/entity. The exact field schema belongs in the current plan.
+* Long-running and background operations must accept `context.Context` and honor
+  cancellation.
 
-## Правила работы с агентом
+## Security
 
-- Не добавлять комментарии в код, если пользователь явно не попросил.
-- Рассуждения — на английском языке, ответы — на русском.
-- Контролировать зацикливание действий; в затруднительной ситуации лучше
-  спросить пользователя, чем гадать.
-- После изменения конфигурации opencode (включая этот файл) — напомнить
-  пользователю перезапустить opencode: конфиг читается при старте.
-- Обязательная проверка после изменений в программном коде (иначе
-  пропустить): `gofmt` + `go vet ./...` + `make test`.
-- Если правка меняет архитектурный инвариант или структуру пакетов out of
-  sync с текущим планом — обновить соответствующий файл в `docs/`, а не
-  оставлять расхождение молча.
+* Secrets must come from environment variables and must not be committed.
+* Administrative operations such as imports, manual edits, and external API
+  calls require authentication and auditability. The concrete mechanism belongs
+  in the current plan.
 
-## Команды
+## Code Style
+
+* Do not add comments unless they are necessary for correctness or explicitly
+  requested by the user.
+* Keep changes focused and consistent with existing code.
+* Do not silently introduce architectural exceptions to solve local symptoms.
+
+## Validation
+
+After changing program code, run the narrowest relevant validation first.
+
+For a normal Go code change, the expected final validation is:
 
 ```sh
-make build          # go build -o bin/mcp-server ./cmd/mcp-server
-make test           # unit + integration + smoke
-make unit           # go test ./internal/... -count=1
-make integration    # go test ./test/integration/ -count=1 -v
-make smoke          # go test ./test/smoke/ -count=1 -v
-make vet            # go vet ./...
-make fmt            # gofmt -w .
-make check-layers      # проверка направления зависимостей и SOLID-границ
-make check-deprecated  # поиск устаревшего кода после закрытия пункта плана
-make run            # go run ./cmd/mcp-server -config configs/config.example.yaml
+gofmt
+go vet ./...
+make test
 ```
 
-Актуальные env-переменные, флаги провайдеров и параметры демо-скриптов —
-в `configs/` и текущем плане; здесь не дублируются, чтобы не расходиться.
+Run additional checks when relevant:
 
-## Документация
+```sh
+make check-layers
+make check-deprecated
+```
 
-`docs/` — живой набор нумерованных документов; номера и состав меняются по
-мере развития плана. На момент последней синхронизации этого файла:
+Do not claim validation was performed unless it was actually run.
 
-- `docs/13-mission.md` — миссия проекта.
-- `docs/14-plan.md` — текущий план: терминалы-первыми, структура БД, фазы, операционная модель синхронизации (chunks/plan_id/логирование), стратегия миграций.
-- `docs/12-motis-api.md` — MOTIS API.
-- `docs/02-glossary.md` — термины.
-- `docs/01/03/05/06/07-*.md` — архив, актуальность не поддерживается.
+## Stable Project Structure
 
-Если структура `docs/` изменилась (появился `docs/00-index.md` или новые
-номера) — этот список считается устаревшим, ориентироваться на реальное
-содержимое каталога.
+```text
+cmd/mcp-server/        entry point
+internal/model/        canonical domain model
+internal/mcp/          MCP tools
+internal/server/       HTTP router and MCP mounting
+internal/config/       configuration
+internal/telemetry/    metrics and telemetry
+test/common/           shared test scenarios and helpers
+test/integration/      in-process HTTP+MCP tests
+test/smoke/            tests using the real binary
+testdata/              committed reference fixtures
+tools/                 auxiliary Go modules
+scripts/               manual demos and data-collection scripts
+configs/               YAML configuration
+migrations/             database DDL
+docs/                  living project documentation
+```
+
+Packages related to storage, providers, adapters, verification, import,
+GTFS compilation, and jobs evolve with the implementation plan. Their current
+boundaries are defined by `docs/`, not by this file.
+
+## Commands
+
+```sh
+make build
+make test
+make unit
+make integration
+make smoke
+make vet
+make fmt
+make check-layers
+make check-deprecated
+make run
+```
+
+Current environment variables, provider flags, and demo parameters are defined
+in `configs/` and the current project plan; do not duplicate them here.
+
+## Documentation
+
+`docs/` is the living documentation set. File names and numbering may change.
+
+At the time this file was written, the main references are:
+
+* `docs/02-glossary.md` — project terminology.
+* `docs/13-mission.md` — project mission.
+* `docs/14-plan.md` — current implementation plan, database structure, phases,
+  synchronization model, and migration strategy.
+
+Archived documents are not authoritative. Always prefer the current contents of
+`docs/` over this list.

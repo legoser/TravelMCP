@@ -1,38 +1,38 @@
-# 00. Индекс документации
+# 00. Documentation Index
 
-Единственный файл, который редактируется при каждой смене актуального
-плана/номера документа. `AGENTS.md` и остальной код ссылаются на «текущий
-план» через этот индекс, а не на конкретный номер файла — так ссылки не
-протухают при ревизии плана.
+This is the only file that must be updated whenever the current plan or document
+numbering changes. `AGENTS.md` and project documentation refer to the current
+plan through this index rather than by hard-coded filename, so references remain
+valid when the plan is revised.
 
-## Актуальные документы
+## Current Documents
 
-| Файл | Статус | Назначение |
-|---|---|---|
-| `docs/13-mission.md` | актуален | Миссия, принципы, границы проекта |
-| `docs/14-plan.md` | **актуальный план** | Приоритеты (терминалы-первыми), структура БД, фазы, операционная модель синхронизации, реестр депрекации |
-| `docs/15-dev-status.md` | актуален | Снимок текущей фазы: статус миграции JSON→Postgres, дерево пакетов на сейчас, env-переменные, референс тестовых данных, чек-лист устаревания |
-| `docs/12-motis-api.md` | актуален | MOTIS API (v6), примеры запросов |
-| `docs/02-glossary.md` | актуален | Термины, шкала `level`/`admin_level`, словарь перевода |
+| File                    | Status           | Purpose                                                                                                                                            |
+| ----------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docs/01-description.md`    | Current          | Project mission, principles, and scope                                                                                                             |
+| `docs/14-plan.md`       | **Current plan** | Priorities (terminals first), database structure, phases, synchronization model, deprecation registry                                              |
+| `docs/15-dev-status.md` | Current          | Current-phase snapshot: JSON → Postgres migration status, current package tree, environment variables, test-data references, deprecation checklist |
+| `docs/12-motis-api.md`  | Current          | MOTIS API v6 and request examples                                                                                                                  |
+| `docs/02-glossary.md`   | Current          | Terminology, `level` / `admin_level`, translation glossary                                                                                         |
 
-## Архив (не поддерживается, не использовать как источник правды)
+## Archive
 
-| Файл | Причина архивации |
-|---|---|
-| `docs/01-description.md` | заменён `13-mission.md` |
-| `docs/03-architecture.md` | заменён `14-plan.md` |
-| `docs/05-roadmap.md` | заменён фазами в `14-plan.md` |
-| `docs/06-*.md` | заменён `14-plan.md` |
-| `docs/07-first-provider-plan.md` | заменён `14-plan.md` |
-| `docs/phase0-validation.md` | архивный снапшот валидации MOTIS (2026-09-04), нумерация фаз устарела; сохранён как история геокодера |
+Archived documents are historical references only. Do not use them as the
+source of truth for current implementation decisions.
 
-## Правило поддержки индекса
+| File                             | Reason                                                                         |
+| -------------------------------- | ------------------------------------------------------------------------------ |
+| `docs/01-description.md`         |                                           |
+| `docs/03-architecture.md`        | Replaced by `14-plan.md`                                                       |
+| `docs/05-roadmap.md`             | Replaced by phases in `14-plan.md`                                             |
+| `docs/06-*.md`                   | Replaced by `14-plan.md`                                                       |
+| `docs/phase0-validation.md`      | Historical MOTIS validation snapshot (2026-09-04); phase numbering is obsolete |
 
-- При создании нового номерного документа — добавить строку сюда в том же
-  коммите.
-- При замене плана новой ревизией (например, план переезжает в
-  `docs/17-plan-v2.md`) — обновить пометку «актуальный план» здесь и
-  перенести старый файл в архив, а не оставлять два одновременно
-  помеченных как актуальные.
-- `docs/15-dev-status.md` переписывается целиком при завершении каждой фазы
-  плана — это снимок «сейчас», а не история изменений.
+## Maintenance Rules
+
+* When creating a new numbered document, add it here in the same commit.
+* When the current plan is replaced by a new revision, update the **Current plan**
+  entry here and move the previous plan to the archive.
+* Never leave multiple documents marked as the current plan.
+* `docs/15-dev-status.md` is a current-state snapshot. Rewrite it when a plan
+  phase is completed; do not use it as a change history.

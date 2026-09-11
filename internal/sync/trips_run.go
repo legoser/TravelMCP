@@ -39,9 +39,13 @@ type TripsRunConfig struct {
 	PlanID         string
 	InputSHA       string
 	Tag            string
-	ParamsFor      func(model.DensityClass) verification.Params
-	ClassFor       func(string) model.DensityClass
-	Logger         *slog.Logger
+	// TerminalScope — точечный прогон (один терминал): churn-гейт
+	// сравнивает только затронутые маршруты, остальной канон
+	// не считается исчезнувшим.
+	TerminalScope bool
+	ParamsFor     func(model.DensityClass) verification.Params
+	ClassFor      func(string) model.DensityClass
+	Logger        *slog.Logger
 }
 
 type RouteOps struct {
@@ -291,11 +295,23 @@ func RunTripsSync(ctx context.Context, db store.Store, st TripsRunnerStore, trip
 	if err != nil {
 		return sum, err
 	}
+	if cfg.TerminalScope {
+		touched := map[string]bool{}
+		for _, ft := range in {
+			touched[ft.RouteReg] = true
+		}
+		for route := range prev {
+			if !touched[route] {
+				delete(prev, route)
+			}
+		}
+	}
 	rep, err := AttachTrips(ctx, AttachInput{
 		Trips: in, Terminals: terms,
 		PrevCanon: prev, TrustRouteNK: cfg.TrustRouteNK, Source: cfg.Source,
 		ChurnThreshold: cfg.ChurnThreshold, MaxSpeedKmh: cfg.MaxSpeedKmh,
-		ParamsFor: cfg.ParamsFor, ClassForRegion: classFor, Logger: logger,
+		AllowChurnGrowth: cfg.Force,
+		ParamsFor:        cfg.ParamsFor, ClassForRegion: classFor, Logger: logger,
 	})
 	if err != nil {
 		return sum, err

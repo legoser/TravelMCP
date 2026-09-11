@@ -416,6 +416,9 @@ func (m *MemoryStore) ListTerminalsFiltered(ctx context.Context, limit, offset i
 	q = strings.TrimSpace(strings.ToLower(q))
 	filtered := make([]map[string]any, 0)
 	for id, tr := range m.terminals {
+		if tr.ValidTo != nil {
+			continue
+		}
 		name := ""
 		if m.terminalNames[id] != nil {
 			name = m.terminalNames[id]["ru"]
@@ -448,7 +451,7 @@ func (m *MemoryStore) ListTerminalsFiltered(ctx context.Context, limit, offset i
 				continue
 			}
 		}
-		filtered = append(filtered, map[string]any{"id": id, "name": name, "lat": tr.Lat, "lon": tr.Lon, "is_locked": tr.IsLocked, "place_id": tr.PlaceID})
+		filtered = append(filtered, map[string]any{"id": id, "name": name, "lat": tr.Lat, "lon": tr.Lon, "is_locked": tr.IsLocked, "place_id": tr.PlaceID, "valid_from": tr.ValidFrom, "valid_to": derefOrEmpty(tr.ValidTo)})
 	}
 	total := len(filtered)
 	out := filtered
@@ -497,6 +500,14 @@ func (m *MemoryStore) ListTerminalsFiltered(ctx context.Context, limit, offset i
 
 func sortSlice[T any](s []T, less func(a, b T) bool) {
 	sort.Slice(s, func(i, j int) bool { return less(s[i], s[j]) })
+}
+
+func derefOrEmpty[T any](p *T) T {
+	var zero T
+	if p == nil {
+		return zero
+	}
+	return *p
 }
 
 func (m *MemoryStore) EnqueueJob(ctx context.Context, j store.JobRow) (int64, error) {
@@ -575,6 +586,42 @@ func (m *MemoryStore) MarkJobDead(ctx context.Context, id int64, errMsg string) 
 	}
 	j.State = "dead"
 	j.LastError = errMsg
+	m.jobs[id] = j
+	return nil
+}
+
+func (m *MemoryStore) RecoverStuckJobs(ctx context.Context) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for id, j := range m.jobs {
+		if j.State == "running" {
+			j.State = "retry"
+			j.LastError = "recovered: orphaned running after restart"
+			m.jobs[id] = j
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (m *MemoryStore) ResetJob(ctx context.Context, id int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	j, ok := m.jobs[id]
+	if !ok {
+		return fmt.Errorf("job %d не найден", id)
+	}
+	switch j.State {
+	case "done":
+		return fmt.Errorf("job %d уже завершён (done)", id)
+	case "pending", "retry", "running", "dead":
+	default:
+		return fmt.Errorf("job %d в состоянии %q", id, j.State)
+	}
+	j.State = "pending"
+	j.Attempts = 0
+	j.LastError = ""
 	m.jobs[id] = j
 	return nil
 }
@@ -853,7 +900,7 @@ func (m *MemoryStore) GetTerminal(ctx context.Context, id int64) (map[string]any
 			}
 		}
 	}
-	return map[string]any{"id": id, "name": name, "lat": tr.Lat, "lon": tr.Lon, "is_locked": tr.IsLocked, "place_id": tr.PlaceID}, nil
+	return map[string]any{"id": id, "name": name, "lat": tr.Lat, "lon": tr.Lon, "is_locked": tr.IsLocked, "place_id": tr.PlaceID, "transport_types": tr.TransportTypes}, nil
 }
 func (m *MemoryStore) GetTerminalTags(ctx context.Context, id int64) (map[string]string, error) {
 	m.mu.RLock()
@@ -927,6 +974,27 @@ func (m *MemoryStore) FinishSyncRun(ctx context.Context, id int64, state, summar
 	r.Summary = summary
 	m.syncRuns[id] = r
 	return nil
+}
+
+func (m *MemoryStore) ListSyncRuns(ctx context.Context, limit int) ([]store.SyncRunRow, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if limit <= 0 {
+		limit = 50
+	}
+	ids := make([]int64, 0, len(m.syncRuns))
+	for id := range m.syncRuns {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] > ids[j] })
+	if len(ids) > limit {
+		ids = ids[:limit]
+	}
+	out := make([]store.SyncRunRow, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, m.syncRuns[id])
+	}
+	return out, nil
 }
 
 func (m *MemoryStore) EnsureSyncChunk(ctx context.Context, runID int64, entity, chunkKey string) (int64, error) {
