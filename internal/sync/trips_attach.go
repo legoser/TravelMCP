@@ -122,18 +122,25 @@ type AttachReport struct {
 	FuzzyPromoted int `json:"fuzzy_promoted"`
 }
 
-// backbonePromotable — D-3: трип промоутится с дырками в середине, если оба
-// конца (первый/последний matched) verified и matched-остов связен: доля
-// verified ≥ 2/3 и минимум 2 стопа. Концы строгие (без них трип не публикуется
-// вовсе — пассажир не поедет в никуда), середина добирается later (§5.4).
-func backbonePromotable(matched []MatchedStopTime, totalStops int) bool {
+// backbonePromotable — D-3: трип промоутится с дырками в середине, если
+// оба конца (первый/последний стоп нитки) verified и matched-остов
+// связен: минимум 2 стопа. Для коротких/городских ниток — дополнительно
+// доля verified ≥ 2/3; межгород (оба конечных терминала заматчены,
+// монотонность/скорости проверяются ниже на эффективной
+// последовательности — перегоны через пропуск уже валидируются)
+// промоутится с mid_gaps независимо от доли: «Юрга—Кемерово» 2/16
+// стопов — легитимный сквозной рейс, а не skeleton_gap. Концы строгие
+// (без них трип не публикуется вовсе — пассажир не поедет в никуда),
+// середина добирается later (§5.4).
+func backbonePromotable(matched []MatchedStopTime, ft model.FlatTrip) bool {
 	if len(matched) < 2 {
 		return false
 	}
-	if float64(len(matched))/float64(totalStops) < 2.0/3.0 {
-		return false
+	if float64(len(matched))/float64(len(ft.Stops)) >= 2.0/3.0 {
+		return true
 	}
-	return true
+	return matched[0].StopID == ft.Stops[0].StopID &&
+		matched[len(matched)-1].StopID == ft.Stops[len(ft.Stops)-1].StopID
 }
 
 func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
@@ -200,7 +207,7 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 		}
 		tripTag := logger.With("step", "match_stop", "route_nk", routeNK, "trip_nk", tripNK, "direction", ft.Direction)
 		matched, worstReason, worstScore, unmatched := matchStops(ft, mindex, source, classFor, in.ParamsFor, logger)
-		if len(unmatched) > 0 && !backbonePromotable(matched, len(ft.Stops)) {
+		if len(unmatched) > 0 && !backbonePromotable(matched, ft) {
 			st := StagedTrip{
 				RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg,
 				Direction: ft.Direction, ServiceID: ft.ServiceID, Run: ft.Run,

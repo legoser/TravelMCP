@@ -66,6 +66,27 @@ func TestParseRaspClock(t *testing.T) {
 	}
 }
 
+func TestParseRaspTzShift(t *testing.T) {
+	cases := []struct {
+		in   string
+		want int
+		ok   bool
+	}{
+		{"2026-09-04T06:30:00+07:00", 7 * 60, true},
+		{"2026-09-04T06:30:00+07", 7 * 60, true},
+		{"2026-09-04T06:30:00-03:30", -(3*60 + 30), true},
+		{"2026-09-04T06:30:00Z", 0, false},
+		{"2026-09-04 06:30:00", 0, false},
+		{"", 0, false},
+	}
+	for _, c := range cases {
+		got, ok := ParseRaspTzShift(c.in)
+		if ok != c.ok || (ok && got != c.want) {
+			t.Fatalf("ParseRaspTzShift(%q) = %d,%v want %d,%v", c.in, got, ok, c.want, c.ok)
+		}
+	}
+}
+
 func TestFlattenRaspThread(t *testing.T) {
 	dep := "2026-09-04 00:15:00"
 	arr := "2026-09-04 03:30:00"
@@ -103,6 +124,89 @@ func TestFlattenRaspThread(t *testing.T) {
 	}
 	if ft.Stops[0].Codes[0].Code != "s9623379" || ft.Stops[0].Codes[0].System != "yandex" {
 		t.Fatalf("codes=%+v", ft.Stops[0].Codes)
+	}
+}
+
+// TzShiftMin=420 (UTC+07): местные времена переводятся в UTC —
+// «06:30 местного» хранится как 23:30 UTC предыдущих суток, а не 06:30
+// «условного UTC» (баг A1: утренние рейсы уезжали на 7 часов).
+func TestFlattenRaspThreadTzShift(t *testing.T) {
+	dep := "2026-09-04 06:30:00"
+	arr := "2026-09-04 09:10:00"
+	thread := &RaspThread{
+		UID:   "u-tz",
+		Title: "Утренний",
+		Days:  "ежедневно",
+		Stops: []RaspThreadStop{
+			{Station: stationOf("s1", "Юрга"), Departure: &dep},
+			{Station: stationOf("s2", "Кемерово"), Arrival: &arr},
+		},
+	}
+	res := FlattenRaspThread(thread, RaspFlattenConfig{TzShiftMin: 7 * 60})
+	if res.State != "promoted" {
+		t.Fatalf("state=%s detail=%s", res.State, res.Detail)
+	}
+	if got := res.Trip.Stops[0].DepMin; got == nil || *got != 23*60+30 {
+		t.Fatalf("06:30 местного (UTC+7) → 23:30 UTC, got %v", got)
+	}
+	// 09:10 местного → 02:10 UTC: 02:10 < 23:30 (первое отправление) →
+	// rollMidnight честно относит к следующим суткам (+1440)
+	if got := res.Trip.Stops[1].ArrMin; got == nil || *got != 24*60+2*60+10 {
+		t.Fatalf("09:10 местного → 02:10 UTC (+1440 roll) = 26:10, got %v", got)
+	}
+}
+
+// Нитка, стартующая до полуночи и пересекающая UTC-полночь при сдвиге:
+// 02:00→04:30 местного (UTC+7) → 19:00→21:30 UTC — разница времён
+// сохраняется, rollMidnight не срабатывает (времена не «уехали»).
+func TestFlattenRaspThreadTzShiftCrossUtcMidnight(t *testing.T) {
+	dep := "2026-09-04 02:00:00"
+	arr := "2026-09-04 04:30:00"
+	thread := &RaspThread{
+		UID:   "u-tz2",
+		Title: "Через UTC-полночь",
+		Days:  "ежедневно",
+		Stops: []RaspThreadStop{
+			{Station: stationOf("s1", "A"), Departure: &dep},
+			{Station: stationOf("s2", "B"), Arrival: &arr},
+		},
+	}
+	res := FlattenRaspThread(thread, RaspFlattenConfig{TzShiftMin: 7 * 60})
+	if res.State != "promoted" {
+		t.Fatalf("state=%s detail=%s", res.State, res.Detail)
+	}
+	if got := *res.Trip.Stops[0].DepMin; got != 19*60 {
+		t.Fatalf("02:00 местного → 19:00 UTC, got %d", got)
+	}
+	if got := *res.Trip.Stops[1].ArrMin; got != 21*60+30 {
+		t.Fatalf("04:30 местного → 21:30 UTC, got %d", got)
+	}
+}
+
+// Долгий рейс: местное 14:30 → 06:24 следующего дня (Кемерово—Абакан) при
+// UTC+7 → UTC 07:30 → 23:24 тех же UTC-суток: переход через полночь
+// исчезает (03:24 UTC было бы -1440), разница 15:54 сохраняется.
+func TestFlattenRaspThreadTzShiftLongTrip(t *testing.T) {
+	dep := "2026-09-11 14:30:00"
+	arr := "2026-09-12 06:24:00"
+	thread := &RaspThread{
+		UID:   "u-long",
+		Title: "Кемерово — Абакан",
+		Days:  "ежедневно",
+		Stops: []RaspThreadStop{
+			{Station: stationOf("s1", "Кемерово"), Departure: &dep},
+			{Station: stationOf("s2", "Абакан"), Arrival: &arr},
+		},
+	}
+	res := FlattenRaspThread(thread, RaspFlattenConfig{TzShiftMin: 7 * 60})
+	if res.State != "promoted" {
+		t.Fatalf("state=%s detail=%s", res.State, res.Detail)
+	}
+	if got := *res.Trip.Stops[0].DepMin; got != 7*60+30 {
+		t.Fatalf("14:30 местного → 07:30 UTC, got %d", got)
+	}
+	if got := *res.Trip.Stops[1].ArrMin; got != 23*60+24 {
+		t.Fatalf("06:24 сл. суток → 23:24 UTC тех же суток, got %d", got)
 	}
 }
 

@@ -13,6 +13,9 @@ import (
 type RaspFlattenConfig struct {
 	// Region — значение FlatStop.Region для всех стопов (регион сбора).
 	Region string
+	// TzShiftMin — сдвиг местной зоны нитки в минутах (UTC+07 → 420):
+	// времена нитки местные, канон хранит UTC (§3.13); 0 — сдвига нет.
+	TzShiftMin int
 }
 
 // RaspFlattenResult — нитка + итог конвертации.
@@ -145,6 +148,44 @@ func SyntheticRouteKeyForRasp(title, carrierTitle string) string {
 	return strings.ToLower(strings.Join(strings.Fields(key), " "))
 }
 
+// ParseRaspTzShift — сдвиг зоны из времени schedule-события
+// («2026-09-04T00:15:00+07:00» → 420 минут). ok=false — зона не указана
+// или не распарсилась (thread-времена применяются без сдвига).
+func ParseRaspTzShift(s string) (int, bool) {
+	i := strings.LastIndexAny(s, "+-")
+	if i <= 0 {
+		return 0, false
+	}
+	zone := s[i:]
+	sign := 1
+	if zone[0] == '-' {
+		sign = -1
+	}
+	parts := strings.Split(zone[1:], ":")
+	if len(parts) < 1 || parts[0] == "" {
+		return 0, false
+	}
+	h, err := strconv.Atoi(parts[0])
+	if err != nil || h < 0 || h > 14 {
+		return 0, false
+	}
+	m := 0
+	if len(parts) > 1 {
+		if m, err = strconv.Atoi(parts[1]); err != nil || m < 0 || m > 59 {
+			return 0, false
+		}
+	}
+	return sign * (h*60 + m), true
+}
+
+// toUtcMinutes — местные минуты суток → UTC-минуты (переход через
+// полночь сохраняется: (local-shift+1440)%1440 после rollMidnight
+// поддерживает отрицательные и >1440 значения, разница времён внутри
+// нитки не меняется — сдвиг равномерный).
+func toUtcMinutes(v, tzShiftMin int) int {
+	return ((v-tzShiftMin)%1440 + 1440) % 1440
+}
+
 // FlattenRaspThread — нитка → FlatTrip. Времена пересчитываются в минуты
 // от отправления первого стопа (переход через полночь: отрицательное
 // значение +1440). Стоп-коды идут как {system: yandex, code_type:
@@ -166,6 +207,12 @@ func FlattenRaspThread(t *RaspThread, cfg RaspFlattenConfig) RaspFlattenResult {
 	for _, st := range t.Stops {
 		arr, hasArr := clockOf(st.Arrival)
 		dep, hasDep := clockOf(st.Departure)
+		if hasArr {
+			arr = toUtcMinutes(arr, cfg.TzShiftMin)
+		}
+		if hasDep {
+			dep = toUtcMinutes(dep, cfg.TzShiftMin)
+		}
 		if firstDep < 0 && hasDep {
 			firstDep = dep
 		}
@@ -222,7 +269,7 @@ func clockOf(s *string) (int, bool) {
 	return parseRaspClock(*s)
 }
 
-// rollMidnight — абсолютные минуты суток с коррекцией перехода через
+// rollMidnight — абсолютные UTC-минуты суток с коррекцией перехода через
 // полночь: время раньше первого отправления нитки означает следующие
 // сутки (+1440). Времена остаются абсолютными от полуночи: attach и
 // LoadNetwork трактуют их как секунды/минуты суток без сдвига базы.

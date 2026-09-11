@@ -207,6 +207,15 @@ func (cr *CollectRunner) runTrips(ctx context.Context, p collectPayload, logger 
 			if p.Transport != "" && !yandex.TransportCompatibleRasp(it.Thread.TransportType, p.Transport) {
 				continue
 			}
+			// Сдвиг зоны нитки из её schedule-события (+07:00):
+			// времена thread местные, канон хранит UTC (§3.13).
+			// Станции сбора идут по алфавиту кода — зона у всех одна
+			// (регион пилота), но считаем per-нитку: честнее при
+			// смешанных зонах в одном прогоне.
+			tzShiftMin := 0
+			if shift, ok := yandex.ParseRaspTzShift(it.Departure); ok {
+				tzShiftMin = shift
+			}
 			seenUID[uid] = true
 			thread, err := rasp.Thread(ctx, uid)
 			if err != nil {
@@ -215,7 +224,7 @@ func (cr *CollectRunner) runTrips(ctx context.Context, p collectPayload, logger 
 				continue
 			}
 			stats.Threads++
-			res := yandex.FlattenRaspThread(thread, yandex.RaspFlattenConfig{Region: p.Region})
+			res := yandex.FlattenRaspThread(thread, yandex.RaspFlattenConfig{Region: p.Region, TzShiftMin: tzShiftMin})
 			switch res.State {
 			case "promoted":
 				trips = append(trips, *res.Trip)
