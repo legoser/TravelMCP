@@ -764,6 +764,25 @@ O-блоки (коннектор), затем S-блоки (settlement), зат�
   Тесты: `TestFetchRouteRelationsHTTP/Empty` (фикстура, порядок членов),
   `TestCachedRoutesProviderCacheQuota/QuotaExhausted` (hit без квоты, вежливый
   отказ). Живая пачка O-6 парсится офлайн-скретч-тестом (skip в CI без сырья).
+  **Завершено (2026-09-12, issue #11):** парсер route-ответа больше не
+  выбрасывает node/way элементы: `routeIndex` по всем элементам ответа,
+  `AdaptedTripStop` наполняется координатами (`node` — своя точка;
+  `way`/`relation`-platform — центроид) и именем из тегов; порядок членов
+  relation сохраняется (семантика маршрута). `AdaptedTripData.Geometry`
+  (`[[lat,lon],...]`) — полилиния из way-членов с ролями `""`/`forward`/
+  `backward`: склейка напрямую или с разворотом, при разрыве — конкатенация
+  сегментов; ноды без координат пропускаются, сохраняя связность.
+  `FetchRoute(relationID)` — точечный запрос `relation(<id>); out body; >;
+  out qt;` (точнее ref-поиска: нет амбигуитета бортовых номеров); мост
+  `RouteQueryParams.RelationID` — ключ `overpass:route:relation/<id>` в том же
+  пути cache+quota (пейсер/квота не дублируются). Фикстура
+  `testdata/overpass/route_full.json` (relation + way-platform + прямая/реверс/
+  разрывная геометрия); тесты `TestParseRouteResponseFull`,
+  `TestFetchRouteByIDHTTP/Invalid`, `TestBuildGeometryChained/Reversed/Broken/
+  SkipsUnknownNodes`, `TestCachedRoutesProviderRelationID`; живая пачка O-6
+  наполняет координаты и геометрию (скретч-тест, skip в CI). Времена —
+  по-прежнему монополия Яндекса (§1.2); связка stop_osm_id ↔ yandex_code —
+  через ScorePair (D-1), без изменений.
 - **O-6. Ручной скраппинг.** `scripts/overpass-collect.sh` по образцу
   `yandex-collect.sh`: вход — unmatched-список attach, сырьё —
   `data/overpass/raw/` (не коммитится), сводный офлайн-дамп

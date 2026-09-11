@@ -14,17 +14,23 @@ import (
 // `osm`, общий пейсер ≥1.2с. Нового пути вызова нет (§3.7).
 
 // RouteQueryParams — параметры route-запроса (детерминированный ключ кэша).
-// BBox сериализуется в ключ; nil = глобальный запрос.
+// BBox сериализуется в ключ; nil = глобальный запрос. RelationID > 0
+// приоритетнее Ref: точечный запрос по уникальному id (issue #11) —
+// ключ overpass:route:relation/<id>, не зависящий от ref/bbox.
 type RouteQueryParams struct {
-	Ref     string
-	MinLat  float64
-	MinLon  float64
-	MaxLat  float64
-	MaxLon  float64
-	HasBBox bool
+	Ref        string
+	RelationID int64
+	MinLat     float64
+	MinLon     float64
+	MaxLat     float64
+	MaxLon     float64
+	HasBBox    bool
 }
 
 func (q RouteQueryParams) cacheKey() string {
+	if q.RelationID > 0 {
+		return fmt.Sprintf("overpass:route:relation/%d", q.RelationID)
+	}
 	if !q.HasBBox {
 		return fmt.Sprintf("overpass:route:%s", q.Ref)
 	}
