@@ -1326,8 +1326,14 @@ func (p *PostgresStore) MarkJobDone(ctx context.Context, id int64) error {
 	if p.pool == nil {
 		return nil
 	}
-	_, err := p.pool.Exec(ctx, `UPDATE jobs SET state='done', updated_at=now() WHERE id=$1`, id)
-	return err
+	ct, err := p.pool.Exec(ctx, `UPDATE jobs SET state='done', updated_at=now() WHERE id=$1 AND state <> 'cancelled'`, id)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return nil
+	}
+	return nil
 }
 
 func (p *PostgresStore) MarkJobRetry(ctx context.Context, id int64, errMsg string) error {
@@ -1372,7 +1378,7 @@ func (p *PostgresStore) ResetJob(ctx context.Context, id int64) error {
 	if p.pool == nil {
 		return nil
 	}
-	ct, err := p.pool.Exec(ctx, `UPDATE jobs SET state='pending', attempts=0, next_run=now(), last_error='', updated_at=now() WHERE id=$1 AND state IN ('dead','retry','running','pending')`, id)
+	ct, err := p.pool.Exec(ctx, `UPDATE jobs SET state='pending', attempts=0, next_run=now(), last_error='', updated_at=now() WHERE id=$1 AND state IN ('dead','retry','running','pending','cancelled')`, id)
 	if err != nil {
 		return err
 	}
@@ -1380,6 +1386,39 @@ func (p *PostgresStore) ResetJob(ctx context.Context, id int64) error {
 		return fmt.Errorf("job %d не найден или уже завершён (done)", id)
 	}
 	return nil
+}
+
+// CancelJob — отмена задания из UI (issue #22): pending/retry сразу
+// переводятся в cancelled и больше не забираются воркером; running
+// помечается флагом в last_error — конвейер сбора опрашивает
+// JobCancelled на каждой станции и останавливается сам (кэш и квоты
+// целы: собранное до отмены остаётся валидным).
+func (p *PostgresStore) CancelJob(ctx context.Context, id int64) error {
+	if p.pool == nil {
+		return nil
+	}
+	ct, err := p.pool.Exec(ctx, `UPDATE jobs SET state='cancelled', last_error='cancelled by operator', updated_at=now() WHERE id=$1 AND state IN ('pending','retry','running')`, id)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return fmt.Errorf("job %d не найден или уже завершён (done/cancelled)", id)
+	}
+	return nil
+}
+
+// JobCancelled — живой опрос отмены для running-заданий: true, когда
+// оператор отменил задание, пока конвейер ещё работает.
+func (p *PostgresStore) JobCancelled(ctx context.Context, id int64) (bool, error) {
+	if p.pool == nil {
+		return false, nil
+	}
+	var state string
+	err := p.pool.QueryRow(ctx, `SELECT state FROM jobs WHERE id=$1`, id).Scan(&state)
+	if err != nil {
+		return false, err
+	}
+	return state == "cancelled", nil
 }
 
 func (p *PostgresStore) ListJobs(ctx context.Context, limit int) ([]store.JobRow, error) {

@@ -18,6 +18,7 @@ button.ok{background:var(--ok)}
 .badge.active{background:#ecfdf5;color:#065f46;border-color:#a7f3d0}
 .badge.pending{background:#fffbeb;color:#92400e;border-color:#fde68a}
 .badge.blocked{background:#fef2f2;color:#991b1b;border-color:#fecaca}
+.badge.cancelled{background:#f3f4f6;color:#374151;border-color:#d1d5db}
 .badge.admin{background:#eef2ff;color:#3730a3;border-color:#c7d2fe}
 table{width:100%;border-collapse:collapse;font-size:14px}
 th,td{padding:10px 8px;border-bottom:1px solid var(--border);text-align:left}

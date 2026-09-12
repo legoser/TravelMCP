@@ -189,6 +189,21 @@ func TestAdminTerminalCardAndSchedule(t *testing.T) {
 	if len(sItems) != 1 {
 		t.Fatalf("schedule on wednesday: want 1 departure, got %d", len(sItems))
 	}
+	// issue #22: у элемента табло есть trip_id и route_id — кнопка «→ к
+	// рейсу» ведёт на реальные стопы рейса.
+	sItem := sItems[0].(map[string]any)
+	sTripID := int64(sItem["trip_id"].(float64))
+	if sTripID <= 0 {
+		t.Fatalf("schedule item must carry trip_id, got %v", sItem)
+	}
+	if _, ok := sItem["route_id"]; !ok {
+		t.Fatalf("schedule item must carry route_id (issue #22): %v", sItem)
+	}
+	tripStops := adminGet(t, base+fmt.Sprintf("/trips/%d", sTripID))
+	stItems, _ := tripStops["items"].([]any)
+	if len(stItems) == 0 {
+		t.Fatalf("trip %d из табло должен открываться в стопы", sTripID)
+	}
 
 	thursday := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
 	thuSched := adminGet(t, base+fmt.Sprintf("/terminals/%d/schedule?date=%s", aliveID, thursday.Format("2006-01-02")))

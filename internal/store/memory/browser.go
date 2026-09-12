@@ -177,7 +177,7 @@ func (m *MemoryStore) GetTerminalSchedule(ctx context.Context, terminalID int64,
 		} else if r.ShortName != "" {
 			dest = r.ShortName
 		}
-		out = append(out, map[string]any{"departure": st.Departure, "terminal_name": m.terminalNameByID(terminalID), "destination": dest, "mode": r.Mode, "trip_id": t.ID, "external_trip_code": t.ExternalTripCode, "service_days": t.ServiceDays})
+		out = append(out, map[string]any{"departure": st.Departure, "terminal_name": m.terminalNameByID(terminalID), "destination": dest, "mode": r.Mode, "trip_id": t.ID, "route_id": t.RouteID, "external_trip_code": t.ExternalTripCode, "service_days": t.ServiceDays})
 		if len(out) >= limit {
 			break
 		}

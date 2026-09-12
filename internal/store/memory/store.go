@@ -579,6 +579,10 @@ func (m *MemoryStore) MarkJobDone(ctx context.Context, id int64) error {
 	if !ok {
 		return fmt.Errorf("job %d not found", id)
 	}
+	// cancelled не перезаписывается (issue #22)
+	if j.State == "cancelled" {
+		return nil
+	}
 	j.State = "done"
 	m.jobs[id] = j
 	return nil
@@ -641,7 +645,7 @@ func (m *MemoryStore) ResetJob(ctx context.Context, id int64) error {
 	switch j.State {
 	case "done":
 		return fmt.Errorf("job %d уже завершён (done)", id)
-	case "pending", "retry", "running", "dead":
+	case "pending", "retry", "running", "dead", "cancelled":
 	default:
 		return fmt.Errorf("job %d в состоянии %q", id, j.State)
 	}
@@ -650,6 +654,35 @@ func (m *MemoryStore) ResetJob(ctx context.Context, id int64) error {
 	j.LastError = ""
 	m.jobs[id] = j
 	return nil
+}
+
+// CancelJob — отмена задания из UI (issue #22), memory-зеркало Postgres.
+func (m *MemoryStore) CancelJob(ctx context.Context, id int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	j, ok := m.jobs[id]
+	if !ok {
+		return fmt.Errorf("job %d не найден", id)
+	}
+	switch j.State {
+	case "pending", "retry", "running":
+	default:
+		return fmt.Errorf("job %d уже завершён (%s)", id, j.State)
+	}
+	j.State = "cancelled"
+	j.LastError = "cancelled by operator"
+	m.jobs[id] = j
+	return nil
+}
+
+func (m *MemoryStore) JobCancelled(ctx context.Context, id int64) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	j, ok := m.jobs[id]
+	if !ok {
+		return false, fmt.Errorf("job %d не найден", id)
+	}
+	return j.State == "cancelled", nil
 }
 
 func (m *MemoryStore) ListJobs(ctx context.Context, limit int) ([]store.JobRow, error) {
