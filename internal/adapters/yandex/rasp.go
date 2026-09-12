@@ -186,7 +186,7 @@ func (r *Rasp) Schedule(ctx context.Context, stationCode, date string) (*RaspSch
 }
 
 func (r *Rasp) fetchSchedule(ctx context.Context, out *RaspSchedule, stationCode, date string, offset int) error {
-	ok, _, err := r.quota(ctx, "yandex", DefaultRaspQuotaLimit)
+	ok, _, err := r.quota(ctx, "yandex_rasp", DefaultRaspQuotaLimit)
 	if err != nil || !ok {
 		r.mu.Lock()
 		r.stats.QuotaBlocked++
@@ -194,7 +194,7 @@ func (r *Rasp) fetchSchedule(ctx context.Context, out *RaspSchedule, stationCode
 		if err != nil {
 			return fmt.Errorf("rasp: quota: %w", err)
 		}
-		return fmt.Errorf("rasp: квота yandex исчерпана (schedule %s)", stationCode)
+		return fmt.Errorf("rasp: квота yandex_rasp (расписания) исчерпана (schedule %s)", stationCode)
 	}
 	if err := r.get(ctx, "schedule", url.Values{
 		"station": {stationCode}, "date": {date},
@@ -259,7 +259,7 @@ func (r *Rasp) Thread(ctx context.Context, uid string) (*RaspThread, error) {
 	if r.offline {
 		return nil, fmt.Errorf("rasp: нет кэша нитки %s (offline)", uid)
 	}
-	ok, _, err := r.quota(ctx, "yandex", DefaultRaspQuotaLimit)
+	ok, _, err := r.quota(ctx, "yandex_rasp", DefaultRaspQuotaLimit)
 	if err != nil || !ok {
 		r.mu.Lock()
 		r.stats.QuotaBlocked++
@@ -267,7 +267,7 @@ func (r *Rasp) Thread(ctx context.Context, uid string) (*RaspThread, error) {
 		if err != nil {
 			return nil, fmt.Errorf("rasp: quota: %w", err)
 		}
-		return nil, fmt.Errorf("rasp: квота yandex исчерпана (thread %s)", uid)
+		return nil, fmt.Errorf("rasp: квота yandex_rasp (расписания) исчерпана (thread %s)", uid)
 	}
 	t := &RaspThread{}
 	if err := r.get(ctx, "thread", url.Values{"uid": {uid}, "lang": {"ru_RU"}}, t); err != nil {
@@ -332,7 +332,7 @@ func (r *Rasp) NearestStation(ctx context.Context, lat, lon float64) (string, er
 	if r.offline {
 		return "", fmt.Errorf("rasp: нет кэша nearest для %.4f,%.4f (offline)", lat, lon)
 	}
-	ok, _, err := r.quota(ctx, "yandex", DefaultRaspQuotaLimit)
+	ok, _, err := r.quota(ctx, "yandex_rasp", DefaultRaspQuotaLimit)
 	if err != nil || !ok {
 		r.mu.Lock()
 		r.stats.QuotaBlocked++
@@ -340,7 +340,7 @@ func (r *Rasp) NearestStation(ctx context.Context, lat, lon float64) (string, er
 		if err != nil {
 			return "", fmt.Errorf("rasp: quota: %w", err)
 		}
-		return "", fmt.Errorf("rasp: квота yandex исчерпана (nearest %.4f,%.4f)", lat, lon)
+		return "", fmt.Errorf("rasp: квота yandex_rasp (расписания) исчерпана (nearest %.4f,%.4f)", lat, lon)
 	}
 	out := nearestResp{}
 	if err := r.get(ctx, "nearest_stations", url.Values{

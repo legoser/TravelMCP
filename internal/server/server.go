@@ -1060,19 +1060,31 @@ func (s *Server) handleAdminExternalCall(w http.ResponseWriter, r *http.Request)
 		req.Provider = "yandex"
 	}
 	s.logger.Debug("external-call request", "provider", req.Provider, "query", req.Query, "lat", req.Lat, "lon", req.Lon, "actor", userEmail(user))
-	ok, used, qerr := s.store.TryConsumeQuota(r.Context(), req.Provider, store.DefaultQuotaLimit)
-	s.logger.Debug("quota check", "provider", req.Provider, "ok", ok, "used", used)
+	// issue #10: квотный ключ ≠ геокодер-провайдер. Раньше и Rasp, и
+	// геокодер писали в одну строку api_quotas('yandex') и блокировали
+	// друг друга. Геокодинг ест отдельную квоту yandex_geocode (лимит —
+	// geocoder.max_calls), выбор самого геокодера остаётся по req.Provider.
+	quotaKey := req.Provider
+	if quotaKey == "yandex" {
+		quotaKey = "yandex_geocode"
+	}
+	quotaLimit := store.DefaultQuotaLimit
+	if s.cfg != nil && s.cfg.Geocoder.MaxCalls > 0 {
+		quotaLimit = s.cfg.Geocoder.MaxCalls
+	}
+	ok, used, qerr := s.store.TryConsumeQuota(r.Context(), quotaKey, quotaLimit)
+	s.logger.Debug("quota check", "provider", quotaKey, "ok", ok, "used", used)
 	if qerr != nil {
-		s.logger.Error("quota check failed", "provider", req.Provider, "error", qerr)
-		writeJSONResponse(w, http.StatusInternalServerError, map[string]any{"error": "проверка квоты не удалась: " + qerr.Error(), "provider": req.Provider})
+		s.logger.Error("quota check failed", "provider", quotaKey, "error", qerr)
+		writeJSONResponse(w, http.StatusInternalServerError, map[string]any{"error": "проверка квоты не удалась: " + qerr.Error(), "provider": quotaKey})
 		return
 	}
 	if !ok {
-		s.logger.Warn("quota exhausted", "provider", req.Provider)
-		writeJSONResponse(w, http.StatusTooManyRequests, map[string]any{"error": "quota exhausted", "provider": req.Provider})
+		s.logger.Warn("quota exhausted", "provider", quotaKey)
+		writeJSONResponse(w, http.StatusTooManyRequests, map[string]any{"error": "quota exhausted", "provider": quotaKey})
 		return
 	}
-	_ = s.store.RecordApiCall(r.Context(), req.Provider, "external_call", 1)
+	_ = s.store.RecordApiCall(r.Context(), quotaKey, "external_call", 1)
 	if req.Query == "" && (req.Lat == nil || req.Lon == nil) {
 		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "query or lat/lon required"})
 		return

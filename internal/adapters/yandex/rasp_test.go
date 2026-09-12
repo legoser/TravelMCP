@@ -361,13 +361,23 @@ func TestRaspThreadQuotaGate(t *testing.T) {
 	cfg.Yandex.RaspURL = "http://127.0.0.1:1"
 	cfg.Yandex.RaspKey = "test-key"
 	calls := 0
-	quota := func(context.Context, string, int) (bool, int, error) { calls++; return false, 500, nil }
+	var quotaKeys []string
+	quota := func(_ context.Context, key string, _ int) (bool, int, error) {
+		calls++
+		quotaKeys = append(quotaKeys, key)
+		return false, 500, nil
+	}
 	r := NewRasp(cfg, httpx.New(nil, "rasp-test"), dir, quota, false)
 	if _, err := r.Thread(context.Background(), "u_missing"); err == nil {
 		t.Fatal("заблокированная квота обязана давать ошибку")
 	}
 	if r.Stats().QuotaBlocked != 1 || calls != 1 {
 		t.Fatalf("quota не вызвана ровно один раз: %+v calls=%d", r.Stats(), calls)
+	}
+	// issue #10: Rasp API обязан потреблять отдельную квоту yandex_rasp,
+	// не общий ключ 'yandex' (который делят с геокодером).
+	if len(quotaKeys) != 1 || quotaKeys[0] != "yandex_rasp" {
+		t.Fatalf("quota key = %v, want [yandex_rasp]", quotaKeys)
 	}
 }
 
