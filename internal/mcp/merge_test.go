@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,6 +21,31 @@ func (m *mockProv) ID() string                           { return m.id }
 func (m *mockProv) Health() providers.HealthStatus       { return providers.HealthStatus{Up: true} }
 func (m *mockProv) Network() (*model.Network, error)     { return m.net, nil }
 func (m *mockProv) Capabilities() providers.Capabilities { return providers.Capabilities{} }
+
+// emptyProv — провайдер без данных (gtfs без path): Empty()=true,
+// networkForDay его пропускает, а не падает с внутренней ошибкой.
+type emptyProv struct{ mockProv }
+
+func (e *emptyProv) Empty() bool { return true }
+
+// issue #20: пустая база + провайдер без данных — честная ошибка «нет
+// транспортных данных», а не «provider gtfs: gtfs path empty».
+func TestNetworkForDayEmptyDBClearError(t *testing.T) {
+	reg := providers.NewRegistry(nil)
+	reg.Register(&emptyProv{mockProv{id: "gtfs", net: model.NewNetwork()}})
+	app := New(planner.New(telemetry.New()), reg)
+	_, err := app.networkForDay(context.Background(), time.Now())
+	if err == nil {
+		t.Fatal("empty network must error")
+	}
+	want := "нет транспортных данных"
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("error must explain empty state, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "gtfs path empty") {
+		t.Fatalf("internal provider error must not leak: %v", err)
+	}
+}
 
 func TestMergeIsolatesProviderConflict(t *testing.T) {
 	n1 := model.NewNetwork()
