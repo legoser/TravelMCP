@@ -533,8 +533,8 @@ func (s *Server) handleReviewResolve(w http.ResponseWriter, r *http.Request) {
 		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "action must be approve or dismiss"})
 		return
 	}
-	deleter, ok := s.store.(interface {
-		DeleteReviewQueue(ctx context.Context, entityType string, entityID int64, reason string) error
+	resolver, ok := s.store.(interface {
+		ResolveReviewQueue(ctx context.Context, entityType string, entityID int64, reason, state string) error
 	})
 	if !ok {
 		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "review not supported"})
@@ -554,7 +554,13 @@ func (s *Server) handleReviewResolve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if err := deleter.DeleteReviewQueue(r.Context(), req.EntityType, req.EntityID, req.Reason); err != nil {
+	// issue #8/#14: sticky-резолв вместо DELETE — закрытая запись не
+	// пере-открывается повторным импортом того же конфликта.
+	resolveState := "resolved"
+	if req.Action == "dismiss" {
+		resolveState = "rejected"
+	}
+	if err := resolver.ResolveReviewQueue(r.Context(), req.EntityType, req.EntityID, req.Reason, resolveState); err != nil {
 		writeJSONResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
@@ -847,11 +853,11 @@ func (s *Server) handleAdminUpdateTerminal(w http.ResponseWriter, r *http.Reques
 			}
 		}
 		if resolver, ok := s.store.(interface {
-			DeleteReviewQueue(ctx context.Context, entityType string, entityID int64, reason string) error
+			ResolveReviewQueue(ctx context.Context, entityType string, entityID int64, reason, state string) error
 		}); ok {
 			if entries, err := s.listTerminalReviewReasons(r.Context(), tid); err == nil {
 				for _, reason := range entries {
-					_ = resolver.DeleteReviewQueue(r.Context(), "terminal", tid, reason)
+					_ = resolver.ResolveReviewQueue(r.Context(), "terminal", tid, reason, "resolved")
 				}
 			}
 		}
@@ -860,9 +866,18 @@ func (s *Server) handleAdminUpdateTerminal(w http.ResponseWriter, r *http.Reques
 		writeJSONResponse(w, http.StatusOK, map[string]any{"id": tid, "is_locked": true, "approved": true, "last_verified_at": now})
 		return
 	}
+	// issue #8/#14: правка залоченного терминала без approve — прямое
+	// обновление (ApproveTerminal), а не UpsertTerminal, который для
+	// залоченных молча не сохраняет имя и создаёт конфликт-ревью.
 	now := time.Now().Unix()
-	tr := store.TerminalRow{ID: tid, Lat: req.Lat, Lon: req.Lon, IsLocked: true, LastVerifiedAt: &now}
-	if _, err := s.store.UpsertTerminal(r.Context(), tr, names, nil); err != nil {
+	approver, ok := s.store.(interface {
+		ApproveTerminal(ctx context.Context, terminalID int64, tr store.TerminalRow, names map[string]string) error
+	})
+	if !ok {
+		writeJSONResponse(w, http.StatusNotImplemented, map[string]any{"error": "approve not supported by store"})
+		return
+	}
+	if err := approver.ApproveTerminal(r.Context(), tid, store.TerminalRow{ID: tid, Lat: req.Lat, Lon: req.Lon, LastVerifiedAt: &now}, names); err != nil {
 		writeJSONResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
@@ -874,7 +889,6 @@ func (s *Server) handleAdminUpdateTerminal(w http.ResponseWriter, r *http.Reques
 			_ = tagger.SetTerminalTag(r.Context(), tid, "settlement", strings.TrimSpace(req.Settlement))
 		}
 	}
-	_ = s.store.SaveReviewQueue(r.Context(), model.ReviewQueueEntry{EntityType: "terminal", EntityID: tid, Reason: "conflicts_with_confirmed", Score: 1.0})
 	_ = s.store.WriteAuditLog(r.Context(), actorID, "update_terminal", "terminal", &tid, fmt.Sprintf(`{"name":%q,"lat":%f,"lon":%f}`, req.Name, req.Lat, req.Lon))
 	mcp.BumpCanonVersion()
 	writeJSONResponse(w, http.StatusOK, map[string]any{"id": tid, "is_locked": true})

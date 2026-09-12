@@ -268,7 +268,7 @@ func (p *PostgresStore) ListTerminalReviewEntries(ctx context.Context, terminalI
 	if p.pool == nil {
 		return []store.ReviewQueueRow{}, nil
 	}
-	rows, err := p.pool.Query(ctx, `SELECT entity_type, entity_id, reason, score, extract(epoch from created_at)::bigint, coalesce(fingerprint,'') FROM review_queue WHERE entity_type='terminal' AND entity_id=$1 ORDER BY created_at DESC`, terminalID)
+	rows, err := p.pool.Query(ctx, `SELECT entity_type, entity_id, reason, score, extract(epoch from created_at)::bigint, coalesce(fingerprint,'') FROM review_queue WHERE entity_type='terminal' AND entity_id=$1 AND state='open' ORDER BY created_at DESC`, terminalID)
 	if err != nil {
 		return nil, err
 	}

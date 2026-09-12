@@ -306,7 +306,7 @@ func (p *PostgresStore) UpsertTerminal(ctx context.Context, r TerminalRow, names
 		var locked bool
 		_ = p.pool.QueryRow(ctx, `SELECT is_locked FROM terminals WHERE id=$1`, r.ID).Scan(&locked)
 		if locked {
-			_ = p.SaveReviewQueue(ctx, model.ReviewQueueEntry{EntityType: "terminal", EntityID: r.ID, Reason: "conflicts_with_confirmed", Score: 0})
+			_ = p.SaveReviewQueue(ctx, model.ReviewQueueEntry{EntityType: "terminal", EntityID: r.ID, Reason: "conflicts_with_confirmed", Score: 0, Fingerprint: terminalIdentifiersFingerprint(identifiers)})
 			return r.ID, nil
 		}
 	}
@@ -344,6 +344,22 @@ func (p *PostgresStore) UpsertTerminal(ctx context.Context, r TerminalRow, names
 	}
 	return id, nil
 }
+
+// terminalIdentifiersFingerprint — стабильный ключ набора внешних кодов
+// терминала (system:code, отсортировано) для sticky-конфликтов ревью:
+// повторный импорт тех же кодов = тот же конфликт, новые коды = новый.
+func terminalIdentifiersFingerprint(identifiers []model.AdaptedIdentifier) string {
+	if len(identifiers) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(identifiers))
+	for _, id := range identifiers {
+		parts = append(parts, id.System+":"+id.Code)
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "|")
+}
+
 func (p *PostgresStore) GetTerminal(ctx context.Context, id int64) (map[string]any, error) {
 	if p.pool == nil {
 		return nil, errNotImplemented
@@ -479,9 +495,32 @@ func (p *PostgresStore) SaveReviewQueue(ctx context.Context, e model.ReviewQueue
 	if p.pool == nil {
 		return nil
 	}
-	_, err := p.pool.Exec(ctx, `INSERT INTO review_queue(entity_type, entity_id, reason, score, fingerprint) VALUES($1,$2,$3,$4,$5) ON CONFLICT(entity_type, entity_id, reason) DO UPDATE SET score=EXCLUDED.score, fingerprint=CASE WHEN EXCLUDED.fingerprint<>'' THEN EXCLUDED.fingerprint ELSE review_queue.fingerprint END, observed_at=now(), count=review_queue.count+1`, e.EntityType, e.EntityID, e.Reason, e.Score, e.Fingerprint)
+	// Sticky-семантика (план §3.10): resolved/rejected запись не
+	// пере-открывается повторной детекцией того же конфликта — тот же
+	// (или пустой) fingerprint лишь бампает count. Новый fingerprint
+	// (данные реально изменились) открывает запись заново.
+	_, err := p.pool.Exec(ctx, `INSERT INTO review_queue(entity_type, entity_id, reason, score, fingerprint) VALUES($1,$2,$3,$4,$5) ON CONFLICT(entity_type, entity_id, reason) DO UPDATE SET score=EXCLUDED.score, fingerprint=CASE WHEN EXCLUDED.fingerprint<>'' THEN EXCLUDED.fingerprint ELSE review_queue.fingerprint END, observed_at=now(), count=review_queue.count+1, state=CASE WHEN review_queue.state IN ('resolved','rejected') AND (EXCLUDED.fingerprint='' OR EXCLUDED.fingerprint=review_queue.fingerprint) THEN review_queue.state ELSE 'open' END`, e.EntityType, e.EntityID, e.Reason, e.Score, e.Fingerprint)
 	return err
 }
+
+// ResolveReviewQueue — sticky-закрытие записи ревью: state вместо DELETE,
+// чтобы повторный импорт не создал свежую open-запись для того же
+// конфликта (issue #8/#14).
+func (p *PostgresStore) ResolveReviewQueue(ctx context.Context, entityType string, entityID int64, reason, state string) error {
+	if p.pool == nil {
+		return nil
+	}
+	if state != "resolved" && state != "rejected" {
+		return fmt.Errorf("resolve review queue: invalid state %q (resolved|rejected)", state)
+	}
+	if reason == "" {
+		_, err := p.pool.Exec(ctx, `UPDATE review_queue SET state=$4, observed_at=now() WHERE entity_type=$1 AND entity_id=$2 AND state='open'`, entityType, entityID, state)
+		return err
+	}
+	_, err := p.pool.Exec(ctx, `UPDATE review_queue SET state=$4, observed_at=now() WHERE entity_type=$1 AND entity_id=$2 AND reason=$3 AND state='open'`, entityType, entityID, reason, state)
+	return err
+}
+
 func (p *PostgresStore) ListReviewQueue(ctx context.Context, limit int) ([]store.ReviewQueueRow, error) {
 	if p.pool == nil {
 		return []store.ReviewQueueRow{}, nil
@@ -489,7 +528,7 @@ func (p *PostgresStore) ListReviewQueue(ctx context.Context, limit int) ([]store
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := p.pool.Query(ctx, `SELECT entity_type, entity_id, reason, score, extract(epoch from created_at)::bigint, coalesce(fingerprint,'') FROM review_queue ORDER BY created_at DESC LIMIT $1`, limit)
+	rows, err := p.pool.Query(ctx, `SELECT entity_type, entity_id, reason, score, extract(epoch from created_at)::bigint, coalesce(fingerprint,'') FROM review_queue WHERE state='open' ORDER BY created_at DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1340,7 +1379,9 @@ func (t *pgTxStore) UpsertTerminal(ctx context.Context, r TerminalRow, names map
 		var locked bool
 		_ = t.tx.QueryRow(ctx, `SELECT is_locked FROM terminals WHERE id=$1`, r.ID).Scan(&locked)
 		if locked {
-			_ = t.SaveReviewQueue(ctx, model.ReviewQueueEntry{EntityType: "terminal", EntityID: r.ID, Reason: "conflicts_with_confirmed"})
+			// issue #8/#14: sticky-конфликт по fingerprint внешних кодов —
+			// повторный импорт не пере-открывает закрытую запись ревью.
+			_ = t.SaveReviewQueue(ctx, model.ReviewQueueEntry{EntityType: "terminal", EntityID: r.ID, Reason: "conflicts_with_confirmed", Fingerprint: terminalIdentifiersFingerprint(identifiers)})
 			return r.ID, nil
 		}
 	}
@@ -1400,8 +1441,13 @@ func (t *pgTxStore) ListTerminalIDByCode(ctx context.Context, system, code strin
 	return id, true
 }
 func (t *pgTxStore) SaveReviewQueue(ctx context.Context, e model.ReviewQueueEntry) error {
-	_, err := t.tx.Exec(ctx, `INSERT INTO review_queue(entity_type, entity_id, reason, score, fingerprint) VALUES($1,$2,$3,$4,$5) ON CONFLICT(entity_type, entity_id, reason) DO UPDATE SET score=EXCLUDED.score, fingerprint=CASE WHEN EXCLUDED.fingerprint<>'' THEN EXCLUDED.fingerprint ELSE review_queue.fingerprint END, observed_at=now(), count=review_queue.count+1`, e.EntityType, e.EntityID, e.Reason, e.Score, e.Fingerprint)
+	_, err := t.tx.Exec(ctx, `INSERT INTO review_queue(entity_type, entity_id, reason, score, fingerprint) VALUES($1,$2,$3,$4,$5) ON CONFLICT(entity_type, entity_id, reason) DO UPDATE SET score=EXCLUDED.score, fingerprint=CASE WHEN EXCLUDED.fingerprint<>'' THEN EXCLUDED.fingerprint ELSE review_queue.fingerprint END, observed_at=now(), count=review_queue.count+1, state=CASE WHEN review_queue.state IN ('resolved','rejected') AND (EXCLUDED.fingerprint='' OR EXCLUDED.fingerprint=review_queue.fingerprint) THEN review_queue.state ELSE 'open' END`, e.EntityType, e.EntityID, e.Reason, e.Score, e.Fingerprint)
 	return err
+}
+
+// ResolveReviewQueue — tx-форвард sticky-закрытия (issue #8/#14).
+func (t *pgTxStore) ResolveReviewQueue(ctx context.Context, entityType string, entityID int64, reason, state string) error {
+	return t.parent.ResolveReviewQueue(ctx, entityType, entityID, reason, state)
 }
 
 func (t *pgTxStore) ListProvenanceChannels(ctx context.Context, entityType string, ids []int64) (map[int64]string, error) {

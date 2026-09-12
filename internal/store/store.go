@@ -93,6 +93,11 @@ type ProvenanceStore interface {
 	SaveReviewQueue(ctx context.Context, e model.ReviewQueueEntry) error
 	ListReviewQueue(ctx context.Context, limit int) ([]ReviewQueueRow, error)
 	DeleteReviewQueue(ctx context.Context, entityType string, entityID int64, reason string) error
+	// ResolveReviewQueue — sticky-семантика ревью (план §3.10): запись
+	// помечается state='resolved'/'rejected', а не удаляется физически;
+	// повторная детекция того же конфликта (тот же/пустой fingerprint)
+	// не пере-открывает её (см. SaveReviewQueue).
+	ResolveReviewQueue(ctx context.Context, entityType string, entityID int64, reason, state string) error
 	ListProvenanceChannels(ctx context.Context, entityType string, ids []int64) (map[int64]string, error)
 }
 
