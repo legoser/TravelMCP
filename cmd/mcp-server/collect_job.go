@@ -60,7 +60,7 @@ func (cr *CollectRunner) HandleCollectRegion(ctx context.Context, job store.JobR
 	case "skeleton":
 		return cr.runSkeleton(ctx, p, l)
 	case "trips":
-		return cr.runTrips(ctx, p, l)
+		return cr.runTrips(ctx, job.ID, p, l)
 	case "routes":
 		return cr.runRoutes(ctx, p, l)
 	default:
@@ -102,7 +102,22 @@ func (cr *CollectRunner) runSkeleton(ctx context.Context, p collectPayload, logg
 	return nil
 }
 
-func (cr *CollectRunner) runTrips(ctx context.Context, p collectPayload, logger *slog.Logger) error {
+// jobCancelChecker — живой опрос отмены running-задания (issue #22):
+// отмена из UI ставит jobs.state='cancelled'; конвейер сбора
+// проверяет на каждой станции и останавливается — кэш и собранные
+// до отмены данные валидны.
+type jobCancelChecker interface {
+	JobCancelled(ctx context.Context, id int64) (bool, error)
+}
+
+// cancelledErr — маркер: воркер не делает retry/dead, задание уже
+// в state='cancelled'.
+func cancelledErr(logger *slog.Logger, jobID int64) error {
+	logger.Warn("collect отменён оператором", "job_id", jobID)
+	return jobs.ErrCancelled
+}
+
+func (cr *CollectRunner) runTrips(ctx context.Context, jobID int64, p collectPayload, logger *slog.Logger) error {
 	cfg := cr.Config
 	if p.Region == "" && p.TerminalID <= 0 {
 		return fmt.Errorf("collect trips: region обязателен (или terminal_id для точечного сбора)")
@@ -178,9 +193,15 @@ func (cr *CollectRunner) runTrips(ctx context.Context, p collectPayload, logger 
 	var trips []model.FlatTrip
 	stats := syncpkg.RaspCollectStats{}
 	seenUID := map[string]bool{}
+	cancelCheck, hasCancel := cr.Store.(jobCancelChecker)
 	for _, rec := range yan {
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		if hasCancel {
+			if cancelled, err := cancelCheck.JobCancelled(ctx, jobID); err == nil && cancelled {
+				return cancelledErr(logger, jobID)
+			}
 		}
 		code := rec.PrimaryCode()
 		if code == "" {

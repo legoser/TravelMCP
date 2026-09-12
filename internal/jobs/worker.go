@@ -50,6 +50,10 @@ func (w *Worker) RunOnce(ctx context.Context) error {
 		return fmt.Errorf("no handler for %s", job.Type)
 	}
 	if err := w.withQuota(ctx, job, h); err != nil {
+		if IsCancelled(err) {
+			w.logger.Warn("job cancelled by operator", "id", job.ID, "type", job.Type)
+			return err
+		}
 		if isRateLimited(err) {
 			w.logger.Warn("job rate limited, retry", "id", job.ID, "err", err)
 			_ = w.store.MarkJobRetry(ctx, job.ID, err.Error())
@@ -64,9 +68,33 @@ func (w *Worker) RunOnce(ctx context.Context) error {
 		}
 		return err
 	}
+	if w.jobState(ctx, job.ID) == "cancelled" {
+		w.logger.Warn("job finished after cancel", "id", job.ID)
+		return nil
+	}
 	_ = w.store.MarkJobDone(ctx, job.ID)
 	w.logger.Info("job done", "id", job.ID)
 	return nil
+}
+
+// ErrCancelled — маркер отмены: handler увидел JobCancelled и завершился.
+var ErrCancelled = fmt.Errorf("job cancelled by operator")
+
+// IsCancelled — распознавание отмены в ошибке handler'а.
+func IsCancelled(err error) bool {
+	return err != nil && err == ErrCancelled
+}
+
+// jobState — текущее состояние задания (для гонки done поверх cancelled).
+func (w *Worker) jobState(ctx context.Context, id int64) string {
+	if l, ok := w.store.(interface {
+		JobCancelled(ctx context.Context, id int64) (bool, error)
+	}); ok {
+		if cancelled, err := l.JobCancelled(ctx, id); err == nil && cancelled {
+			return "cancelled"
+		}
+	}
+	return ""
 }
 
 func (w *Worker) withQuota(ctx context.Context, job *store.JobRow, h Handler) error {

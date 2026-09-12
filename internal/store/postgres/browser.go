@@ -122,7 +122,7 @@ func (p *PostgresStore) GetTerminalSchedule(ctx context.Context, terminalID int6
 	weekday := int(date.Weekday())
 	dateStr := date.Format("2006-01-02")
 	rows, err := p.pool.Query(ctx, `
-		SELECT st.departure, coalesce(sn.name, tn.name, '') AS terminal_name, coalesce(t.headsign_ru, r.long_name, r.short_name, '') AS dest, r.mode, t.external_trip_code, t.service_days, t.id,
+		SELECT st.departure, coalesce(sn.name, tn.name, '') AS terminal_name, coalesce(t.headsign_ru, r.long_name, r.short_name, '') AS dest, r.mode, t.external_trip_code, t.service_days, t.id, r.id,
 		       (SELECT se.exception_type FROM service_exceptions se WHERE se.service_id=t.service_id AND se.date=$3::date LIMIT 1) AS exc,
 		       (SELECT sd.weekday FROM service_days sd WHERE sd.service_id=t.service_id LIMIT 1) AS has_service_days
 		FROM stop_times st
@@ -142,10 +142,10 @@ func (p *PostgresStore) GetTerminalSchedule(ctx context.Context, terminalID int6
 	for rows.Next() {
 		var departure int
 		var name, dest, mode, tripCode, serviceDays string
-		var tripID int64
+		var tripID, routeID int64
 		var exc *string
 		var hasServiceDays *int
-		if err := rows.Scan(&departure, &name, &dest, &mode, &tripCode, &serviceDays, &tripID, &exc, &hasServiceDays); err != nil {
+		if err := rows.Scan(&departure, &name, &dest, &mode, &tripCode, &serviceDays, &tripID, &routeID, &exc, &hasServiceDays); err != nil {
 			return nil, err
 		}
 		if exc != nil {
@@ -155,7 +155,7 @@ func (p *PostgresStore) GetTerminalSchedule(ctx context.Context, terminalID int6
 		} else if !serviceDaysMatchWeekday(serviceDays, weekday) {
 			continue
 		}
-		out = append(out, map[string]any{"departure": departure, "terminal_name": name, "destination": dest, "mode": mode, "trip_id": tripID, "external_trip_code": tripCode, "service_days": serviceDays, "exception": exc})
+		out = append(out, map[string]any{"departure": departure, "terminal_name": name, "destination": dest, "mode": mode, "trip_id": tripID, "route_id": routeID, "external_trip_code": tripCode, "service_days": serviceDays, "exception": exc})
 		if len(out) >= limit {
 			break
 		}

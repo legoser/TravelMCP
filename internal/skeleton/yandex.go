@@ -112,6 +112,7 @@ func (s YandexDumpSource) Load() ([]model.AdaptedRecord, error) {
 						Source:      "yandex",
 						Identifiers: ids,
 						Extra: map[string]string{
+							"country":        c.Title,
 							"settlement":     st.Title,
 							"region":         r.Title,
 							"transport_type": yandexTransportType(s.TransportType),

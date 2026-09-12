@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 
 	"travelmcp/internal/skeleton"
 	"travelmcp/internal/store"
@@ -105,43 +106,92 @@ func (s *Server) enqueueCollectJob(w http.ResponseWriter, reqst *http.Request, k
 }
 
 // handleCollectRegions — GET /api/v1/collect/regions: регионы Яндекс-дампа
-// с количеством терминальных станций (селектор UI).
+// с количеством терминальных станций (селектор UI). Фильтр и пагинация
 func (s *Server) handleCollectRegions(w http.ResponseWriter, reqst *http.Request) {
 	path := s.cfg.Sync.YandexDumpPath
+	empty := map[string]any{"items": []any{}, "total": 0, "countries": []any{}, "limit": 0, "offset": 0}
 	if path == "" {
-		writeJSONResponse(w, http.StatusOK, []any{})
+		writeJSONResponse(w, http.StatusOK, empty)
 		return
 	}
 	if _, err := os.Stat(path); err != nil {
-		writeJSONResponse(w, http.StatusOK, []any{})
+		writeJSONResponse(w, http.StatusOK, empty)
 		return
 	}
 	yan, err := skeleton.YandexDumpSource{Path: path}.Load()
 	if err != nil {
 		s.logger.Warn("collect regions: yandex dump load failed", "error", err)
-		writeJSONResponse(w, http.StatusOK, []any{})
+		writeJSONResponse(w, http.StatusOK, empty)
 		return
 	}
 	terminal := skeleton.FilterYandexRecords(yan, nil, map[string]bool{"bus": true, "train": true, "flight": true}, skeleton.StationClasses)
-	byRegion := map[string]int{}
+	type regionInfo struct {
+		country string
+		count   int
+	}
+	byRegion := map[string]*regionInfo{}
 	for _, rec := range terminal {
 		if rec.Extra == nil {
 			continue
 		}
-		if reg := rec.Extra["region"]; reg != "" {
-			byRegion[reg]++
+		reg := rec.Extra["region"]
+		if reg == "" {
+			continue
+		}
+		ri, ok := byRegion[reg]
+		if !ok {
+			ri = &regionInfo{country: rec.Extra["country"]}
+			byRegion[reg] = ri
+		}
+		ri.count++
+	}
+	q := strings.ToLower(strings.TrimSpace(reqst.URL.Query().Get("q")))
+	country := strings.TrimSpace(reqst.URL.Query().Get("country"))
+	limit := 30
+	if v := reqst.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
+			limit = n
 		}
 	}
-	out := make([]map[string]any, 0, len(byRegion))
-	for reg, n := range byRegion {
-		out = append(out, map[string]any{"region": reg, "terminal_stations": n})
+	offset := 0
+	if v := reqst.URL.Query().Get("offset"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			offset = n
+		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		ri, _ := out[i]["region"].(string)
-		rj, _ := out[j]["region"].(string)
+	filtered := make([]map[string]any, 0, len(byRegion))
+	for reg, ri := range byRegion {
+		if q != "" && !strings.Contains(strings.ToLower(reg), q) {
+			continue
+		}
+		if country != "" && ri.country != country {
+			continue
+		}
+		filtered = append(filtered, map[string]any{"region": reg, "country": ri.country, "terminal_stations": ri.count})
+	}
+	sort.Slice(filtered, func(i, j int) bool {
+		ri, _ := filtered[i]["region"].(string)
+		rj, _ := filtered[j]["region"].(string)
 		return ri < rj
 	})
-	writeJSONResponse(w, http.StatusOK, out)
+	total := len(filtered)
+	if offset > total {
+		offset = total
+	}
+	filtered = filtered[offset:]
+	if len(filtered) > limit {
+		filtered = filtered[:limit]
+	}
+	countries := make([]string, 0)
+	seen := map[string]bool{}
+	for _, ri := range byRegion {
+		if ri.country != "" && !seen[ri.country] {
+			seen[ri.country] = true
+			countries = append(countries, ri.country)
+		}
+	}
+	sort.Strings(countries)
+	writeJSONResponse(w, http.StatusOK, map[string]any{"items": filtered, "total": total, "countries": countries, "limit": limit, "offset": offset})
 }
 
 type syncRunsLister interface {

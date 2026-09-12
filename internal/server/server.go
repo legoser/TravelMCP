@@ -165,6 +165,7 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 	mux.Handle("GET /api/v1/jobs", s.auth(http.HandlerFunc(s.handleListJobs), "admin"))
 	mux.Handle("POST /api/v1/jobs", s.auth(http.HandlerFunc(s.handleEnqueueJob), "admin"))
 	mux.Handle("POST /api/v1/jobs/{id}/reset", s.auth(http.HandlerFunc(s.handleResetJob), "admin"))
+	mux.Handle("POST /api/v1/jobs/{id}/cancel", s.auth(http.HandlerFunc(s.handleCancelJob), "admin"))
 	mux.Handle("GET /api/v1/quotas", s.auth(http.HandlerFunc(s.handleListQuotas), "admin"))
 	mux.Handle("POST /api/v1/import/gtfs", s.auth(http.HandlerFunc(s.handleImportGTFS), "admin"))
 	mux.Handle("POST /api/v1/import/rail", s.auth(http.HandlerFunc(s.handleSyncRail), "admin"))
@@ -786,6 +787,32 @@ func (s *Server) handleResetJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSONResponse(w, http.StatusOK, map[string]any{"id": jid, "state": "pending"})
+}
+
+func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
+		return
+	}
+	canceller, ok := s.store.(interface {
+		CancelJob(ctx context.Context, id int64) error
+	})
+	if !ok {
+		writeJSONResponse(w, http.StatusNotImplemented, map[string]any{"error": "cancel not supported by store"})
+		return
+	}
+	jid, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
+		return
+	}
+	if err := canceller.CancelJob(r.Context(), jid); err != nil {
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	actor, _ := r.Context().Value(ctxUserKey).(*store.UserRow)
+	s.logger.Info("job cancelled", "id", jid, "actor", userEmail(actor))
+	writeJSONResponse(w, http.StatusOK, map[string]any{"id": jid, "state": "cancelled"})
 }
 
 func (s *Server) handleListQuotas(w http.ResponseWriter, r *http.Request) {
