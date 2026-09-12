@@ -956,6 +956,9 @@ func buildLegs(net *model.Network, arr map[string]time.Time, steps []step) []mod
 
 	endLeg := func() {
 		if cur != nil {
+			if cur.TripID != "" {
+				finalizeTransitLeg(net, cur)
+			}
 			legs = append(legs, *cur)
 			cur = nil
 		}
@@ -1007,4 +1010,40 @@ func buildLegs(net *model.Network, arr map[string]time.Time, steps []step) []mod
 	}
 	endLeg()
 	return legs
+}
+
+// finalizeTransitLeg заполняет Stops (все остановки пассажира в рамках трипа)
+// и IsTransit (посадка/высадка на промежуточной остановке) для транзитного лега.
+func finalizeTransitLeg(net *model.Network, leg *model.Leg) {
+	if leg.TripID == "" {
+		return
+	}
+	trip, ok := net.Trips[leg.TripID]
+	if !ok || len(trip.StopTimes) == 0 {
+		return
+	}
+	stops := trip.StopTimes
+	boardedIdx := -1
+	alightedIdx := -1
+	for i, st := range stops {
+		if st.StopID == leg.From.StopID {
+			boardedIdx = i
+		}
+		if st.StopID == leg.To.StopID {
+			alightedIdx = i
+		}
+	}
+	if boardedIdx < 0 || alightedIdx < 0 || boardedIdx > alightedIdx {
+		return
+	}
+	points := make([]model.LegPoint, 0, alightedIdx-boardedIdx+1)
+	for i := boardedIdx; i <= alightedIdx; i++ {
+		if s, ok := net.Stops[stops[i].StopID]; ok {
+			points = append(points, legPoint(s))
+		}
+	}
+	leg.Stops = points
+	if boardedIdx != 0 || alightedIdx != len(stops)-1 {
+		leg.IsTransit = true
+	}
 }

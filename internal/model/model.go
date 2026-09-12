@@ -592,6 +592,14 @@ type Leg struct {
 	// TimeHint — нестандартное время рейса (fuzzy): показываем
 	// «время уточнять у перевозчика» + контакты (§5.4 fallback).
 	TimeHint string `json:"time_hint,omitempty"`
+
+	// IsTransit — пассажир сел/вышел не на конечных точках рейса
+	// (sanity: From.StopID != первый StopTime трипа || To.StopID != последний).
+	IsTransit bool `json:"is_transit,omitempty"`
+
+	// Stops — все остановки, которые пассажир проедет в рамках этого лега.
+	// первая точка == From, последняя == To; для пеших лег обычно пусто.
+	Stops []LegPoint `json:"stops,omitempty"`
 }
 
 type Journey struct {
