@@ -132,6 +132,7 @@ type QuotaStore interface {
 	SetQuotaLimit(ctx context.Context, provider string, limit int) error
 	RecordApiCall(ctx context.Context, provider, endpoint string, cost int) error
 	ListQuotas(ctx context.Context) ([]QuotaRow, error)
+	CleanupQuotaHistory(ctx context.Context, keepDays int) (int, error)
 }
 
 // DefaultQuotaLimit — суточный лимит вызовов внешнего API на провайдера,
