@@ -141,12 +141,19 @@ func BuildRouteQuery(ref string, bbox *BBox, timeoutS int) string {
 	if bbox != nil {
 		bboxFilter = fmt.Sprintf("(%s)", bbox.String())
 	}
+	refFilter := fmt.Sprintf(`["ref"="%s"]`, ref)
+	if ref == "" {
+		// регио-сбор (issue #12): все маршрутные relation'ы bbox, фильтра
+		// по ref нет — терминальные станции региона уже собраны, теперь
+		// маршруты между ними.
+		refFilter = ""
+	}
 	return fmt.Sprintf(`[out:json][timeout:%d];
-relation["type"="route"]["route"~"bus|trolleybus"]["ref"="%s"]%s;
+relation["type"="route"]["route"~"bus|trolleybus"]%s%s;
 out body;
 >;
 out skel qt;`,
-		timeoutS, ref, bboxFilter)
+		timeoutS, refFilter, bboxFilter)
 }
 
 // BuildRouteByIDQuery — маршрут по уникальному relation_id (точнее
@@ -177,6 +184,18 @@ type RouteQuery struct {
 // адаптере); путь cache+quota — в geocoder.CachedRoutesProvider, не здесь.
 func (a *Adapter) FetchRouteRelations(ctx context.Context, q RouteQuery) ([]model.AdaptedRecord, error) {
 	ql := BuildRouteQuery(q.Ref, q.BBox, 0)
+	body, err := a.execQL(ctx, ql)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRouteResponse(body)
+}
+
+// FetchAllRouteRelations — регио-сбор (issue #12): все маршрутные
+// relation'ы bbox (без ref-фильтра). Терм — таймаут поднят: региона больше,
+// чем у одного номера. Контракт OverpassRoutesSource для sync.
+func (a *Adapter) FetchAllRouteRelations(ctx context.Context, minLat, minLon, maxLat, maxLon float64) ([]model.AdaptedRecord, error) {
+	ql := BuildRouteQuery("", &BBox{MinLat: minLat, MinLon: minLon, MaxLat: maxLat, MaxLon: maxLon}, 0)
 	body, err := a.execQL(ctx, ql)
 	if err != nil {
 		return nil, err

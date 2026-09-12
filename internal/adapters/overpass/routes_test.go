@@ -34,9 +34,14 @@ func TestBuildRouteQuery(t *testing.T) {
 }
 
 func TestBuildRouteQueryNoRef(t *testing.T) {
+	// issue #12: пустой ref — регио-сбор всех маршрутных relation'ов
+	// bbox, а не поиск с пустым номером.
 	q := BuildRouteQuery("", nil, 0)
-	if !strings.Contains(q, `["ref"=""]`) {
-		t.Errorf("should handle empty ref:\n%s", q)
+	if strings.Contains(q, `["ref"=`) {
+		t.Errorf("пустой ref не должен давать ref-фильтр:\n%s", q)
+	}
+	if !strings.Contains(q, `["type"="route"]`) {
+		t.Errorf("маршрутный фильтр обязан остаться:\n%s", q)
 	}
 }
 

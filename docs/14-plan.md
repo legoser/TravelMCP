@@ -793,6 +793,34 @@ O-блоки (коннектор), затем S-блоки (settlement), зат�
   Барнаул; Томск; Кемеровская обл.) + route-relations O-5 (bbox СФО). Живая
   пачка: 157КБ route_101 (Томск №101 Поросино↔Ленина, 161 member — порядок
   сохранён), сводный дамп 1349 elements; сырьё в gitignored `data/`.
+- **O-9. Overpass как источник терминалов и маршрутов (issue #12,
+  2026-09-12).** Регио-сбор из OSM без расписания — полный путь:
+  `POST /api/v1/collect/routes` → job `kind=routes` → терминальные станции
+  bbox региона (`StationsInBBox` через `CachedStationsProvider` — тот же
+  cache+quota+pacer, ключ `overpass:bbox:<...>`) → чанковый промоут
+  unverified-терминалов (`RunCollectOverpassSkeleton`, IdentityOnly 0.4)
+  → маршрутные relation'ы bbox (`FetchAllRouteRelations`, QL без ref-
+  фильтра) → `FlattenOverpassRoute` → flat-рейсы без времён → attach:
+  полностью безвременные рейсы матчатся к терминалам и уходят в staging
+  `awaiting_times` («рейс без расписания (только топология)») — маршрут
+  привязан к канону, времена добирает Яндекс позже. Решения: (1)
+  `sync.region_bboxes` — карта регион→bbox (дефолт СФО, env
+  `SYNC_REGION_BBOX` точечно): overpass-сбор региона берёт его bbox, а не
+  молчаливый глобальный bbox пилота (инцидент: «Республика Алтай» со
+  статическим bbox Кузбасса); fallback без карты — Warn в лог. (2)
+  `Adapter.StationsInBBox` — float-контракт `OverpassBBoxProvider`, без
+  привязки geocoder к типам адаптера. (3) Времена — по-прежнему монополия
+  Яндекса (§1.2): OSM даёт топологию+геометрию+identity, staging
+  awaiting_times — место встречи двух источников. (4) Терминология квот
+  не менялась: bbox-запрос жжёт ту же квоту `osm`. Тесты:
+  `TestCachedStationsProviderBBox*` (кэш-хит без квоты, вежливый отказ,
+  no-inner), `TestRunCollectOverpassSkeletonPromotes`,
+  `TestFlattenOverpassRoute/TooFewStops`, `TestAttachUntimedTripAwaitsTimes`
+  (безвременный трип: matched-стопы + awaiting_times, не dead),
+  `TestRegionBBox/EnvOverride`, integration `TestCollectEndpoints` (+routes).
+  UI: кнопка «Overpass: терминалы + маршруты (без расписания)», подсказка
+  при overpass+offline, `stations=overpass` в collect/trips берёт bbox
+  региона.
 - **O-7. Gap-fill в `skeleton-sync`.** После join: непарные Yandex + unmatched
   стопы реестра → `StationsAround` по их координатам → кандидаты в пул
   верификации `ScorePair` (первый verified побеждает). Флаги `--overpass-max`

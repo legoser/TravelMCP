@@ -187,6 +187,7 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 	mux.Handle("POST /api/v1/admin/external-call", s.auth(http.HandlerFunc(s.handleAdminExternalCall), "admin"))
 	mux.Handle("POST /api/v1/collect/skeleton", s.auth(http.HandlerFunc(s.handleCollectSkeleton), "admin"))
 	mux.Handle("POST /api/v1/collect/trips", s.auth(http.HandlerFunc(s.handleCollectTrips), "admin"))
+	mux.Handle("POST /api/v1/collect/routes", s.auth(http.HandlerFunc(s.handleCollectRoutes), "admin"))
 	mux.Handle("GET /api/v1/collect/regions", s.auth(http.HandlerFunc(s.handleCollectRegions), "admin"))
 	mux.Handle("GET /api/v1/sync/runs", s.auth(http.HandlerFunc(s.handleListSyncRuns), "admin"))
 	mux.Handle("GET /api/v1/sync/runs/{id}", s.auth(http.HandlerFunc(s.handleGetSyncRun), "admin"))

@@ -15,6 +15,7 @@ import (
 	"travelmcp/internal/adapters/overpass"
 	"travelmcp/internal/adapters/yandex"
 	"travelmcp/internal/config"
+	"travelmcp/internal/geocoder"
 	"travelmcp/internal/jobs"
 	"travelmcp/internal/mcp"
 	"travelmcp/internal/model"
@@ -60,8 +61,10 @@ func (cr *CollectRunner) HandleCollectRegion(ctx context.Context, job store.JobR
 		return cr.runSkeleton(ctx, p, l)
 	case "trips":
 		return cr.runTrips(ctx, p, l)
+	case "routes":
+		return cr.runRoutes(ctx, p, l)
 	default:
-		return fmt.Errorf("collect: kind обязан быть skeleton|trips, получен %q", p.Kind)
+		return fmt.Errorf("collect: kind обязан быть skeleton|trips|routes, получен %q", p.Kind)
 	}
 }
 
@@ -134,25 +137,27 @@ func (cr *CollectRunner) runTrips(ctx context.Context, p collectPayload, logger 
 	}
 
 	// Источник терминальных станций: yandex-дамп (по умолчанию) или
-	// Overpass (bbox из sync.bbox — регион пилота). Overpass отдаёт
-	// станции без yandex_code: расписание берётся по имени через
-	// поиск станции (cache-first, те же квоты).
+	// Overpass (bbox региона из sync.region_bboxes, fallback sync.bbox —
+	// с явным логом; путь cache+quota, offline запрещён). Overpass-станции
+	// без yandex_code: резолв кода по координате (nearest, cache-first).
 	if p.TerminalID <= 0 {
 		switch p.Stations {
 		case "overpass":
 			if p.Offline {
 				return fmt.Errorf("collect trips: overpass-станции требуют сеть (offline не поддерживается)")
 			}
-			bbox, err := parseBBox(cfg.Sync.Bbox)
+			bbox, regional, err := regionBBoxOf(cfg, p.Region)
 			if err != nil {
-				return fmt.Errorf("collect trips: sync.bbox: %w", err)
+				return err
 			}
 			op := overpass.New(*cfg, httpx.New(logger, "overpass"))
-			yan, err = op.StationsInBBox(ctx, bbox)
+			cached := geocoder.NewCachedStationsProvider(op, geoCacheFor(cr.Store), geoQuotaOf(cr.Store), 0)
+			yan, err = cached.StationsInBBox(ctx, bbox.MinLat, bbox.MinLon, bbox.MaxLat, bbox.MaxLon)
 			if err != nil {
 				return fmt.Errorf("collect trips: overpass: %w", err)
 			}
-			logger.Info("collect trips: станции из overpass", "stations", len(yan), "bbox", bbox.String())
+			logger.Info("collect trips: станции из overpass", "stations", len(yan),
+				"bbox", bbox.String(), "bbox_regional", regional, "region", p.Region)
 		default:
 			var err error
 			yan, err = skeleton.YandexDumpSource{Path: cfg.Sync.YandexDumpPath}.Load()
@@ -294,6 +299,112 @@ func lenSumByRoute(sum syncpkg.TripsRunSummary, field string) int {
 	return n
 }
 
+// runRoutes — kind=routes (issue #12): терминальные станции + маршрутные
+// relation'ы региона из Overpass, без расписания. Терминалы — чанковый
+// промоут (IdentityOnly 0.4), маршруты — flat без времён → staging
+// awaiting_times (времена добирает Яндекс позже). Сеть обязательна.
+func (cr *CollectRunner) runRoutes(ctx context.Context, p collectPayload, logger *slog.Logger) error {
+	cfg := cr.Config
+	if p.Region == "" {
+		return fmt.Errorf("collect routes: region обязателен")
+	}
+	if p.Offline {
+		return fmt.Errorf("collect routes: overpass-сбор требует сеть (offline не поддерживается)")
+	}
+	bbox, regional, err := regionBBoxOf(cfg, p.Region)
+	if err != nil {
+		return err
+	}
+	tag := p.Tag
+	if tag == "" {
+		tag = "collect-routes-" + p.Region
+	}
+	op := overpass.New(*cfg, httpx.New(logger, "overpass"))
+	stations := geocoder.NewCachedStationsProvider(op, geoCacheFor(cr.Store), geoQuotaOf(cr.Store), 0)
+
+	cc := syncpkg.CollectOverpassConfig{
+		Region: p.Region,
+		MinLat: bbox.MinLat, MinLon: bbox.MinLon, MaxLat: bbox.MaxLat, MaxLon: bbox.MaxLon,
+		Tag: tag,
+	}
+
+	ssum, _, err := syncpkg.RunCollectOverpassSkeleton(ctx, cr.Store, stations, cc, logger)
+	if err != nil {
+		return err
+	}
+	logger.Info("collect routes: терминалы региона собраны", "source", "osm",
+		"stations", ssum.StationsIn, "written", ssum.Written, "review", ssum.Review,
+		"bbox", ssum.BBox, "bbox_regional", regional)
+
+	rst, ok := cr.Store.(syncpkg.TripsRunnerStore)
+	if !ok {
+		return fmt.Errorf("collect routes: стор без trips-методов")
+	}
+	rsum, tsum, err := syncpkg.RunCollectOverpassTrips(ctx, cr.Store, rst, op, cfg.Sync, *cfg, cc, p.Force, logger)
+	if err != nil {
+		return err
+	}
+	logger.Info("collect routes complete", "source", "osm",
+		"routes_in", rsum.RoutesIn, "trips", rsum.Trips, "routes_dead", rsum.RoutesDead,
+		"staged", lenSumByRoute(tsum, "Staged"), "promoted", lenSumByRoute(tsum, "Promoted"),
+		"bbox", rsum.BBox, "bbox_regional", regional,
+		"relations", len(rsum.RelationIDs))
+	if rsum.Trips == 0 {
+		return fmt.Errorf("collect routes: маршрутов нет (bbox %s пуст или маршрутные relation'ы не размечены)", rsum.BBox)
+	}
+	mcp.BumpCanonVersion()
+	return nil
+}
+
+// regionBBoxOf — bbox региона: карта region_bboxes → fallback глобальный
+// bbox пилота (issue #12: запуск «Республика Алтай» не должен молча брать
+// bbox Кузбасса — fallback всегда явно виден в логах).
+func regionBBoxOf(cfg *config.Config, region string) (overpass.BBox, bool, error) {
+	if region == "" {
+		return overpass.BBox{}, false, fmt.Errorf("collect: region обязателен для overpass-сбора")
+	}
+	spec, regional := cfg.Sync.RegionBBox(region)
+	if spec == "" {
+		return overpass.BBox{}, false, fmt.Errorf("collect: нет bbox для региона %q (sync.bbox пуст)", region)
+	}
+	bbox, err := parseBBox(spec)
+	if err != nil {
+		return overpass.BBox{}, false, fmt.Errorf("collect: bbox региона %q: %w", region, err)
+	}
+	if !regional {
+		slog.Warn("collect overpass: регион не в карте region_bboxes, bbox пилота может не покрывать регион",
+			"region", region, "bbox", spec)
+	}
+	return bbox, regional, nil
+}
+
+// geoCacheFor — межпрогонный кэш гео-запросов (geocode_cache в Postgres,
+// in-memory для остальных) + обёртка под контракт geocoder.GeoCacheStore.
+func geoCacheFor(st store.Store) geocoder.GeoCacheStore {
+	if gc, ok := st.(interface {
+		GetGeoCache(ctx context.Context, key string) (geocoder.GeoCacheEntry, bool)
+		SetGeoCache(ctx context.Context, key string, e geocoder.GeoCacheEntry) error
+	}); ok {
+		return &dbGeoCache{st: gc}
+	}
+	return geocoder.NewMapGeoCacheStore(0)
+}
+
+type dbGeoCache struct {
+	st interface {
+		GetGeoCache(ctx context.Context, key string) (geocoder.GeoCacheEntry, bool)
+		SetGeoCache(ctx context.Context, key string, e geocoder.GeoCacheEntry) error
+	}
+}
+
+func (c *dbGeoCache) Get(key string) (geocoder.GeoCacheEntry, bool) {
+	return c.st.GetGeoCache(context.Background(), key)
+}
+
+func (c *dbGeoCache) Set(key string, e geocoder.GeoCacheEntry) {
+	_ = c.st.SetGeoCache(context.Background(), key, e)
+}
+
 func stringSet(in []string) map[string]bool {
 	if len(in) == 0 {
 		return nil
@@ -400,6 +511,14 @@ func joinDash(parts []string) string {
 }
 
 func quotaOf(st store.Store) yandex.QuotaFunc {
+	return func(ctx context.Context, provider string, limit int) (bool, int, error) {
+		return st.TryConsumeQuota(ctx, provider, limit)
+	}
+}
+
+// geoQuotaOf — та же квота под контракт geocoder (именованные типы
+// совпадают по сигнатуре, но не конвертируются напрямую).
+func geoQuotaOf(st store.Store) geocoder.QuotaFunc {
 	return func(ctx context.Context, provider string, limit int) (bool, int, error) {
 		return st.TryConsumeQuota(ctx, provider, limit)
 	}

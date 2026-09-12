@@ -41,6 +41,13 @@ func (s *Server) handleCollectTrips(w http.ResponseWriter, r *http.Request) {
 	s.enqueueCollectJob(w, r, "trips")
 }
 
+// handleCollectRoutes — POST /api/v1/collect/routes
+// {region, tag}: терминалы+маршруты региона из Overpass без расписания
+// (issue #12).
+func (s *Server) handleCollectRoutes(w http.ResponseWriter, r *http.Request) {
+	s.enqueueCollectJob(w, r, "routes")
+}
+
 func (s *Server) enqueueCollectJob(w http.ResponseWriter, reqst *http.Request, kind string) {
 	if s.store == nil {
 		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
@@ -53,6 +60,10 @@ func (s *Server) enqueueCollectJob(w http.ResponseWriter, reqst *http.Request, k
 	}
 	if kind == "trips" && req.Region == "" && req.TerminalID <= 0 {
 		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "region обязателен (или terminal_id для точечного сбора)"})
+		return
+	}
+	if kind == "routes" && req.Region == "" {
+		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "region обязателен для overpass-сбора"})
 		return
 	}
 	if kind == "trips" && req.TerminalID > 0 && req.Transport == "" {

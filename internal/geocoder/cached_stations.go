@@ -21,8 +21,20 @@ func geoCacheKey(lat, lon float64, radius int) string {
 	return fmt.Sprintf("overpass:around:%.4f:%.4f:%d", latR, lonR, radius)
 }
 
+func bboxCacheKey(minLat, minLon, maxLat, maxLon float64) string {
+	return fmt.Sprintf("overpass:bbox:%.4f:%.4f:%.4f:%.4f",
+		math.Round(minLat*1e4)/1e4, math.Round(minLon*1e4)/1e4,
+		math.Round(maxLat*1e4)/1e4, math.Round(maxLon*1e4)/1e4)
+}
+
 type OverpassProvider interface {
 	StationsAround(ctx context.Context, lat, lon float64, radiusM int) ([]model.AdaptedRecord, error)
+}
+
+// OverpassBBoxProvider — регио-сбор терминальных станций по bbox
+// (O-3 терминалы региона): путь тот же cache+quota, что и Around.
+type OverpassBBoxProvider interface {
+	StationsInBBox(ctx context.Context, minLat, minLon, maxLat, maxLon float64) ([]model.AdaptedRecord, error)
 }
 
 type CachedStationsProvider struct {
@@ -45,7 +57,26 @@ func NewCachedStationsProvider(inner OverpassProvider, cache GeoCacheStore, quot
 
 func (c *CachedStationsProvider) StationsAround(ctx context.Context, lat, lon float64, radiusM int) ([]model.AdaptedRecord, error) {
 	key := geoCacheKey(lat, lon, radiusM)
+	return c.fetch(ctx, key, func() ([]model.AdaptedRecord, error) {
+		return c.inner.StationsAround(ctx, lat, lon, radiusM)
+	})
+}
 
+// StationsInBBox — регио-сбор станций (issue #12): cache+quota путь для
+// bbox-запроса, раньше — голый сетевой вызов в обход квот/кэша. Пейсер
+// общий с Around: публичный API один, темп один.
+func (c *CachedStationsProvider) StationsInBBox(ctx context.Context, minLat, minLon, maxLat, maxLon float64) ([]model.AdaptedRecord, error) {
+	bp, ok := c.inner.(OverpassBBoxProvider)
+	if !ok {
+		return nil, fmt.Errorf("overpass bbox: провайдер не умеет регио-сбор (нет StationsInBBox)")
+	}
+	key := bboxCacheKey(minLat, minLon, maxLat, maxLon)
+	return c.fetch(ctx, key, func() ([]model.AdaptedRecord, error) {
+		return bp.StationsInBBox(ctx, minLat, minLon, maxLat, maxLon)
+	})
+}
+
+func (c *CachedStationsProvider) fetch(ctx context.Context, key string, call func() ([]model.AdaptedRecord, error)) ([]model.AdaptedRecord, error) {
 	if c.cache != nil {
 		if e, ok := c.cache.Get(key); ok {
 			return e.Records, nil
@@ -67,7 +98,7 @@ func (c *CachedStationsProvider) StationsAround(ctx context.Context, lat, lon fl
 	c.lastCall = time.Now()
 	c.pacerMu.Unlock()
 
-	records, err := c.inner.StationsAround(ctx, lat, lon, radiusM)
+	records, err := call()
 	if err != nil {
 		return nil, err
 	}

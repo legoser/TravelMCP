@@ -205,6 +205,24 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 			})
 			continue
 		}
+		// Рейс совсем без времён (overpass-сбор issue #12: топология и
+		// терминалы есть, времена придут из Яндекса позже): стопы матчатся к
+		// терминалам канона — маршрут привязан, но публикация ждёт времён.
+		if untimedPositions(ft) == len(ft.Stops) && len(ft.Stops) > 0 {
+			tripTag := logger.With("step", "match_stop", "route_nk", routeNK, "trip_nk", tripNK, "direction", ft.Direction)
+			matched, _, _, unmatched := matchStops(ft, mindex, source, classFor, in.ParamsFor, logger)
+			rep.Staged = append(rep.Staged, StagedTrip{
+				RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg,
+				Direction: ft.Direction, ServiceID: ft.ServiceID, Run: ft.Run,
+				State:          "awaiting_times",
+				Reason:         "рейс без расписания (только топология): время даст источник расписаний",
+				Matched:        matched,
+				Unmatched:      unmatched,
+				IsSyntheticKey: true, Carrier: ft.Carrier, CarrierINN: ft.CarrierINN, Weekdays: ft.Weekdays,
+			})
+			tripTag.Info("trip staged: awaiting_times (нет расписания)", "matched_stops", len(matched), "unmatched_stops", len(unmatched))
+			continue
+		}
 		tripTag := logger.With("step", "match_stop", "route_nk", routeNK, "trip_nk", tripNK, "direction", ft.Direction)
 		matched, worstReason, worstScore, unmatched := matchStops(ft, mindex, source, classFor, in.ParamsFor, logger)
 		if len(unmatched) > 0 && !backbonePromotable(matched, ft) {

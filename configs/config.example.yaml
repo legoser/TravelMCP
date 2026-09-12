@@ -83,6 +83,20 @@ sync:
   yandex_dump_path: "${SYNC_YANDEX_DUMP_PATH:-data/yandex/cache/global_stations_list.json}"
   skeleton_region: "${SYNC_SKELETON_REGION:-Кемеровская область - Кузбасс}" # пилотный регион скелета
   bbox: "${SYNC_BBOX:-53.5,84.0,57.0,88.5}" # minLat,minLon,maxLat,maxLon пилота
+  # region_bboxes — bbox регионов для overpass-сбора (issue #12): сбор региона
+  # берёт его bbox, а не молчаливый глобальный bbox пилота. Точечное
+  # переопределение: SYNC_REGION_BBOX="Регион=lat,lon,lat,lon;...".
+  region_bboxes:
+    "Кемеровская область - Кузбасс": "53.5,82.5,57.5,89.5"
+    "Алтайский край": "51.0,78.5,54.5,86.5"
+    "Республика Алтай": "49.0,83.5,52.7,89.5"
+    "Новосибирская область": "53.0,75.0,57.0,85.0"
+    "Томская область": "56.0,75.5,60.5,88.5"
+    "Омская область": "53.0,70.0,58.5,78.0"
+    "Красноярский край": "51.0,82.0,61.0,89.5"
+    "Иркутская область": "51.5,98.0,62.0,110.0"
+    "Республика Хакасия": "51.5,86.5,55.5,92.0"
+    "Республика Тыва": "49.5,87.5,53.5,100.0"
   flat_trips_path: "${SYNC_FLAT_TRIPS_PATH:-}" # flat_trips.json (генерирует tools/registry-parser) для coverage-замера и trips-sync
   legacy_threshold: 0.6 # порог legacy_match Фазы 0
   coverage_soft_score: 0.4 # мягкий порог ScorePair для coverage-gate (§5.4)
