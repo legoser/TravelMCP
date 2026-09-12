@@ -29,7 +29,7 @@ import (
 
 	_ "travelmcp/internal/adapters/nominatim"
 	_ "travelmcp/internal/adapters/overpass"
-	_ "travelmcp/internal/adapters/yandex"
+	yandex "travelmcp/internal/adapters/yandex"
 )
 
 func main() {
@@ -78,6 +78,19 @@ func main() {
 			for _, p := range []string{"yandex", "nominatim", "motis", "gov-registry", "gtfs", "osm"} {
 				_ = st.SetQuotaLimit(context.Background(), p, store.DefaultQuotaLimit)
 			}
+			// issue #10: квоты Яндекса разделены по API: расписания и
+			// геокодинг имеют отдельные суточные лимиты и не блокируют
+			// друг друга. 'yandex' остаётся legacy-строкой существующих
+			// данных; новые вызовы пишут в yandex_rasp/yandex_geocode.
+			_ = st.SetQuotaLimit(context.Background(), "yandex_rasp", yandex.DefaultRaspQuotaLimit)
+			if cfg.Yandex.RaspQuotaLimit > 0 {
+				_ = st.SetQuotaLimit(context.Background(), "yandex_rasp", cfg.Yandex.RaspQuotaLimit)
+			}
+			geocodeLimit := store.DefaultQuotaLimit
+			if cfg.Geocoder.MaxCalls > 0 {
+				geocodeLimit = cfg.Geocoder.MaxCalls
+			}
+			_ = st.SetQuotaLimit(context.Background(), "yandex_geocode", geocodeLimit)
 			if qs, err := st.ListQuotas(context.Background()); err == nil {
 				logger.Info("quotas loaded", "count", len(qs))
 			}

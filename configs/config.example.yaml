@@ -122,5 +122,6 @@ pricing:
 yandex:
   rasp_key: "${YANDEX_RASP_KEY}"
   rasp_url: "${YANDEX_RASP_URL:-https://api.rasp.yandex.net/v3.0}" # дефолт URL расписаний
+  rasp_quota_limit: 500 # суточный лимит квоты api_quotas('yandex_rasp'); 0 = дефолт адаптера 500 (env YANDEX_RASP_QUOTA_LIMIT)
   geocode_key: "${YANDEX_GEOCODE_KEY}"
   geocode_url: "https://geocode-maps.yandex.ru/1.x"

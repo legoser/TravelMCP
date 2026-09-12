@@ -79,6 +79,11 @@ type Yandex struct {
 	GeocodeKey   string `yaml:"geocode_key"`
 	GeocodeURL   string `yaml:"geocode_url"`
 	RaspCacheDir string `yaml:"rasp_cache_dir"`
+	// RaspQuotaLimit — суточный лимит квоты api_quotas('yandex_rasp').
+	// 0 = дефолт адаптера (DefaultRaspQuotaLimit, 500). Единая точка
+	// ответственности за лимит (AGENTS §3.7): адаптер при 0 подставляет
+	// свой дефолт, конфиг переопределяет.
+	RaspQuotaLimit int `yaml:"rasp_quota_limit"`
 }
 
 type Nominatim struct {
@@ -421,6 +426,11 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("YANDEX_RASP_KEY"); v != "" {
 		cfg.Yandex.RaspKey = v
+	}
+	if v := os.Getenv("YANDEX_RASP_QUOTA_LIMIT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.Yandex.RaspQuotaLimit = n
+		}
 	}
 	if v := os.Getenv("YANDEX_RASP_URL"); v != "" {
 		cfg.Yandex.RaspURL = v
@@ -837,6 +847,11 @@ func setByPath(cfg *Config, parts []string, v string) {
 		}
 		if len(parts) == 2 && parts[1] == "geocode_url" {
 			cfg.Yandex.GeocodeURL = v
+		}
+		if len(parts) == 2 && parts[1] == "rasp_quota_limit" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				cfg.Yandex.RaspQuotaLimit = n
+			}
 		}
 	case "nominatim":
 		if len(parts) == 2 && parts[1] == "url" {
