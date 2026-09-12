@@ -242,3 +242,88 @@ func TestAdminTerminalApprove(t *testing.T) {
 		t.Fatalf("review entries must be removed after approve, got %d", len(entries))
 	}
 }
+
+func TestReviewTripSnapshot(t *testing.T) {
+	ts, ms := newBrowserApp(t)
+	ctx := t.Context()
+
+	// staging-трип с матчингом на терминалы канона (как persistStagedTrip)
+	matched := `[{"seq":0,"terminal_id":100,"arrival_s":28800,"departure_s":28800,"match_score":0.9},{"seq":1,"terminal_id":101,"arrival_s":32400,"departure_s":32400,"match_score":0.9}]`
+	termA, err := ms.UpsertTerminal(ctx, store.TerminalRow{Lat: 55.35, Lon: 86.08}, map[string]string{"ru": "Кемерово, автовокзал"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	termB, err := ms.UpsertTerminal(ctx, store.TerminalRow{Lat: 55.44, Lon: 84.98}, map[string]string{"ru": "Топки, автостанция"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	matched = `[{"seq":0,"terminal_id":` + fmt.Sprint(termA) + `,"arrival_s":28800,"departure_s":28800,"match_score":0.9},{"seq":1,"terminal_id":` + fmt.Sprint(termB) + `,"arrival_s":32400,"departure_s":32400,"match_score":0.9}]`
+	if _, err := ms.UpsertStagingTrip(ctx, store.StagingTripRow{
+		Source: "yandex", ExternalRouteCode: "кемерово — топки|тест-перевозчик",
+		ExternalTripCode: "forward:1:0", State: "incomplete_trip",
+		MatchedStopTimes: matched, UnmatchedStops: `[]`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// trip-ревью как из trips_attach: fingerprint source:routeNK|tripNK,
+	// tripNK = routeNK+"|"+dir:svc:run → фактический вид source:R|R|tail
+	fp := "yandex:кемерово — топки|тест-перевозчик|кемерово — топки|тест-перевозчик|forward:1:0"
+	eid := int64(-4314202765230644000)
+	if err := ms.SaveReviewQueue(ctx, model.ReviewQueueEntry{
+		EntityType: "trip", EntityID: eid, Reason: "low_confidence",
+		Score: 0.52, Fingerprint: fp,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req, _ := http.NewRequest("GET", ts.URL+"/api/v1/review", nil)
+	req.Header.Set("X-API-Key", "secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var list []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		t.Fatal(err)
+	}
+	var found map[string]any
+	for _, it := range list {
+		if it["entity_type"] == "trip" {
+			found = it
+		}
+	}
+	if found == nil {
+		t.Fatalf("trip review not found: %v", list)
+	}
+	if found["fingerprint"] != fp {
+		t.Fatalf("fingerprint missing: %v", found)
+	}
+	snap, _ := found["trip"].(map[string]any)
+	if snap == nil {
+		t.Fatalf("trip snapshot missing: %v", found)
+	}
+	if snap["source"] != "yandex" || snap["route_nk"] != "кемерово — топки|тест-перевозчик" || snap["trip_nk"] != "кемерово — топки|тест-перевозчик|forward:1:0" {
+		t.Fatalf("snapshot keys wrong: %v", snap)
+	}
+	stops, _ := snap["stops"].([]any)
+	if len(stops) != 2 {
+		t.Fatalf("stops: want 2, got %d (%v)", len(stops), snap)
+	}
+	first, _ := stops[0].(map[string]any)
+	last, _ := stops[1].(map[string]any)
+	if first["name"] != "Кемерово, автовокзал" || last["name"] != "Топки, автостанция" {
+		t.Fatalf("stop names wrong: %v / %v", first, last)
+	}
+	if first["departure_hhmm"] != "08:00" || last["arrival_hhmm"] != "09:00" {
+		t.Fatalf("hhmm wrong: %v / %v", first, last)
+	}
+	if first["lat"] == nil || first["lon"] == nil {
+		t.Fatalf("coords missing: %v", first)
+	}
+	fm, _ := snap["from"].(map[string]any)
+	to, _ := snap["to"].(map[string]any)
+	if fm == nil || to == nil || fm["name"] != "Кемерово, автовокзал" || to["name"] != "Топки, автостанция" {
+		t.Fatalf("from/to wrong: %v %v", fm, to)
+	}
+}

@@ -40,6 +40,7 @@ import (
 	"travelmcp/internal/store"
 	"travelmcp/internal/support/httpx"
 	"travelmcp/internal/support/namesim"
+	syncpkg "travelmcp/internal/sync"
 	"travelmcp/internal/telemetry"
 
 	_ "travelmcp/internal/adapters/nominatim"
@@ -399,9 +400,6 @@ func (s *Server) handleGTFS(w http.ResponseWriter, r *http.Request) {
 	if region != "" {
 		comp := gtfsperregion.NewCompiler("f-ru")
 		data, err = comp.BuildPerRegionFromStore(r.Context(), s.store, region, time.Now())
-		// Фолбека на gtfsCompile(net) при ошибке нет намеренно: gate
-		// полноты provenance (план §3.3) нельзя молча обходить сборкой
-		// мимо store — ошибка уходит клиенту как 500.
 		filename = gtfsperregion.ArchiveName(region)
 	} else {
 		data, err = gtfsCompile(net)
@@ -428,7 +426,7 @@ func (s *Server) handleReview(w http.ResponseWriter, r *http.Request) {
 		rows, _ := lister.ListReviewQueue(r.Context(), 50)
 		out := make([]map[string]any, 0, len(rows))
 		for _, rq := range rows {
-			item := map[string]any{"entity_type": rq.EntityType, "entity_id": rq.EntityID, "reason": rq.Reason, "score": rq.Score, "created_at": rq.CreatedAt}
+			item := map[string]any{"entity_type": rq.EntityType, "entity_id": rq.EntityID, "reason": rq.Reason, "score": rq.Score, "created_at": rq.CreatedAt, "fingerprint": rq.Fingerprint}
 			if rq.EntityType == "terminal" {
 				if snap := s.terminalSnapshot(r.Context(), rq.EntityID); snap != nil {
 					item["terminal"] = snap
@@ -436,6 +434,9 @@ func (s *Server) handleReview(w http.ResponseWriter, r *http.Request) {
 						item["duplicates"] = s.findDuplicates(r.Context(), rq.EntityID, snap)
 					}
 				}
+			}
+			if rq.EntityType == "trip" {
+				item["trip"] = s.tripSnapshot(r.Context(), rq.Fingerprint)
 			}
 			out = append(out, item)
 		}
@@ -458,6 +459,156 @@ func (s *Server) terminalSnapshot(ctx context.Context, id int64) map[string]any 
 	}
 	s.withSettlements(ctx, []map[string]any{t})
 	return t
+}
+
+// Возвращает откуда/куда/когда (терминалы, координаты, города, времена).
+func (s *Server) tripSnapshot(ctx context.Context, fingerprint string) map[string]any {
+	out := map[string]any{"fingerprint": fingerprint}
+	source, routeNK, tripNK, ok := syncpkg.ParseTripReviewFingerprint(fingerprint)
+	if !ok {
+		out["missing"] = true
+		out["detail"] = "нечитаемый fingerprint"
+		return out
+	}
+	out["source"] = source
+	out["route_nk"] = routeNK
+	out["trip_nk"] = tripNK
+	ts, ok := s.store.(interface {
+		FindRouteID(ctx context.Context, source, routeCode string) (int64, bool)
+		FindTrip(ctx context.Context, routeID int64, tripCode string) (store.TripRow, bool)
+	})
+	if !ok {
+		out["missing"] = true
+		return out
+	}
+	// живой трип в каноне: полный маршрут с временами
+	if routeID, found := ts.FindRouteID(ctx, source, routeNK); found {
+		if trip, found := ts.FindTrip(ctx, routeID, syncpkg.SplitTripNK(tripNK)); found && trip.ValidTo == nil {
+			out["trip_id"] = trip.ID
+			out["service_days"] = trip.ServiceDays
+			if st, err := s.tripStopsFromCanon(ctx, trip.ID); err == nil && len(st) > 0 {
+				out["stops"] = st
+				out["from"], out["to"] = st[0], st[len(st)-1]
+				return out
+			}
+		}
+	}
+	// staging: трип не в каноне, но matched_stop_times хранит матчинг
+	st := s.tripStopsFromStaging(ctx, source, routeNK, syncpkg.SplitTripNK(tripNK))
+	if len(st) > 0 {
+		out["staged"] = true
+		out["stops"] = st
+		out["from"], out["to"] = st[0], st[len(st)-1]
+		return out
+	}
+	out["missing"] = true
+	out["detail"] = "трип не найден ни в каноне, ни в staging (пересбор?)"
+	return out
+}
+
+func (s *Server) tripStopsFromCanon(ctx context.Context, tripID int64) ([]map[string]any, error) {
+	getter, ok := s.store.(interface {
+		GetTripStopTimes(ctx context.Context, tripID int64) ([]map[string]any, error)
+	})
+	if !ok {
+		return nil, nil
+	}
+	items, err := getter.GetTripStopTimes(ctx, tripID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		st := map[string]any{
+			"seq": it["seq"], "name": it["name"],
+			"arrival": it["arrival"], "departure": it["departure"],
+			"arrival_hhmm": secsToHHMM(it["arrival"]), "departure_hhmm": secsToHHMM(it["departure"]),
+			"is_provisional": it["is_provisional"], "match_score": it["match_score"],
+		}
+		out = append(out, st)
+	}
+	return out, nil
+}
+
+func (s *Server) tripStopsFromStaging(ctx context.Context, source, routeCode, tripCode string) []map[string]any {
+	lister, ok := s.store.(interface {
+		ListStagingTrips(ctx context.Context, region string, limit int) ([]store.StagingTripRow, error)
+	})
+	if !ok {
+		return nil
+	}
+	rows, err := lister.ListStagingTrips(ctx, "", 5000)
+	if err != nil {
+		return nil
+	}
+	var raw string
+	for _, r := range rows {
+		if r.Source == source && r.ExternalRouteCode == routeCode && r.ExternalTripCode == tripCode {
+			raw = r.MatchedStopTimes
+			break
+		}
+	}
+	if raw == "" {
+		return nil
+	}
+	var matched []struct {
+		Seq        int     `json:"seq"`
+		TerminalID int64   `json:"terminal_id"`
+		ArrivalS   int     `json:"arrival_s"`
+		DepartureS int     `json:"departure_s"`
+		IsFuzzy    bool    `json:"is_fuzzy"`
+		MatchScore float64 `json:"match_score"`
+	}
+	if err := json.Unmarshal([]byte(raw), &matched); err != nil || len(matched) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(matched))
+	for _, mst := range matched {
+		st := map[string]any{
+			"seq": mst.Seq, "terminal_id": mst.TerminalID,
+			"arrival": mst.ArrivalS, "departure": mst.DepartureS,
+			"arrival_hhmm": secsToHHMM(mst.ArrivalS), "departure_hhmm": secsToHHMM(mst.DepartureS),
+			"is_fuzzy": mst.IsFuzzy, "match_score": mst.MatchScore,
+		}
+		if snap := s.terminalSnapshot(ctx, mst.TerminalID); snap != nil {
+			if _, missing := snap["missing"]; !missing {
+				st["name"] = snap["name"]
+				st["lat"] = snap["lat"]
+				st["lon"] = snap["lon"]
+				if v, ok := snap["settlement"]; ok {
+					st["settlement"] = v
+				}
+			} else {
+				st["missing_terminal"] = true
+			}
+		}
+		out = append(out, st)
+	}
+	return out
+}
+
+func secsToHHMM(v any) string {
+	n, ok := toInt(v)
+	if !ok {
+		return ""
+	}
+	n %= 86400
+	if n < 0 {
+		n += 86400
+	}
+	return fmt.Sprintf("%02d:%02d", n/3600, (n%3600)/60)
+}
+
+func toInt(v any) (int, bool) {
+	switch x := v.(type) {
+	case int:
+		return x, true
+	case int64:
+		return int(x), true
+	case float64:
+		return int(x), true
+	}
+	return 0, false
 }
 
 func (s *Server) findDuplicates(ctx context.Context, selfID int64, snap map[string]any) []map[string]any {
