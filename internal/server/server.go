@@ -126,7 +126,7 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 			s.logger = lf.For("http")
 		}
 	}
-	app := mcp.NewWithStore(planner.NewWithConfig(metrics, cfg.Planner.Engine, plannerLogger, cfg.Planner.SemaphoreSize, cfg.Planner.SemaphoreEnable).WithDefaultMaxWalk(cfg.Planner.MaxWalkMinutes), registry, st, mcpLogger)
+	app := mcp.NewWithStore(planner.NewWithConfig(metrics, cfg.Planner.Engine, plannerLogger, cfg.Planner.SemaphoreSize, cfg.Planner.SemaphoreEnable).WithDefaultMaxWalk(cfg.Planner.MaxWalkMinutes).WithMinTransfer(cfg.Planner.MinTransferMinutes, cfg.Planner.FlightCheckInMinutes), registry, st, mcpLogger)
 	mcpHandler := mcpserver.NewStreamableHTTPServer(app.Server(), mcpserver.WithStateLess(true))
 
 	mux := http.NewServeMux()
@@ -363,7 +363,7 @@ func (s *Server) handleGTFS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if net == nil {
-		app := mcp.NewWithStore(planner.NewWithConfig(s.metrics, s.cfg.Planner.Engine, s.logger, s.cfg.Planner.SemaphoreSize, s.cfg.Planner.SemaphoreEnable).WithDefaultMaxWalk(s.cfg.Planner.MaxWalkMinutes), s.registry, s.store, s.logger)
+		app := mcp.NewWithStore(planner.NewWithConfig(s.metrics, s.cfg.Planner.Engine, s.logger, s.cfg.Planner.SemaphoreSize, s.cfg.Planner.SemaphoreEnable).WithDefaultMaxWalk(s.cfg.Planner.MaxWalkMinutes).WithMinTransfer(s.cfg.Planner.MinTransferMinutes, s.cfg.Planner.FlightCheckInMinutes), s.registry, s.store, s.logger)
 		_ = app
 		muxNet := model.NewNetwork()
 		for _, p := range s.registry.List() {

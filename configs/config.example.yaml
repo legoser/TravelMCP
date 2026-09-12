@@ -39,6 +39,8 @@ planner:
   semaphore_enable: true
   semaphore_size: 0 # 0 = NumCPU*2, иначе явный размер
   max_walk_minutes: 30 # дефолт пешей доступности, если запрос не задал; междугородние автовокзалы часто за окраиной — можно поднять (env PLANNER_MAX_WALK_MINUTES)
+  min_transfer_minutes: 15 # минимальная стыковка рейс→рейс: переход/покупка билета (env PLANNER_MIN_TRANSFER_MINUTES)
+  flight_check_in_minutes: 120 # буфер на авиастыковку: регистрация/посадка/дорога до аэропорта (env PLANNER_FLIGHT_CHECK_IN_MINUTES)
 
 log:
   level: "info" # debug|info|warn|error — переключение без пересборки (LOG_LEVEL env)

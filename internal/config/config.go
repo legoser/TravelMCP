@@ -100,6 +100,12 @@ type Planner struct {
 	SemaphoreSize   int    `yaml:"semaphore_size"`
 	SemaphoreEnable bool   `yaml:"semaphore_enable"`
 	MaxWalkMinutes  int    `yaml:"max_walk_minutes"`
+	// MinTransferMinutes — минимальная стыковка рейс→рейс (issue #12):
+	// переход между перронами/вокзалами + покупка билета.
+	MinTransferMinutes int `yaml:"min_transfer_minutes"`
+	// FlightCheckInMinutes — стыковка с авиарейсом (issue #12):
+	// регистрация/посадка/дорога до аэропорта.
+	FlightCheckInMinutes int `yaml:"flight_check_in_minutes"`
 }
 
 type Deduplication struct {
@@ -211,7 +217,7 @@ func Defaults() *Config {
 			MirrorURL: "https://overpass.openstreetmap.fr/api/interpreter",
 		},
 		Motis:   Motis{URL: "http://192.168.57.14:8077"},
-		Planner: Planner{Engine: "csa", SemaphoreSize: runtime.NumCPU() * 2, SemaphoreEnable: true, MaxWalkMinutes: 30},
+		Planner: Planner{Engine: "csa", SemaphoreSize: runtime.NumCPU() * 2, SemaphoreEnable: true, MaxWalkMinutes: 30, MinTransferMinutes: 15, FlightCheckInMinutes: 120},
 		Log:     Log{Level: "info", Format: "json", Levels: map[string]string{}, Loki: LokiLog{BatchSize: 100, BatchWait: "1s"}},
 		Verification: Verification{
 			ConfidenceThreshold: 0.6,
@@ -475,6 +481,16 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("PLANNER_MAX_WALK_MINUTES"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 180 {
 			cfg.Planner.MaxWalkMinutes = n
+		}
+	}
+	if v := os.Getenv("PLANNER_MIN_TRANSFER_MINUTES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 240 {
+			cfg.Planner.MinTransferMinutes = n
+		}
+	}
+	if v := os.Getenv("PLANNER_FLIGHT_CHECK_IN_MINUTES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 600 {
+			cfg.Planner.FlightCheckInMinutes = n
 		}
 	}
 	if v := os.Getenv("HTTP_RATE_LIMIT_RPS"); v != "" {
