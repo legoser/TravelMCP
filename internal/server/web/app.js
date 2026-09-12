@@ -112,11 +112,19 @@ async function loadReview(){
     const r=await api('/api/v1/review');const tb=$('reviewBody');tb.innerHTML='';
     (r||[]).forEach(x=>{
       const tr=document.createElement('tr');
-      const t=x.terminal||{};
-      const where=t.missing?'<span class="muted">удалён из БД</span>':((t.name||'—')+'<br><span class="muted">'+(t.settlement||'НП?')+' • '+(t.lat||'')+','+(t.lon||'')+(t.is_locked?' • locked':'')+'</span>');
+      let where, act;
+      if(x.entity_type==='trip'){
+        const tp=x.trip||{};
+        where=tp.missing?('<span class="muted">'+(tp.detail||'данные недоступны')+'</span>'):(cardTripWhere(tp));
+        act='<button class="secondary" onclick="openReviewTripCard(this,'+x.entity_id+')" title="Карточка рейса">▶</button>';
+      } else {
+        const t=x.terminal||{};
+        where=t.missing?'<span class="muted">удалён из БД</span>':((t.name||'—')+'<br><span class="muted">'+(t.settlement||'НП?')+' • '+(t.lat||'')+','+(t.lon||'')+(t.is_locked?' • locked':'')+'</span>');
+        act='<button class="secondary" onclick="openReviewTerminal('+x.entity_id+')">→</button>';
+      }
       const dups=(x.duplicates||[]).map(d=>'<div>'+d.id+': '+(d.name||'—')+' ('+(d.similarity||'')+')</div>').join('')||'<span class="muted">—</span>';
       const key='\''+x.entity_type+'\','+x.entity_id+',\''+x.reason+'\'';
-      tr.innerHTML='<td>'+x.entity_type+'</td><td>'+x.entity_id+'</td><td style="max-width:260px">'+where+'</td><td>'+x.reason+'<br><span class="muted">'+(x.score||'')+'</span></td><td>'+(x.score||'')+'</td><td style="max-width:220px">'+dups+'</td><td><div class="row" style="gap:4px"><button class="secondary" onclick="openReviewTerminal('+x.entity_id+')">→</button><button class="ok" onclick="resolveReview('+key+',\'approve\')">✓</button><button class="danger" onclick="resolveReview('+key+',\'dismiss\')">✕</button></div></td>';
+      tr.innerHTML='<td>'+x.entity_type+'</td><td>'+x.entity_id+'</td><td style="max-width:260px">'+where+'</td><td>'+x.reason+'<br><span class="muted">'+(x.score||'')+'</span></td><td>'+(x.score||'')+'</td><td style="max-width:220px">'+dups+'</td><td><div class="row" style="gap:4px">'+act+'<button class="ok" onclick="resolveReview('+key+',\'approve\')">✓</button><button class="danger" onclick="resolveReview('+key+',\'dismiss\')">✕</button></div></td>';
       tb.appendChild(tr);
     });
     if((r||[]).length===0) tb.innerHTML='<tr><td colspan="7" class="muted">очередь пуста</td></tr>';
@@ -127,6 +135,55 @@ async function resolveReview(etype,eid,reason,action){
   try{await api('/api/v1/review/resolve',{method:'POST',body:JSON.stringify({entity_type:etype,entity_id:eid,reason,action})});toast(action==='approve'?'Подтверждено (locked)':'Снято с ревью');loadReview()}catch(e){toast(e.message,true)}
 }
 function openReviewTerminal(id){showTab('terminals');const s=$('termSearch');if(s){s.value='';}termPage=1;loadTerminals().then(()=>openTermCard(id));$('termId').value=id;toast('Терминал '+id+' — карточка открыта')}
+function cardTripWhere(tp){
+  const f=tp.from||{}, t=tp.to||{};
+  const fname=(f.name||f.terminal_id||'—'), tname=(t.name||t.terminal_id||'—');
+  let h='<b>'+fname+' → '+tname+'</b>';
+  if(f.settlement||t.settlement) h+='<br><span class="muted">'+(f.settlement||'?')+' → '+(t.settlement||'?')+'</span>';
+  if(tp.departure_hhmm||(f.departure_hhmm)) h+='<br><span class="muted">отпр. '+((f.departure_hhmm||tp.departure_hhmm)||'—')+' • приб. '+((t.arrival_hhmm)||'—')+'</span>';
+  if(tp.service_days) h+='<br><span class="muted">'+tp.service_days+'</span>';
+  if(tp.staged) h+=' <span class="badge pending" title="трип не в каноне, лежит в staging">staging</span>';
+  return h;
+}
+async function openReviewTripCard(btn,eid){
+  const row=btn.closest('tr');
+  let box=$('tripCard_'+eid);
+  if(box){ box.classList.toggle('hidden'); if(!box.classList.contains('hidden')) renderTripCard(box,tripCardCache[eid],eid); return; }
+  box=document.createElement('tr');
+  box.innerHTML='<td colspan="7" id="tripCard_'+eid+'"><div class="card" style="margin:6px 0;padding:10px"><span class="muted">загрузка…</span></div></td>';
+  row.after(box);
+  const out=$('tripCard_'+eid).firstElementChild;
+  try{
+    const r=await api('/api/v1/review');
+    const item=(r||[]).find(x=>x.entity_type==='trip'&&x.entity_id===eid);
+    const tp=(item&&item.trip)||null;
+    if(!tp){ out.innerHTML='<span class="muted">запись уже закрыта — обновите список</span>'; return; }
+    renderTripCard(out,tp,eid);
+  }catch(e){ out.innerHTML='<span class="muted">Ошибка: '+e.message+'</span>' }
+}
+function renderTripCard(box,tp,eid){
+  tripCardCache=tripCardCache||{};
+  tripCardCache[eid]=tp;
+  if(!tp){ box.innerHTML='<span class="muted">нет данных</span>'; return }
+  let h='<div class="row" style="justify-content:space-between"><h3 style="font-size:15px;margin:0">Рейс '+eid+'</h3><button class="secondary" onclick="$(\'tripCard_'+eid+'\').closest(\'tr\').remove()">✕</button></div>';
+  if(tp.missing){ h+='<div class="muted" style="margin-top:6px">'+(tp.detail||'данные недоступны')+': '+tp.fingerprint+'</div>'; box.innerHTML=h; return }
+  h+='<div class="row" style="gap:16px;margin-top:8px;flex-wrap:wrap"><span>источник: <b>'+(tp.source||'—')+'</b></span><span>route_nk: <code>'+(tp.route_nk||'')+'</code></span><span>trip_nk: <code>'+(tp.trip_nk||'')+'</code></span>'+(tp.trip_id?('<span>trip_id: <b>'+tp.trip_id+'</b></span>'):'')+(tp.service_days?('<span>дни: <b>'+tp.service_days+'</b></span>'):'')+'</div>';
+  const f=tp.from||{}, t=tp.to||{};
+  h+='<div class="row" style="gap:16px;margin-top:6px;flex-wrap:wrap"><span>откуда: <b>'+(f.name||'—')+'</b>'+(f.settlement?(' ('+f.settlement+')'):'')+(f.lat!=null?(' <span class="muted">'+f.lat+','+f.lon+'</span>'):'')+'</span><span>куда: <b>'+(t.name||'—')+'</b>'+(t.settlement?(' ('+t.settlement+')'):'')+(t.lat!=null?(' <span class="muted">'+t.lat+','+t.lon+'</span>'):'')+'</span></div>';
+  h+='<div class="row" style="gap:16px;margin-top:6px"><span>отпр.: <b>'+(f.departure_hhmm||tp.departure_hhmm||'—')+'</b></span><span>приб.: <b>'+(t.arrival_hhmm||'—')+'</b></span></div>';
+  const stops=tp.stops||[];
+  if(stops.length){
+    h+='<div style="overflow:auto;max-height:320px;margin-top:10px"><table><thead><tr><th>#</th><th>остановка</th><th>НП</th><th>приб.</th><th>отпр.</th><th>lat/lon</th><th>метки</th></tr></thead><tbody>';
+    stops.forEach(s=>{
+      h+='<tr><td>'+(s.seq!=null?s.seq:'')+'</td><td>'+(s.name||('#term '+(s.terminal_id||'')))+(s.missing_terminal?' <span class="badge blocked" title="терминал удалён из БД">?</span>':'')+'</td><td>'+(s.settlement||'—')+'</td><td>'+(s.arrival_hhmm||'—')+'</td><td>'+(s.departure_hhmm||'—')+'</td><td class="muted">'+((s.lat!=null)?(s.lat+','+s.lon):'—')+'</td><td>'+((s.is_fuzzy||s.is_provisional)?'<span class="badge pending" title="время ориентировочное/стоп без верификации">fuzzy</span>':'')+'</td></tr>';
+    });
+    h+='</tbody></table></div>';
+  } else {
+    h+='<div class="muted" style="margin-top:8px">стопы неизвестны (нет matched_stop_times в staging)</div>';
+  }
+  box.innerHTML=h;
+}
+let tripCardCache={};
 async function exportReview(){window.open('/api/v1/review/export.csv','_blank')}
 let termPage=1, termLimit=20, termSort='id', termOrder='asc';
 function updateSortIndicators(){

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sort"
 	"strconv"
+	"strings"
 
 	"travelmcp/internal/geo"
 	"travelmcp/internal/model"
@@ -26,17 +27,13 @@ type AttachTerminal struct {
 }
 
 type AttachInput struct {
-	Trips          []model.FlatTrip
-	Terminals      []AttachTerminal
-	PrevCanon      map[string][]string
-	TrustRouteNK   bool
-	Source         string
-	ChurnThreshold float64
-	MaxSpeedKmh    float64
-	// AllowChurnGrowth — legacy-эскалация оператора (сохранена для
-	// совместимости): чистый рост канона (disappearance=0) больше не
-	// алерт по определению — suppression применяется безусловно;
-	// исчезновения трипов остаются hard-алертом без исключений (§5.3).
+	Trips            []model.FlatTrip
+	Terminals        []AttachTerminal
+	PrevCanon        map[string][]string
+	TrustRouteNK     bool
+	Source           string
+	ChurnThreshold   float64
+	MaxSpeedKmh      float64
 	AllowChurnGrowth bool
 	ParamsFor        func(model.DensityClass) verification.Params
 	ClassForRegion   func(string) model.DensityClass
@@ -51,12 +48,9 @@ type MatchedStopTime struct {
 	DepartureS    int                       `json:"departure_s"`
 	Codes         []model.AdaptedIdentifier `json:"codes,omitempty"`
 	IsProvisional bool                      `json:"is_provisional,omitempty"`
-	// IsFuzzy — время ориентировочное (источник не дал, интерполировано
-	// по timed-соседям в interpolateFuzzyTimes): маршрутизация работает,
-	// пассажиру показываем «время уточнять у перевозчика».
-	IsFuzzy     bool    `json:"is_fuzzy,omitempty"`
-	MatchScore  float64 `json:"match_score,omitempty"`
-	MatchMethod string  `json:"match_method,omitempty"`
+	IsFuzzy       bool                      `json:"is_fuzzy,omitempty"`
+	MatchScore    float64                   `json:"match_score,omitempty"`
+	MatchMethod   string                    `json:"match_method,omitempty"`
 }
 
 type PromotableTrip struct {
@@ -119,26 +113,9 @@ type AttachReport struct {
 	Alert          bool                     `json:"alert"`
 	MidGaps        int                      `json:"mid_gaps"`
 	GappedPromoted int                      `json:"gapped_promoted"`
-	// FuzzyPromoted — рейсы, промоутнутые с интерполированными временами
-	// (стопы без времён в источнике, fallback §5.4).
-	FuzzyPromoted int `json:"fuzzy_promoted"`
+	FuzzyPromoted  int                      `json:"fuzzy_promoted"`
 }
 
-// backbonePromotable — D-3: трип промоутится с дырками в середине, если
-// оба конца (первый/последний стоп нитки) verified и matched-остов
-// связен: минимум 2 стопа. Для коротких/городских ниток — дополнительно
-// доля verified ≥ 2/3; межгород (оба конечных терминала заматчены,
-// монотонность/скорости проверяются ниже на эффективной
-// последовательности — перегоны через пропуск уже валидируются)
-// промоутится с mid_gaps независимо от доли: «Юрга—Кемерово» 2/16
-// стопов — легитимный сквозной рейс, а не skeleton_gap. Концы строгие
-// (без них трип не публикуется вовсе — пассажир не поедет в никуда),
-// середина добирается later (§5.4).
-// tripRegionOf — регион рейса из стопов (первый непустой): у FlatStop он
-// проставляется источником (yandex/overpass) и несёт настоящее название
-// («Республика Алтай»). Раньше регион срезался с route_reg по байтам —
-// для кириллических ref («1к») это рвало UTF-8 (SQLSTATE 22021), для
-// остальных давало мусор (первые буквы имени маршрута / номер маршрута).
 func tripRegionOf(ft model.FlatTrip) string {
 	for _, s := range ft.Stops {
 		if s.Region != "" {
@@ -359,6 +336,33 @@ func tripReview(source, routeNK, tripNK, reason string, score float64) model.Rev
 	}
 }
 
+func ParseTripReviewFingerprint(fp string) (source, routeNK, tripNK string, ok bool) {
+	colon := strings.Index(fp, ":")
+	if colon <= 0 {
+		return "", "", "", false
+	}
+	source = fp[:colon]
+	rest := fp[colon+1:]
+	bar := strings.LastIndex(rest, "|")
+	if bar <= 0 {
+		return "", "", "", false
+	}
+	prefix, tail := rest[:bar], rest[bar+1:]
+	if tail == "" || prefix == "" {
+		return "", "", "", false
+	}
+	for i := 0; i < len(prefix); i++ {
+		if prefix[i] == '|' && prefix[:i] == prefix[i+1:] {
+			r := prefix[:i]
+			return source, r, r + "|" + tail, true
+		}
+	}
+	if !strings.Contains(prefix, "|") {
+		return source, prefix, tail, true
+	}
+	return "", "", "", false
+}
+
 func PairItemFromTerminal(t AttachTerminal) verification.PairItem {
 	return verification.PairItem{
 		Name: t.Name, Lat: t.Lat, Lon: t.Lon,
@@ -367,9 +371,6 @@ func PairItemFromTerminal(t AttachTerminal) verification.PairItem {
 	}
 }
 
-// PairItemFromStop — стоп flat-формата: коды приходят от коннектора
-// в FlatStop.Codes (конвейер не знает, как называется тип кода и
-// из какой он системы).
 func PairItemFromStop(name string, lat, lon *float64, settlement, source string, codes []model.AdaptedIdentifier) verification.PairItem {
 	return verification.PairItem{
 		Name: name, Lat: lat, Lon: lon,
@@ -377,10 +378,6 @@ func PairItemFromStop(name string, lat, lon *float64, settlement, source string,
 	}
 }
 
-// matchStops — матчинг стопов рейса против терминалов через blocking-индекс
-// (D-1: пул = гео-окно ∪ код-совпадения ∪ no-coords, не вся страна) с greedy
-// exclusivity внутри рейса (D-2: занятый терминал недоступен следующим
-// позициям; кольцевой первый==последний — легитимен, §5.1).
 func matchStops(ft model.FlatTrip, idx *matchIndex, source string, classFor func(string) model.DensityClass, paramsFor func(model.DensityClass) verification.Params, logger *slog.Logger) ([]MatchedStopTime, string, float64, []string) {
 	terms := idx.terms
 	var matched []MatchedStopTime
@@ -402,10 +399,6 @@ func matchStops(ft model.FlatTrip, idx *matchIndex, source string, classFor func
 		for _, ti := range pool {
 			id := terms[ti].ID
 			if used[id] {
-				// кольцевой рейс (§5.1): последний стоп может вернуться на
-				// терминал первого — но только если это не соседний дубль
-				// (между ними есть другие терминалы), иначе это 2-позиционный
-				// дубликат, который обязан уйти в unmatched
 				if !(seq == lastStop && seq > 1 && firstTerminal != 0 && id == firstTerminal) {
 					continue
 				}
@@ -445,9 +438,6 @@ func matchStops(ft model.FlatTrip, idx *matchIndex, source string, classFor func
 		if s.DepMin != nil {
 			dep = *s.DepMin * 60
 		}
-		// GTFS-конвенция «минимум одно время»: конечный стоп с одним arrival
-		// (депо-прибытие) и первый с одним departure получают парное время,
-		// иначе arr>dep роняет валидатор монотонности.
 		if s.ArrMin != nil && s.DepMin == nil {
 			dep = arr
 		}
@@ -481,9 +471,6 @@ func matchStops(ft model.FlatTrip, idx *matchIndex, source string, classFor func
 	return matched, worstReason, worstScore, unmatched
 }
 
-// untimedPositions — сколько untimed-стопов присутствует в Stops с
-// сохранённой позицией (fallback-форма registry-parser). 0 — старый
-// формат: untimed только списком имён, позиций нет, промоутить нечего.
 func untimedPositions(ft model.FlatTrip) int {
 	n := 0
 	for _, s := range ft.Stops {
@@ -505,11 +492,6 @@ func countFuzzy(matched []MatchedStopTime) int {
 	return n
 }
 
-// interpolateFuzzyTimes — линейная интерполяция времен fuzzy-стопов по
-// ближайшим timed-соседям (по позиции). Оба конца fuzzy — ошибка:
-// время цеплять не к чему, рейс не промоутится. Внутренний fuzzy-стоп
-// получает arrival=departure=интерполяция sec; цепочки подряд идущих
-// fuzzy-стопов делят интервал по числу перегонов.
 func interpolateFuzzyTimes(matched []MatchedStopTime) error {
 	if len(matched) == 0 {
 		return nil

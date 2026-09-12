@@ -456,3 +456,17 @@ func TestGoldenValidateCases(t *testing.T) {
 		t.Fatalf("golden validate cases not found: %v", seen)
 	}
 }
+
+func TestParseTripReviewFingerprint(t *testing.T) {
+	fp := tripReview("yandex", "кемерово — топки|тест-перевозчик", "кемерово — топки|тест-перевозчик|forward:1:0", "low_confidence", 0.5)
+	if source, routeNK, tripNK, ok := ParseTripReviewFingerprint(fp.Fingerprint); !ok {
+		t.Fatalf("parse failed: %q", fp.Fingerprint)
+	} else if source != "yandex" || routeNK != "кемерово — топки|тест-перевозчик" || tripNK != "кемерово — топки|тест-перевозчик|forward:1:0" {
+		t.Fatalf("parsed wrong: source=%q routeNK=%q tripNK=%q", source, routeNK, tripNK)
+	}
+	for _, bad := range []string{"", ":", ":|", "yandex:", "no-bar|here"} {
+		if _, _, _, ok := ParseTripReviewFingerprint(bad); ok {
+			t.Fatalf("bad fingerprint %q must not parse", bad)
+		}
+	}
+}
