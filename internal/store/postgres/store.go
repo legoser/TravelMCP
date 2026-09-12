@@ -2,7 +2,9 @@ package postgres
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -926,40 +928,182 @@ func (p *PostgresStore) GetImport(ctx context.Context, providerID string) (Impor
 	return r, true
 }
 func (p *PostgresStore) CreateUser(ctx context.Context, email, passHash, role string) (int64, error) {
-	return 0, errNotImplemented
+	status := "pending"
+	if role == "admin" {
+		status = "active"
+	}
+	var id int64
+	err := p.pool.QueryRow(ctx,
+		`INSERT INTO users(email, pass_hash, status, role) VALUES($1,$2,$3,$4) RETURNING id`,
+		email, passHash, status, role).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("create user: %w", err)
+	}
+	return id, nil
 }
 func (p *PostgresStore) GetUserByEmail(ctx context.Context, email string) (UserRow, bool) {
-	return UserRow{}, false
+	var r UserRow
+	var created time.Time
+	err := p.pool.QueryRow(ctx,
+		`SELECT id, email, COALESCE(pass_hash,''), COALESCE(status,''), COALESCE(role,''), created_at, COALESCE(config,'') FROM users WHERE email=$1`,
+		email).Scan(&r.ID, &r.Email, &r.PassHash, &r.Status, &r.Role, &created, &r.Config)
+	if err != nil {
+		return UserRow{}, false
+	}
+	r.CreatedAt = created.Unix()
+	return r, true
 }
 func (p *PostgresStore) GetUserByID(ctx context.Context, id int64) (UserRow, bool) {
-	return UserRow{}, false
+	var r UserRow
+	var created time.Time
+	err := p.pool.QueryRow(ctx,
+		`SELECT id, email, COALESCE(pass_hash,''), COALESCE(status,''), COALESCE(role,''), created_at, COALESCE(config,'') FROM users WHERE id=$1`,
+		id).Scan(&r.ID, &r.Email, &r.PassHash, &r.Status, &r.Role, &created, &r.Config)
+	if err != nil {
+		return UserRow{}, false
+	}
+	r.CreatedAt = created.Unix()
+	return r, true
 }
 func (p *PostgresStore) ListUsers(ctx context.Context) ([]UserRow, error) {
-	return nil, errNotImplemented
+	rows, err := p.pool.Query(ctx,
+		`SELECT id, email, COALESCE(pass_hash,''), COALESCE(status,''), COALESCE(role,''), created_at, COALESCE(config,'') FROM users ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("list users: %w", err)
+	}
+	defer rows.Close()
+	var out []UserRow
+	for rows.Next() {
+		var r UserRow
+		var created time.Time
+		if err := rows.Scan(&r.ID, &r.Email, &r.PassHash, &r.Status, &r.Role, &created, &r.Config); err != nil {
+			return nil, fmt.Errorf("list users scan: %w", err)
+		}
+		r.CreatedAt = created.Unix()
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 func (p *PostgresStore) UpdateUserStatus(ctx context.Context, id int64, status string) error {
-	return errNotImplemented
+	tag, err := p.pool.Exec(ctx, `UPDATE users SET status=$2 WHERE id=$1`, id, status)
+	if err != nil {
+		return fmt.Errorf("update user status: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("user %d not found", id)
+	}
+	return nil
 }
 func (p *PostgresStore) UpdateUserRole(ctx context.Context, id int64, role string) error {
-	return errNotImplemented
+	tag, err := p.pool.Exec(ctx, `UPDATE users SET role=$2 WHERE id=$1`, id, role)
+	if err != nil {
+		return fmt.Errorf("update user role: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("user %d not found", id)
+	}
+	return nil
 }
 func (p *PostgresStore) UpdateUserConfig(ctx context.Context, id int64, config string) error {
-	return errNotImplemented
+	tag, err := p.pool.Exec(ctx, `UPDATE users SET config=$2 WHERE id=$1`, id, config)
+	if err != nil {
+		return fmt.Errorf("update user config: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("user %d not found", id)
+	}
+	return nil
 }
-func (p *PostgresStore) DeleteUser(ctx context.Context, id int64) error { return errNotImplemented }
+func (p *PostgresStore) DeleteUser(ctx context.Context, id int64) error {
+	tag, err := p.pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, id)
+	if err != nil {
+		return fmt.Errorf("delete user: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("user %d not found", id)
+	}
+	return nil
+}
 func (p *PostgresStore) CreateApiKey(ctx context.Context, userID int64, scopes string) (ApiKeyRow, error) {
-	return ApiKeyRow{}, errNotImplemented
+	if scopes == "" {
+		scopes = "mcp:read"
+	}
+	b := make([]byte, 32)
+	if _, err := cryptorand.Read(b); err != nil {
+		return ApiKeyRow{}, fmt.Errorf("gen api key: %w", err)
+	}
+	key := "tm_" + hex.EncodeToString(b)
+	var r ApiKeyRow
+	var created time.Time
+	err := p.pool.QueryRow(ctx,
+		`INSERT INTO api_keys(user_id, key, scopes) VALUES($1,$2,$3) RETURNING id, created_at`,
+		userID, key, scopes).Scan(&r.ID, &created)
+	if err != nil {
+		return ApiKeyRow{}, fmt.Errorf("create api key: %w", err)
+	}
+	r.UserID = userID
+	r.Key = key
+	r.Scopes = scopes
+	r.CreatedAt = created.Unix()
+	return r, nil
 }
 func (p *PostgresStore) GetApiKey(ctx context.Context, key string) (ApiKeyRow, bool) {
-	return ApiKeyRow{}, false
+	var r ApiKeyRow
+	var created time.Time
+	var lastUsed sql.NullTime
+	err := p.pool.QueryRow(ctx,
+		`SELECT id, user_id, key, COALESCE(scopes,''), created_at, last_used FROM api_keys WHERE key=$1`,
+		key).Scan(&r.ID, &r.UserID, &r.Key, &r.Scopes, &created, &lastUsed)
+	if err != nil {
+		return ApiKeyRow{}, false
+	}
+	r.CreatedAt = created.Unix()
+	if lastUsed.Valid {
+		r.LastUsed = lastUsed.Time.Unix()
+	}
+	return r, true
 }
 func (p *PostgresStore) ListApiKeys(ctx context.Context, userID int64) ([]ApiKeyRow, error) {
-	return nil, errNotImplemented
+	rows, err := p.pool.Query(ctx,
+		`SELECT id, user_id, key, COALESCE(scopes,''), created_at, last_used FROM api_keys WHERE user_id=$1 ORDER BY id`,
+		userID)
+	if err != nil {
+		return nil, fmt.Errorf("list api keys: %w", err)
+	}
+	defer rows.Close()
+	var out []ApiKeyRow
+	for rows.Next() {
+		var r ApiKeyRow
+		var created time.Time
+		var lastUsed sql.NullTime
+		if err := rows.Scan(&r.ID, &r.UserID, &r.Key, &r.Scopes, &created, &lastUsed); err != nil {
+			return nil, fmt.Errorf("list api keys scan: %w", err)
+		}
+		r.CreatedAt = created.Unix()
+		if lastUsed.Valid {
+			r.LastUsed = lastUsed.Time.Unix()
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 func (p *PostgresStore) DeleteApiKey(ctx context.Context, id int64, userID int64) error {
-	return errNotImplemented
+	tag, err := p.pool.Exec(ctx, `DELETE FROM api_keys WHERE id=$1 AND user_id=$2`, id, userID)
+	if err != nil {
+		return fmt.Errorf("delete api key: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("api key %d not found", id)
+	}
+	return nil
 }
-func (p *PostgresStore) TouchApiKey(ctx context.Context, key string) error { return nil }
+func (p *PostgresStore) TouchApiKey(ctx context.Context, key string) error {
+	_, err := p.pool.Exec(ctx, `UPDATE api_keys SET last_used=now() WHERE key=$1`, key)
+	if err != nil {
+		return fmt.Errorf("touch api key: %w", err)
+	}
+	return nil
+}
 
 func (p *PostgresStore) TryConsumeQuota(ctx context.Context, provider string, limit int) (bool, int, error) {
 	if p.pool == nil {
@@ -1572,38 +1716,42 @@ func (t *pgTxStore) GetImport(ctx context.Context, providerID string) (ImportRow
 	return r, true
 }
 func (t *pgTxStore) CreateUser(ctx context.Context, email, passHash, role string) (int64, error) {
-	return 0, errNotImplemented
+	return t.parent.CreateUser(ctx, email, passHash, role)
 }
 func (t *pgTxStore) GetUserByEmail(ctx context.Context, email string) (UserRow, bool) {
-	return UserRow{}, false
+	return t.parent.GetUserByEmail(ctx, email)
 }
 func (t *pgTxStore) GetUserByID(ctx context.Context, id int64) (UserRow, bool) {
-	return UserRow{}, false
+	return t.parent.GetUserByID(ctx, id)
 }
-func (t *pgTxStore) ListUsers(ctx context.Context) ([]UserRow, error) { return nil, errNotImplemented }
+func (t *pgTxStore) ListUsers(ctx context.Context) ([]UserRow, error) { return t.parent.ListUsers(ctx) }
 func (t *pgTxStore) UpdateUserStatus(ctx context.Context, id int64, status string) error {
-	return errNotImplemented
+	return t.parent.UpdateUserStatus(ctx, id, status)
 }
 func (t *pgTxStore) UpdateUserRole(ctx context.Context, id int64, role string) error {
-	return errNotImplemented
+	return t.parent.UpdateUserRole(ctx, id, role)
 }
 func (t *pgTxStore) UpdateUserConfig(ctx context.Context, id int64, config string) error {
-	return errNotImplemented
+	return t.parent.UpdateUserConfig(ctx, id, config)
 }
-func (t *pgTxStore) DeleteUser(ctx context.Context, id int64) error { return errNotImplemented }
+func (t *pgTxStore) DeleteUser(ctx context.Context, id int64) error {
+	return t.parent.DeleteUser(ctx, id)
+}
 func (t *pgTxStore) CreateApiKey(ctx context.Context, userID int64, scopes string) (ApiKeyRow, error) {
-	return ApiKeyRow{}, errNotImplemented
+	return t.parent.CreateApiKey(ctx, userID, scopes)
 }
 func (t *pgTxStore) GetApiKey(ctx context.Context, key string) (ApiKeyRow, bool) {
-	return ApiKeyRow{}, false
+	return t.parent.GetApiKey(ctx, key)
 }
 func (t *pgTxStore) ListApiKeys(ctx context.Context, userID int64) ([]ApiKeyRow, error) {
-	return nil, errNotImplemented
+	return t.parent.ListApiKeys(ctx, userID)
 }
 func (t *pgTxStore) DeleteApiKey(ctx context.Context, id int64, userID int64) error {
-	return errNotImplemented
+	return t.parent.DeleteApiKey(ctx, id, userID)
 }
-func (t *pgTxStore) TouchApiKey(ctx context.Context, key string) error { return nil }
+func (t *pgTxStore) TouchApiKey(ctx context.Context, key string) error {
+	return t.parent.TouchApiKey(ctx, key)
+}
 
 func (t *pgTxStore) TryConsumeQuota(ctx context.Context, provider string, limit int) (bool, int, error) {
 	var used int
