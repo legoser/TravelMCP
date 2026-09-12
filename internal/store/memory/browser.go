@@ -218,7 +218,9 @@ func (m *MemoryStore) ListTerminalReviewEntries(ctx context.Context, terminalID 
 	defer m.mu.RUnlock()
 	out := []store.ReviewQueueRow{}
 	for _, rq := range m.reviewQueue {
-		if rq.EntityType == "terminal" && rq.EntityID == terminalID {
+		// sticky-семантика: в карточке терминала видны только открытые
+		// записи ревью (resolved/rejected — история, не действия).
+		if rq.EntityType == "terminal" && rq.EntityID == terminalID && (rq.State == "" || rq.State == "open") {
 			out = append(out, rq)
 		}
 	}

@@ -6,6 +6,7 @@ import (
 
 	"travelmcp/internal/model"
 	"travelmcp/internal/skeleton"
+	"travelmcp/internal/store"
 	memstore "travelmcp/internal/store/memory"
 )
 
@@ -150,6 +151,61 @@ func TestYandexNameAddsContext(t *testing.T) {
 	for _, c := range cases {
 		if got := yandexNameAddsContext(c.yandex, c.osm); got != c.want {
 			t.Errorf("yandexNameAddsContext(%q, %q) = %v, want %v", c.yandex, c.osm, got, c.want)
+		}
+	}
+}
+
+// issue #8/#14: терминал, одобренный оператором, не должен возвращаться в
+// модерацию при следующем прогоне skeleton-sync. Сценарий: промоут →
+// оператор одобрил (is_locked, review resolved) → повторный промоут той
+// же записи (тот же osm-код) → конфликт sticky, open review пуст.
+func TestPromoteSkeletonChunkStickyAfterApprove(t *testing.T) {
+	ctx := context.Background()
+	ms := memstore.NewMemoryStore()
+	runID, err := BeginSkeletonRun(ctx, ms, "plan-sticky", "sha-sticky", "skeleton-sticky")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := skelRec("Юрга, автовокзал", "kuzbass", "bus", "777", 55.72, 84.31, nil)
+	chunk := SkeletonChunk{Key: "sticky-chunk", Canon: []skeleton.JoinedRecord{
+		{Record: rec, Score: 0.9, Enrichment: skeleton.Enriched},
+	}}
+	if _, err := PromoteSkeletonChunk(ctx, ms, runID, chunk); err != nil {
+		t.Fatal(err)
+	}
+	list, total, err := ms.ListTerminalsFiltered(ctx, 10, 0, "name", "asc", "Юрга")
+	if err != nil || total != 1 {
+		t.Fatalf("после промоута терминал обязан существовать: total=%d err=%v", total, err)
+	}
+	tid, _ := list[0]["id"].(int64)
+
+	// оператор одобряет: approve-путь handleReviewResolve
+	tr := store.TerminalRow{ID: tid, Lat: 55.72, Lon: 84.31, IsLocked: true}
+	if _, err := ms.UpsertTerminal(ctx, tr, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := ms.ResolveReviewQueue(ctx, "terminal", tid, "conflicts_with_confirmed", "resolved"); err != nil {
+		t.Fatal(err)
+	}
+
+	// следующий skeleton-sync: та же запись (тот же внешний код)
+	runID2, err := BeginSkeletonRun(ctx, ms, "plan-sticky2", "sha-sticky2", "skeleton-sticky2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PromoteSkeletonChunk(ctx, ms, runID2, chunk); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ms.UpsertTerminal(ctx, tr, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := ms.ListReviewQueue(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if r.EntityType == "terminal" && r.EntityID == tid {
+			t.Fatalf("одобренный терминал не должен возвращаться в open review: %+v", r)
 		}
 	}
 }

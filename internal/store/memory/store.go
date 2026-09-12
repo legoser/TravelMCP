@@ -1226,26 +1226,57 @@ func (m *MemoryStore) SaveReviewQueue(ctx context.Context, e model.ReviewQueueEn
 	for i, r := range m.reviewQueue {
 		if r.EntityType == e.EntityType && r.EntityID == e.EntityID && r.Reason == e.Reason {
 			m.reviewQueue[i].Score = e.Score
+			newFP := r.Fingerprint
 			if e.Fingerprint != "" {
-				m.reviewQueue[i].Fingerprint = e.Fingerprint
+				newFP = e.Fingerprint
 			}
+			m.reviewQueue[i].Fingerprint = newFP
 			// пере-детекция той же причины — живое наблюдение, а не возраст
 			// (зеркало postgres-апсерта: observed_at=now(), count=count+1)
 			m.reviewQueue[i].Count++
+			// sticky (план §3.10, issue #8/#14): закрытая resolved/rejected
+			// запись не пере-открывается тем же (или пустым) fingerprint
+			if m.reviewQueue[i].State != "open" && (e.Fingerprint == "" || e.Fingerprint == r.Fingerprint) {
+				return nil
+			}
+			m.reviewQueue[i].State = "open"
 			return nil
 		}
 	}
 	m.reviewQueue = append(m.reviewQueue, store.ReviewQueueRow{EntityType: e.EntityType, EntityID: e.EntityID, Reason: e.Reason, Score: e.Score, CreatedAt: time.Now().Unix(), Fingerprint: e.Fingerprint, State: "open", Count: 1})
 	return nil
 }
+
+// ResolveReviewQueue — sticky-закрытие записи ревью вместо физического
+// DELETE (issue #8/#14): повторная детекция того же конфликта не
+// пере-открывает её.
+func (m *MemoryStore) ResolveReviewQueue(ctx context.Context, entityType string, entityID int64, reason, state string) error {
+	if state != "resolved" && state != "rejected" {
+		return fmt.Errorf("resolve review queue: invalid state %q (resolved|rejected)", state)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i, r := range m.reviewQueue {
+		if r.EntityType == entityType && r.EntityID == entityID && (reason == "" || r.Reason == reason) && r.State == "open" {
+			m.reviewQueue[i].State = state
+		}
+	}
+	return nil
+}
+
 func (m *MemoryStore) ListReviewQueue(ctx context.Context, limit int) ([]store.ReviewQueueRow, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	if limit <= 0 || limit > len(m.reviewQueue) {
-		limit = len(m.reviewQueue)
+	out := make([]store.ReviewQueueRow, 0, len(m.reviewQueue))
+	for _, r := range m.reviewQueue {
+		if r.State != "" && r.State != "open" {
+			continue
+		}
+		out = append(out, r)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
 	}
-	out := make([]store.ReviewQueueRow, limit)
-	copy(out, m.reviewQueue[:limit])
 	return out, nil
 }
 func (m *MemoryStore) GetPlaceCity(ctx context.Context, placeID int64) (int64, string, error) {
