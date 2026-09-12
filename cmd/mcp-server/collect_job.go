@@ -151,7 +151,7 @@ func (cr *CollectRunner) runTrips(ctx context.Context, p collectPayload, logger 
 				return err
 			}
 			op := overpass.New(*cfg, httpx.New(logger, "overpass"))
-			cached := geocoder.NewCachedStationsProvider(op, geoCacheFor(cr.Store), geoQuotaOf(cr.Store), 0)
+			cached := geocoder.NewCachedStationsProvider(op, geoCacheFor(cr.Store), geoQuotaOf(cr.Store), store.DefaultQuotaLimit)
 			yan, err = cached.StationsInBBox(ctx, bbox.MinLat, bbox.MinLon, bbox.MaxLat, bbox.MaxLon)
 			if err != nil {
 				return fmt.Errorf("collect trips: overpass: %w", err)
@@ -320,7 +320,10 @@ func (cr *CollectRunner) runRoutes(ctx context.Context, p collectPayload, logger
 		tag = "collect-routes-" + p.Region
 	}
 	op := overpass.New(*cfg, httpx.New(logger, "overpass"))
-	stations := geocoder.NewCachedStationsProvider(op, geoCacheFor(cr.Store), geoQuotaOf(cr.Store), 0)
+	stations := geocoder.NewCachedStationsProvider(op, geoCacheFor(cr.Store), geoQuotaOf(cr.Store), store.DefaultQuotaLimit)
+	// Маршрутные relation'ы — тот же путь cache+quota (§3.7): сырой адаптер
+	// в sync не передаётся, bbox-запросы идут через обёртку.
+	routesSrc := geocoder.NewCachedRoutesProvider(op, geoCacheFor(cr.Store), geoQuotaOf(cr.Store), store.DefaultQuotaLimit)
 
 	cc := syncpkg.CollectOverpassConfig{
 		Region: p.Region,
@@ -340,7 +343,7 @@ func (cr *CollectRunner) runRoutes(ctx context.Context, p collectPayload, logger
 	if !ok {
 		return fmt.Errorf("collect routes: стор без trips-методов")
 	}
-	rsum, tsum, err := syncpkg.RunCollectOverpassTrips(ctx, cr.Store, rst, op, cfg.Sync, *cfg, cc, p.Force, logger)
+	rsum, tsum, err := syncpkg.RunCollectOverpassTrips(ctx, cr.Store, rst, routesSrc, cfg.Sync, *cfg, cc, p.Force, logger)
 	if err != nil {
 		return err
 	}

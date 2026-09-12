@@ -191,18 +191,6 @@ func (a *Adapter) FetchRouteRelations(ctx context.Context, q RouteQuery) ([]mode
 	return ParseRouteResponse(body)
 }
 
-// FetchAllRouteRelations — регио-сбор (issue #12): все маршрутные
-// relation'ы bbox (без ref-фильтра). Терм — таймаут поднят: региона больше,
-// чем у одного номера. Контракт OverpassRoutesSource для sync.
-func (a *Adapter) FetchAllRouteRelations(ctx context.Context, minLat, minLon, maxLat, maxLon float64) ([]model.AdaptedRecord, error) {
-	ql := BuildRouteQuery("", &BBox{MinLat: minLat, MinLon: minLon, MaxLat: maxLat, MaxLon: maxLon}, 0)
-	body, err := a.execQL(ctx, ql)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRouteResponse(body)
-}
-
 // FetchRoute — O-5, завершение: маршрут по relation_id — упорядоченные
 // остановки с координатами и именами + геометрия из way-членов. Путь
 // cache+quota — geocoder.CachedRoutesProvider (RouteQueryParams.RelationID).

@@ -2,6 +2,8 @@ package geocoder
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -123,8 +125,37 @@ func TestCachedStationsProviderQuotaExceeded(t *testing.T) {
 	if err == nil {
 		t.Fatal("want error when quota exceeded")
 	}
+	if !strings.Contains(err.Error(), "quota exhausted") {
+		t.Errorf("want explicit quota error, got %v", err)
+	}
 	if fake.Calls() != 0 {
 		t.Errorf("want 0 calls when quota exceeded, got %d", fake.Calls())
+	}
+}
+
+// TestCachedStationsProviderQuotaErrorExplicit — отказ квоты (ошибка сторa,
+// как в job 53: INSERT с limit=0 ломал check-constraint) обязан быть
+// явной ошибкой квоты, а не замаскированным context.DeadlineExceeded.
+func TestCachedStationsProviderQuotaErrorExplicit(t *testing.T) {
+	fake := &fakeBBoxStations{fakeStationsProvider: fakeStationsProvider{resp: nil}}
+	quotaErr := errors.New("consume quota osm: check constraint")
+	quota := func(ctx context.Context, provider string, limit int) (bool, int, error) {
+		return false, 0, quotaErr
+	}
+	cached := NewCachedStationsProvider(fake, NewMapGeoCacheStore(time.Hour), quota, 0)
+
+	_, err := cached.StationsInBBox(context.Background(), 49, 83, 52, 89)
+	if err == nil {
+		t.Fatal("quota error must surface")
+	}
+	if !errors.Is(err, quotaErr) {
+		t.Errorf("want wrapped quota error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Errorf("quota error must not be masked as deadline: %v", err)
+	}
+	if fake.bboxCalls != 0 {
+		t.Errorf("network must not be called, got %d", fake.bboxCalls)
 	}
 }
 

@@ -56,8 +56,10 @@ func (w *Worker) RunOnce(ctx context.Context) error {
 			return err
 		}
 		if job.Attempts >= maxAttempts {
+			w.logger.Error("job dead", "id", job.ID, "type", job.Type, "attempts", job.Attempts, "err", err)
 			_ = w.store.MarkJobDead(ctx, job.ID, err.Error())
 		} else {
+			w.logger.Warn("job failed, retry", "id", job.ID, "type", job.Type, "attempts", job.Attempts, "err", err)
 			_ = w.store.MarkJobRetry(ctx, job.ID, err.Error())
 		}
 		return err

@@ -8,10 +8,12 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"travelmcp/internal/config"
 	"travelmcp/internal/geocoder"
 	"travelmcp/internal/model"
+	"travelmcp/internal/store"
 )
 
 func TestBuildRouteQuery(t *testing.T) {
@@ -332,6 +334,61 @@ func TestCachedRoutesProviderRelationID(t *testing.T) {
 	}
 	if gotQuery != "" {
 		t.Errorf("кэш-хит не должен ходить в сеть, got query: %s", gotQuery)
+	}
+}
+
+// TestCachedRoutesProviderBBoxQuota — регио-сбор маршрутов (issue #12):
+// bbox-запрос идёт через cache+quota (FetchAllRouteRelations), кэш-хит
+// не жжёт квоту; raw-адаптер больше не вызывается напрямую из sync.
+func TestCachedRoutesProviderBBoxQuota(t *testing.T) {
+	data, err := os.ReadFile("../../../testdata/overpass/route.json")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	var gotQuery string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		gotQuery = r.Form.Get("data")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(data)
+	}))
+	defer ts.Close()
+
+	cfg := config.Config{}
+	cfg.Overpass.URL = ts.URL
+	adapter := New(cfg, nil)
+
+	quotaCalls := 0
+	quota := func(ctx context.Context, provider string, limit int) (bool, int, error) {
+		quotaCalls++
+		return true, quotaCalls, nil
+	}
+	cached := geocoder.NewCachedRoutesProvider(adapter, geocoder.NewMapGeoCacheStore(time.Hour), quota, store.DefaultQuotaLimit)
+
+	recs, err := cached.FetchAllRouteRelations(context.Background(), 49.0, 83.5, 52.7, 89.5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("want 1 record, got %d", len(recs))
+	}
+	if quotaCalls != 1 {
+		t.Fatalf("bbox-запрос обязан взять квоту, quota_calls=%d", quotaCalls)
+	}
+	if !strings.Contains(gotQuery, "relation[\"type\"=\"route\"]") || strings.Contains(gotQuery, "\"ref\"=") {
+		t.Errorf("запрос обязан быть без ref-фильтра (регио-сбор), got:\n%s", gotQuery)
+	}
+	if !strings.Contains(gotQuery, "(49.000000,83.500000,52.700000,89.500000)") {
+		t.Errorf("bbox обязан попасть в запрос, got:\n%s", gotQuery)
+	}
+
+	// повтор — кэш-хит без квоты и сети
+	gotQuery = ""
+	if _, err := cached.FetchAllRouteRelations(context.Background(), 49.0, 83.5, 52.7, 89.5); err != nil {
+		t.Fatal(err)
+	}
+	if quotaCalls != 1 || gotQuery != "" {
+		t.Fatalf("кэш-хит без квоты/сети: quota_calls=%d net_query=%q", quotaCalls, gotQuery)
 	}
 }
 

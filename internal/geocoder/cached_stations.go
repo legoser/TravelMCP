@@ -84,9 +84,12 @@ func (c *CachedStationsProvider) fetch(ctx context.Context, key string, call fun
 	}
 
 	if c.quota != nil {
-		ok, _, err := c.quota(ctx, "osm", c.quotaLimit)
-		if err != nil || !ok {
-			return nil, context.DeadlineExceeded
+		ok, used, err := c.quota(ctx, "osm", c.quotaLimit)
+		if err != nil {
+			return nil, fmt.Errorf("overpass stations: quota osm: %w", err)
+		}
+		if !ok {
+			return nil, fmt.Errorf("overpass stations: 429 quota exhausted for osm (limit %d, used %d)", c.quotaLimit, used)
 		}
 	}
 

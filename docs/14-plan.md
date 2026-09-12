@@ -812,12 +812,24 @@ O-блоки (коннектор), затем S-блоки (settlement), зат�
   привязки geocoder к типам адаптера. (3) Времена — по-прежнему монополия
   Яндекса (§1.2): OSM даёт топологию+геометрию+identity, staging
   awaiting_times — место встречи двух источников. (4) Терминология квот
-  не менялась: bbox-запрос жжёт ту же квоту `osm`. Тесты:
+  не менялась: bbox-запрос жжёт ту же квоту `osm`. (5) Инцидент job 53
+  (2026-09-12, «context deadline exceeded» без следов сети): вызовы шли с
+  `quotaLimit=0` — INSERT `quota_limit=0` ломает `api_quotas_quota_limit_check`
+  (квота >0), а любая ошибка/отказ квоты маскировалась голым
+  `context.DeadlineExceeded`. Фикс: провайдеры collect-путей строятся с
+  `store.DefaultQuotaLimit`; ошибки квоты явные (`429 quota exhausted … /
+  quota: …`, обёрнутая причина), воркер логирует `job failed/dead`.
+  Регио-маршруты идут через `CachedRoutesProvider.FetchAllRouteRelations`
+  (cache+quota), сырой адаптер из sync убран. Тесты:
   `TestCachedStationsProviderBBox*` (кэш-хит без квоты, вежливый отказ,
   no-inner), `TestRunCollectOverpassSkeletonPromotes`,
   `TestFlattenOverpassRoute/TooFewStops`, `TestAttachUntimedTripAwaitsTimes`
   (безвременный трип: matched-стопы + awaiting_times, не dead),
-  `TestRegionBBox/EnvOverride`, integration `TestCollectEndpoints` (+routes).
+  `TestRegionBBox/EnvOverride`, integration `TestCollectEndpoints` (+routes),
+  `TestCachedStationsProviderQuotaErrorExplicit` (ошибка квоты не
+  маскируется под deadline; фиксы инцидента job 53),
+  `TestCachedRoutesProviderBBoxQuota` (регио-маршруты через cache+quota,
+  без ref-фильтра, кэш-хит не жжёт квоту).
   UI: кнопка «Overpass: терминалы + маршруты (без расписания)», подсказка
   при overpass+offline, `stations=overpass` в collect/trips берёт bbox
   региона.
