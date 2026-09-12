@@ -91,6 +91,15 @@ func main() {
 				geocodeLimit = cfg.Geocoder.MaxCalls
 			}
 			_ = st.SetQuotaLimit(context.Background(), "yandex_geocode", geocodeLimit)
+			if cu, ok := st.(interface {
+				CleanupQuotaHistory(ctx context.Context, keepDays int) (int, error)
+			}); ok {
+				if removed, err := cu.CleanupQuotaHistory(context.Background(), 7); err != nil {
+					logger.Warn("quota history retention failed", "err", err)
+				} else if removed > 0 {
+					logger.Info("quota history retention", "removed", removed, "keep_days", 7)
+				}
+			}
 			if qs, err := st.ListQuotas(context.Background()); err == nil {
 				logger.Info("quotas loaded", "count", len(qs))
 			}
@@ -280,6 +289,15 @@ func newJobsWorker(st store.Store, cfg *config.Config, l *slog.Logger) *jobs.Wor
 			}
 		} else {
 			l.Info("cleanup: стор без hygiene-sweep (memory в тестах) — пропущено")
+		}
+		if cu, ok := st.(interface {
+			CleanupQuotaHistory(ctx context.Context, keepDays int) (int, error)
+		}); ok {
+			if removed, err := cu.CleanupQuotaHistory(ctx, 7); err != nil {
+				l.Warn("cleanup: quota history retention failed", "err", err)
+			} else if removed > 0 {
+				l.Info("cleanup: quota history retention", "removed", removed, "keep_days", 7)
+			}
 		}
 		return nil
 	})

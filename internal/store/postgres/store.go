@@ -1015,7 +1015,7 @@ func (p *PostgresStore) ListQuotas(ctx context.Context) ([]store.QuotaRow, error
 	if p.pool == nil {
 		return nil, nil
 	}
-	rows, err := p.pool.Query(ctx, `SELECT provider, day::text, used, quota_limit, reset_at::text FROM api_quotas ORDER BY day DESC, provider`)
+	rows, err := p.pool.Query(ctx, `SELECT provider, day::text, used, quota_limit, reset_at::text FROM api_quotas WHERE day >= CURRENT_DATE - 1 ORDER BY day DESC, provider`)
 	if err != nil {
 		return nil, err
 	}
@@ -1031,6 +1031,24 @@ func (p *PostgresStore) ListQuotas(ctx context.Context) ([]store.QuotaRow, error
 		out = append(out, r)
 	}
 	return out, nil
+}
+
+// CleanupQuotaHistory — retention строк api_quotas (issues #15/#21):
+// удаляет строки старше keepDays дней. Суточный сброс used происходит
+// сам: TryConsumeQuota лениво создаёт строку на CURRENT_DATE с used=1,
+// прошлые дни новому периоду не мешают. Возвращает число удалённых.
+func (p *PostgresStore) CleanupQuotaHistory(ctx context.Context, keepDays int) (int, error) {
+	if p.pool == nil {
+		return 0, nil
+	}
+	if keepDays < 0 {
+		keepDays = 0
+	}
+	ct, err := p.pool.Exec(ctx, `DELETE FROM api_quotas WHERE day < CURRENT_DATE - $1::int`, keepDays)
+	if err != nil {
+		return 0, fmt.Errorf("cleanup quota history: %w", err)
+	}
+	return int(ct.RowsAffected()), nil
 }
 
 func (p *PostgresStore) WriteAuditLog(ctx context.Context, userID *int64, action, entityType string, entityID *int64, details string) error {
@@ -1626,7 +1644,7 @@ func (t *pgTxStore) RecordApiCall(ctx context.Context, provider, endpoint string
 }
 
 func (t *pgTxStore) ListQuotas(ctx context.Context) ([]store.QuotaRow, error) {
-	rows, err := t.tx.Query(ctx, `SELECT provider, day::text, used, quota_limit, reset_at::text FROM api_quotas ORDER BY day DESC, provider`)
+	rows, err := t.tx.Query(ctx, `SELECT provider, day::text, used, quota_limit, reset_at::text FROM api_quotas WHERE day >= CURRENT_DATE - 1 ORDER BY day DESC, provider`)
 	if err != nil {
 		return nil, err
 	}
@@ -1642,6 +1660,10 @@ func (t *pgTxStore) ListQuotas(ctx context.Context) ([]store.QuotaRow, error) {
 		out = append(out, r)
 	}
 	return out, nil
+}
+
+func (t *pgTxStore) CleanupQuotaHistory(ctx context.Context, keepDays int) (int, error) {
+	return t.parent.CleanupQuotaHistory(ctx, keepDays)
 }
 
 func (t *pgTxStore) WriteAuditLog(ctx context.Context, userID *int64, action, entityType string, entityID *int64, details string) error {

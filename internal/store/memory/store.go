@@ -351,12 +351,38 @@ func (m *MemoryStore) RecordApiCall(ctx context.Context, provider, endpoint stri
 func (m *MemoryStore) ListQuotas(ctx context.Context) ([]store.QuotaRow, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	today := time.Now().Format("2006-01-02")
+	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
 	out := make([]store.QuotaRow, 0, len(m.quotas))
+	// issues #15/#21: только текущий день и вчерашний остаток — глубокая
+	// история в UI выглядит как дубликаты (см. CleanupQuotaHistory).
 	for _, q := range m.quotas {
+		if q.Day != today && q.Day != yesterday {
+			continue
+		}
 		out = append(out, q)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Provider < out[j].Provider })
 	return out, nil
+}
+
+// CleanupQuotaHistory — retention строк квот (issues #15/#21), зеркало
+// postgres: удаляет записи старше keepDays дней.
+func (m *MemoryStore) CleanupQuotaHistory(ctx context.Context, keepDays int) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if keepDays < 0 {
+		keepDays = 0
+	}
+	cutoff := time.Now().AddDate(0, 0, -keepDays).Format("2006-01-02")
+	removed := 0
+	for key, q := range m.quotas {
+		if q.Day < cutoff {
+			delete(m.quotas, key)
+			removed++
+		}
+	}
+	return removed, nil
 }
 
 func (m *MemoryStore) WriteAuditLog(ctx context.Context, userID *int64, action, entityType string, entityID *int64, details string) error {
