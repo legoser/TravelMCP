@@ -14,17 +14,23 @@ import (
 // `osm`, общий пейсер ≥1.2с. Нового пути вызова нет (§3.7).
 
 // RouteQueryParams — параметры route-запроса (детерминированный ключ кэша).
-// BBox сериализуется в ключ; nil = глобальный запрос.
+// BBox сериализуется в ключ; nil = глобальный запрос. RelationID > 0
+// приоритетнее Ref: точечный запрос по уникальному id (issue #11) —
+// ключ overpass:route:relation/<id>, не зависящий от ref/bbox.
 type RouteQueryParams struct {
-	Ref     string
-	MinLat  float64
-	MinLon  float64
-	MaxLat  float64
-	MaxLon  float64
-	HasBBox bool
+	Ref        string
+	RelationID int64
+	MinLat     float64
+	MinLon     float64
+	MaxLat     float64
+	MaxLon     float64
+	HasBBox    bool
 }
 
 func (q RouteQueryParams) cacheKey() string {
+	if q.RelationID > 0 {
+		return fmt.Sprintf("overpass:route:relation/%d", q.RelationID)
+	}
 	if !q.HasBBox {
 		return fmt.Sprintf("overpass:route:%s", q.Ref)
 	}
@@ -55,6 +61,16 @@ func NewCachedRoutesProvider(inner OverpassRoutesProvider, cache GeoCacheStore, 
 	}
 }
 
+// FetchAllRouteRelations — регио-сбор маршрутных relation'ы bbox (issue #12)
+// тем же путём cache+quota, что и точечный relation_id: ключ
+// overpass:route:<bbox>, квота osm, общий пейсер.
+func (c *CachedRoutesProvider) FetchAllRouteRelations(ctx context.Context, minLat, minLon, maxLat, maxLon float64) ([]model.AdaptedRecord, error) {
+	return c.FetchRoutes(ctx, RouteQueryParams{
+		MinLat: minLat, MinLon: minLon, MaxLat: maxLat, MaxLon: maxLon,
+		HasBBox: true,
+	})
+}
+
 func (c *CachedRoutesProvider) FetchRoutes(ctx context.Context, q RouteQueryParams) ([]model.AdaptedRecord, error) {
 	key := q.cacheKey()
 
@@ -65,9 +81,12 @@ func (c *CachedRoutesProvider) FetchRoutes(ctx context.Context, q RouteQueryPara
 	}
 
 	if c.quota != nil {
-		ok, _, err := c.quota(ctx, "osm", c.quotaLimit)
-		if err != nil || !ok {
-			return nil, context.DeadlineExceeded
+		ok, used, err := c.quota(ctx, "osm", c.quotaLimit)
+		if err != nil {
+			return nil, fmt.Errorf("overpass routes: quota osm: %w", err)
+		}
+		if !ok {
+			return nil, fmt.Errorf("overpass routes: 429 quota exhausted for osm (limit %d, used %d)", c.quotaLimit, used)
 		}
 	}
 

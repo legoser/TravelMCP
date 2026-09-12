@@ -2,6 +2,8 @@ package geocoder
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -123,8 +125,37 @@ func TestCachedStationsProviderQuotaExceeded(t *testing.T) {
 	if err == nil {
 		t.Fatal("want error when quota exceeded")
 	}
+	if !strings.Contains(err.Error(), "quota exhausted") {
+		t.Errorf("want explicit quota error, got %v", err)
+	}
 	if fake.Calls() != 0 {
 		t.Errorf("want 0 calls when quota exceeded, got %d", fake.Calls())
+	}
+}
+
+// TestCachedStationsProviderQuotaErrorExplicit — отказ квоты (ошибка сторa,
+// как в job 53: INSERT с limit=0 ломал check-constraint) обязан быть
+// явной ошибкой квоты, а не замаскированным context.DeadlineExceeded.
+func TestCachedStationsProviderQuotaErrorExplicit(t *testing.T) {
+	fake := &fakeBBoxStations{fakeStationsProvider: fakeStationsProvider{resp: nil}}
+	quotaErr := errors.New("consume quota osm: check constraint")
+	quota := func(ctx context.Context, provider string, limit int) (bool, int, error) {
+		return false, 0, quotaErr
+	}
+	cached := NewCachedStationsProvider(fake, NewMapGeoCacheStore(time.Hour), quota, 0)
+
+	_, err := cached.StationsInBBox(context.Background(), 49, 83, 52, 89)
+	if err == nil {
+		t.Fatal("quota error must surface")
+	}
+	if !errors.Is(err, quotaErr) {
+		t.Errorf("want wrapped quota error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Errorf("quota error must not be masked as deadline: %v", err)
+	}
+	if fake.bboxCalls != 0 {
+		t.Errorf("network must not be called, got %d", fake.bboxCalls)
 	}
 }
 
@@ -176,5 +207,76 @@ func TestCachedStationsProviderStoresOnSuccess(t *testing.T) {
 	}
 	if got.Origin != "live" {
 		t.Errorf("origin = %q, want live", got.Origin)
+	}
+}
+
+// fakeBBoxStations — регио-источник для bbox-пути (issue #12).
+type fakeBBoxStations struct {
+	fakeStationsProvider
+	bboxCalls int
+}
+
+func (f *fakeBBoxStations) StationsInBBox(ctx context.Context, minLat, minLon, maxLat, maxLon float64) ([]model.AdaptedRecord, error) {
+	f.bboxCalls++
+	return f.resp, nil
+}
+
+// TestCachedStationsProviderBBoxCacheQuota — bbox-запрос идёт тем же путём
+// cache+quota, что и Around (issue #12: раньше — голый сетевой вызов).
+func TestCachedStationsProviderBBoxCacheQuota(t *testing.T) {
+	fake := &fakeBBoxStations{fakeStationsProvider: fakeStationsProvider{resp: []model.AdaptedRecord{{NameRu: "Горно-Алтайск"}}}}
+	cache := NewMapGeoCacheStore(time.Hour)
+	calls := 0
+	quota := func(ctx context.Context, provider string, limit int) (bool, int, error) {
+		calls++
+		return true, calls, nil
+	}
+	cached := NewCachedStationsProvider(fake, cache, quota, 10)
+
+	ctx := context.Background()
+	r1, err := cached.StationsInBBox(ctx, 49.0, 83.5, 52.7, 89.5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r1) != 1 || fake.bboxCalls != 1 || calls != 1 {
+		t.Fatalf("first: records=%d bbox_calls=%d quota_calls=%d", len(r1), fake.bboxCalls, calls)
+	}
+	// повтор — кэш-хит без квоты и сети
+	if _, err := cached.StationsInBBox(ctx, 49.0, 83.5, 52.7, 89.5); err != nil {
+		t.Fatal(err)
+	}
+	if fake.bboxCalls != 1 || calls != 1 {
+		t.Fatalf("cache hit: bbox_calls=%d quota_calls=%d (обязаны остаться 1/1)", fake.bboxCalls, calls)
+	}
+	// другой bbox — новый ключ
+	if _, err := cached.StationsInBBox(ctx, 51.0, 78.5, 54.5, 86.5); err != nil {
+		t.Fatal(err)
+	}
+	if fake.bboxCalls != 2 || calls != 2 {
+		t.Fatalf("new bbox: bbox_calls=%d quota_calls=%d", fake.bboxCalls, calls)
+	}
+}
+
+// TestCachedStationsProviderBBoxQuotaExceeded — вежливый отказ без сети.
+func TestCachedStationsProviderBBoxQuotaExceeded(t *testing.T) {
+	fake := &fakeBBoxStations{fakeStationsProvider: fakeStationsProvider{resp: nil}}
+	quota := func(ctx context.Context, provider string, limit int) (bool, int, error) {
+		return false, 0, nil
+	}
+	cached := NewCachedStationsProvider(fake, NewMapGeoCacheStore(time.Hour), quota, 10)
+	if _, err := cached.StationsInBBox(context.Background(), 49, 83, 52, 89); err == nil {
+		t.Fatal("квота исчерпана — обязана быть ошибка")
+	}
+	if fake.bboxCalls != 0 {
+		t.Fatalf("сеть не должна зваться, calls=%d", fake.bboxCalls)
+	}
+}
+
+// TestCachedStationsProviderBBoxNoInner — провайдер без StationsInBBox:
+// явная ошибка, не тихий обход.
+func TestCachedStationsProviderBBoxNoInner(t *testing.T) {
+	cached := NewCachedStationsProvider(&fakeStationsProvider{}, NewMapGeoCacheStore(0), nil, 0)
+	if _, err := cached.StationsInBBox(context.Background(), 49, 83, 52, 89); err == nil {
+		t.Fatal("провайдер без bbox-контракта обязан давать ошибку")
 	}
 }

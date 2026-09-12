@@ -1,0 +1,222 @@
+{
+  "elements": [
+    {
+      "type": "relation",
+      "id": 100001,
+      "members": [
+        {
+          "type": "node",
+          "ref": 1,
+          "role": "stop"
+        },
+        {
+          "type": "node",
+          "ref": 2,
+          "role": "platform"
+        },
+        {
+          "type": "way",
+          "ref": 300,
+          "role": "platform"
+        },
+        {
+          "type": "node",
+          "ref": 3,
+          "role": "stop"
+        },
+        {
+          "type": "node",
+          "ref": 4,
+          "role": "stop"
+        },
+        {
+          "type": "node",
+          "ref": 5,
+          "role": "stop"
+        },
+        {
+          "type": "way",
+          "ref": 301,
+          "role": ""
+        },
+        {
+          "type": "way",
+          "ref": 302,
+          "role": "forward"
+        },
+        {
+          "type": "way",
+          "ref": 303,
+          "role": ""
+        }
+      ],
+      "tags": {
+        "name": "Автобус №101: Поросино - Ленина",
+        "ref": "101",
+        "route": "bus",
+        "operator": "МУП «Томскгорранс»",
+        "network": "Томск гор",
+        "from": "Поросино",
+        "to": "Площадь Ленина"
+      }
+    },
+    {
+      "type": "way",
+      "id": 300,
+      "nodes": [
+        10,
+        11,
+        12
+      ],
+      "tags": {
+        "name": "Платформа Северная"
+      }
+    },
+    {
+      "type": "way",
+      "id": 301,
+      "nodes": [
+        1,
+        20,
+        21
+      ]
+    },
+    {
+      "type": "way",
+      "id": 302,
+      "nodes": [
+        21,
+        22,
+        23,
+        24,
+        25
+      ]
+    },
+    {
+      "type": "way",
+      "id": 303,
+      "nodes": [
+        30,
+        31,
+        32
+      ]
+    },
+    {
+      "type": "node",
+      "id": 1,
+      "lat": 56.4572,
+      "lon": 84.9747,
+      "tags": {
+        "name": "Поросино"
+      }
+    },
+    {
+      "type": "node",
+      "id": 2,
+      "lat": 56.466,
+      "lon": 84.9915,
+      "tags": {
+        "name": "Северный рынок"
+      }
+    },
+    {
+      "type": "node",
+      "id": 3,
+      "lat": 56.4712,
+      "lon": 85.0043,
+      "tags": {
+        "name": "Площадь Ленина"
+      }
+    },
+    {
+      "type": "node",
+      "id": 4,
+      "lat": 56.4785,
+      "lon": 85.0152,
+      "tags": {
+        "name": "Стадион"
+      }
+    },
+    {
+      "type": "node",
+      "id": 5,
+      "lat": 56.4825,
+      "lon": 85.028,
+      "tags": {
+        "name": "Каштачная гора"
+      }
+    },
+    {
+      "type": "node",
+      "id": 10,
+      "lat": 56.4601,
+      "lon": 84.975
+    },
+    {
+      "type": "node",
+      "id": 11,
+      "lat": 56.4605,
+      "lon": 84.98
+    },
+    {
+      "type": "node",
+      "id": 12,
+      "lat": 56.4609,
+      "lon": 84.985
+    },
+    {
+      "type": "node",
+      "id": 20,
+      "lat": 56.458,
+      "lon": 84.976
+    },
+    {
+      "type": "node",
+      "id": 21,
+      "lat": 56.4584,
+      "lon": 84.977
+    },
+    {
+      "type": "node",
+      "id": 22,
+      "lat": 56.459,
+      "lon": 84.978
+    },
+    {
+      "type": "node",
+      "id": 23,
+      "lat": 56.4596,
+      "lon": 84.979
+    },
+    {
+      "type": "node",
+      "id": 24,
+      "lat": 56.46,
+      "lon": 84.9798
+    },
+    {
+      "type": "node",
+      "id": 25,
+      "lat": 56.4602,
+      "lon": 84.9805
+    },
+    {
+      "type": "node",
+      "id": 30,
+      "lat": 56.461,
+      "lon": 84.982
+    },
+    {
+      "type": "node",
+      "id": 31,
+      "lat": 56.4612,
+      "lon": 84.983
+    },
+    {
+      "type": "node",
+      "id": 32,
+      "lat": 56.4615,
+      "lon": 84.984
+    }
+  ]
+}

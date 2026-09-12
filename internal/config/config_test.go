@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -130,4 +131,45 @@ func TestDotenvFillsGapButEnvWins(t *testing.T) {
 	if vals["YANDEX_GEOCODE_KEY"] != "k2" {
 		t.Fatalf("parse: %#v", vals)
 	}
+}
+
+// TestRegionBBox — карта регион→bbox (issue #12): overpass-сбор берёт bbox
+// выбранного региона; fallback на глобальный bbox различим.
+func TestRegionBBox(t *testing.T) {
+	cfg := Defaults()
+	spec, ok := cfg.Sync.RegionBBox("Республика Алтай")
+	if !ok || spec == "" {
+		t.Fatalf("Республика Алтай обязана быть в карте: %q ok=%v", spec, ok)
+	}
+	if !bboxCovers(spec, 51.9604, 85.9183) {
+		t.Errorf("bbox Республики Алтай не покрывает Горно-Алтайск: %q", spec)
+	}
+	if bboxCovers(spec, 55.35, 86.06) {
+		t.Errorf("bbox Республики Алтай не должен покрывать Кемерово: %q", spec)
+	}
+
+	// fallback: неизвестный регион → глобальный bbox пилота, ok=false
+	fspec, fok := cfg.Sync.RegionBBox("Нет такой области")
+	if fok || fspec != cfg.Sync.Bbox {
+		t.Errorf("fallback: spec=%q ok=%v, want глобальный bbox и ok=false", fspec, fok)
+	}
+}
+
+// TestRegionBBoxEnvOverride — SYNC_REGION_BBOX точечно перекрывает карту.
+func TestRegionBBoxEnvOverride(t *testing.T) {
+	t.Setenv("SYNC_REGION_BBOX", "Республика Тыва=50.0,88.0,52.0,90.0; Тест-Регион=1,2,3,4")
+	cfg := Defaults()
+	applyEnv(cfg)
+	spec, ok := cfg.Sync.RegionBBox("Республика Тыва")
+	if !ok || spec != "50.0,88.0,52.0,90.0" {
+		t.Errorf("env override не применился: %q ok=%v", spec, ok)
+	}
+}
+
+func bboxCovers(spec string, lat, lon float64) bool {
+	var minLat, minLon, maxLat, maxLon float64
+	if _, err := fmt.Sscanf(spec, "%f,%f,%f,%f", &minLat, &minLon, &maxLat, &maxLon); err != nil {
+		return false
+	}
+	return lat >= minLat && lat <= maxLat && lon >= minLon && lon <= maxLon
 }

@@ -774,6 +774,25 @@ O-блоки (коннектор), затем S-блоки (settlement), зат�
   Тесты: `TestFetchRouteRelationsHTTP/Empty` (фикстура, порядок членов),
   `TestCachedRoutesProviderCacheQuota/QuotaExhausted` (hit без квоты, вежливый
   отказ). Живая пачка O-6 парсится офлайн-скретч-тестом (skip в CI без сырья).
+  **Завершено (2026-09-12, issue #11):** парсер route-ответа больше не
+  выбрасывает node/way элементы: `routeIndex` по всем элементам ответа,
+  `AdaptedTripStop` наполняется координатами (`node` — своя точка;
+  `way`/`relation`-platform — центроид) и именем из тегов; порядок членов
+  relation сохраняется (семантика маршрута). `AdaptedTripData.Geometry`
+  (`[[lat,lon],...]`) — полилиния из way-членов с ролями `""`/`forward`/
+  `backward`: склейка напрямую или с разворотом, при разрыве — конкатенация
+  сегментов; ноды без координат пропускаются, сохраняя связность.
+  `FetchRoute(relationID)` — точечный запрос `relation(<id>); out body; >;
+  out qt;` (точнее ref-поиска: нет амбигуитета бортовых номеров); мост
+  `RouteQueryParams.RelationID` — ключ `overpass:route:relation/<id>` в том же
+  пути cache+quota (пейсер/квота не дублируются). Фикстура
+  `testdata/overpass/route_full.json` (relation + way-platform + прямая/реверс/
+  разрывная геометрия); тесты `TestParseRouteResponseFull`,
+  `TestFetchRouteByIDHTTP/Invalid`, `TestBuildGeometryChained/Reversed/Broken/
+  SkipsUnknownNodes`, `TestCachedRoutesProviderRelationID`; живая пачка O-6
+  наполняет координаты и геометрию (скретч-тест, skip в CI). Времена —
+  по-прежнему монополия Яндекса (§1.2); связка stop_osm_id ↔ yandex_code —
+  через ScorePair (D-1), без изменений.
 - **O-6. Ручной скраппинг.** `scripts/overpass-collect.sh` по образцу
   `yandex-collect.sh`: вход — unmatched-список attach, сырьё —
   `data/overpass/raw/` (не коммитится), сводный офлайн-дамп
@@ -784,6 +803,56 @@ O-блоки (коннектор), затем S-блоки (settlement), зат�
   Барнаул; Томск; Кемеровская обл.) + route-relations O-5 (bbox СФО). Живая
   пачка: 157КБ route_101 (Томск №101 Поросино↔Ленина, 161 member — порядок
   сохранён), сводный дамп 1349 elements; сырьё в gitignored `data/`.
+- **O-9. Overpass как источник терминалов и маршрутов (issue #12,
+  2026-09-12).** Регио-сбор из OSM без расписания — полный путь:
+  `POST /api/v1/collect/routes` → job `kind=routes` → терминальные станции
+  bbox региона (`StationsInBBox` через `CachedStationsProvider` — тот же
+  cache+quota+pacer, ключ `overpass:bbox:<...>`) → чанковый промоут
+  unverified-терминалов (`RunCollectOverpassSkeleton`, IdentityOnly 0.4)
+  → маршрутные relation'ы bbox (`FetchAllRouteRelations`, QL без ref-
+  фильтра) → `FlattenOverpassRoute` → flat-рейсы без времён → attach:
+  полностью безвременные рейсы матчатся к терминалам и уходят в staging
+  `awaiting_times` («рейс без расписания (только топология)») — маршрут
+  привязан к канону, времена добирает Яндекс позже. Решения: (1)
+  `sync.region_bboxes` — карта регион→bbox (дефолт СФО, env
+  `SYNC_REGION_BBOX` точечно): overpass-сбор региона берёт его bbox, а не
+  молчаливый глобальный bbox пилота (инцидент: «Республика Алтай» со
+  статическим bbox Кузбасса); fallback без карты — Warn в лог. (2)
+  `Adapter.StationsInBBox` — float-контракт `OverpassBBoxProvider`, без
+  привязки geocoder к типам адаптера. (3) Времена — по-прежнему монополия
+  Яндекса (§1.2): OSM даёт топологию+геометрию+identity, staging
+  awaiting_times — место встречи двух источников. (4) Терминология квот
+  не менялась: bbox-запрос жжёт ту же квоту `osm`. (5) Инцидент job 53
+  (2026-09-12, «context deadline exceeded» без следов сети): вызовы шли с
+  `quotaLimit=0` — INSERT `quota_limit=0` ломает `api_quotas_quota_limit_check`
+  (квота >0), а любая ошибка/отказ квоты маскировалась голым
+  `context.DeadlineExceeded`. Фикс: провайдеры collect-путей строятся с
+  `store.DefaultQuotaLimit`; ошибки квоты явные (`429 quota exhausted … /
+  quota: …`, обёрнутая причина), воркер логирует `job failed/dead`.
+  Регио-маршруты идут через `CachedRoutesProvider.FetchAllRouteRelations`
+  (cache+quota), сырой адаптер из sync убран. (6) Инцидент job 53,
+  попытка 7 (SQLSTATE 22021 «invalid byte sequence UTF8 0xd0»): регион
+  трипа вычислялся `routeReg[:2]` — слайс по байтам; для кириллических
+  ref OSM («1к», «3к») это рвёт UTF-8, для остальных годами писал мусор
+  в `staging_trips.region`/`route_regions` (первые буквы имён яндекс-
+  маршрутов «К»/«Б», номера маршрутов «10»/«13»). Удалён; регион трипа
+  (`StagedTrip.Region`/`PromotableTrip.Region`) теперь первый непустой
+  `FlatStop.Region` источника (настоящее название, «Республика Алтай»).
+  Тесты:
+  `TestCachedStationsProviderBBox*` (кэш-хит без квоты, вежливый отказ,
+  no-inner), `TestRunCollectOverpassSkeletonPromotes`,
+  `TestFlattenOverpassRoute/TooFewStops`, `TestAttachUntimedTripAwaitsTimes`
+  (безвременный трип: matched-стопы + awaiting_times, не dead),
+  `TestRegionBBox/EnvOverride`, integration `TestCollectEndpoints` (+routes),
+  `TestCachedStationsProviderQuotaErrorExplicit` (ошибка квоты не
+  маскируется под deadline; фиксы инцидента job 53),
+  `TestCachedRoutesProviderBBoxQuota` (регио-маршруты через cache+quota,
+  без ref-фильтра, кэш-хит не жжёт квоту),
+  `TestStagedTripRegionFromStops` (кириллический ref «1к»: регион из
+  стопов, персист не падает на битом UTF-8).
+  UI: кнопка «Overpass: терминалы + маршруты (без расписания)», подсказка
+  при overpass+offline, `stations=overpass` в collect/trips берёт bbox
+  региона.
 - **O-7. Gap-fill в `skeleton-sync`.** После join: непарные Yandex + unmatched
   стопы реестра → `StationsAround` по их координатам → кандидаты в пул
   верификации `ScorePair` (первый verified побеждает). Флаги `--overpass-max`

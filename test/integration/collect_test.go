@@ -92,6 +92,28 @@ func TestCollectEndpointsAndSyncRuns(t *testing.T) {
 		t.Fatalf("trips job payload wrong: %v", tripsJob)
 	}
 
+	// issue #12: overpass-сбор терминалов+маршрутов без расписания
+	routesJob := post("/api/v1/collect/routes", map[string]any{
+		"region": "Республика Алтай",
+	})
+	if routesJob["kind"] != "routes" || routesJob["region"] != "Республика Алтай" {
+		t.Fatalf("routes job payload wrong: %v", routesJob)
+	}
+	badRoutes := func() int {
+		raw, _ := json.Marshal(map[string]any{})
+		req, _ := http.NewRequest("POST", ts.URL+"/api/v1/collect/routes", bytes.NewReader(raw))
+		req.Header.Set("X-API-Key", "secret")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode
+	}()
+	if badRoutes != http.StatusBadRequest {
+		t.Fatalf("routes без региона: want 400, got %d", badRoutes)
+	}
+
 	if items, ok := getAny("/api/v1/sync/runs?limit=10").([]any); !ok || len(items) != 0 {
 		if ok {
 			t.Fatalf("empty store: runs want 0, got %d", len(items))

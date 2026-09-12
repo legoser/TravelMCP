@@ -261,8 +261,10 @@ out center;`, timeoutS, s, s, s)
 }
 
 // StationsInBBox — терминальные станции региона из Overpass (сеть:
-// основной URL + зеркало, кэш diskv отсутствует — разовый ручной сбор).
-func (a *Adapter) StationsInBBox(ctx context.Context, b BBox) ([]model.AdaptedRecord, error) {
+// основной URL + зеркало). Контракт OverpassBBoxProvider: float-координаты
+// без привязки geocoder к типам адаптера (issue #12 — путь cache+quota).
+func (a *Adapter) StationsInBBox(ctx context.Context, minLat, minLon, maxLat, maxLon float64) ([]model.AdaptedRecord, error) {
+	b := BBox{MinLat: minLat, MinLon: minLon, MaxLat: maxLat, MaxLon: maxLon}
 	ql := BuildTerminalStationsQuery(b, 0)
 	body, err := a.execQL(ctx, ql)
 	if err != nil {

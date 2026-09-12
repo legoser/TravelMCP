@@ -92,7 +92,7 @@
 <label style="cursor:pointer"><input type="checkbox" id="colTrain" checked> поезда</label>
 <label style="cursor:pointer"><input type="checkbox" id="colFlight" checked> самолёты</label>
 <label style="cursor:pointer"><input type="checkbox" id="colOffline" checked> только кэш (offline)</label>
-<label>список станций: <select id="colStations"><option value="yandex">Яндекс-дамп (по коду)</option><option value="overpass">Overpass (bbox, без кодов)</option></select> <span class="muted" style="font-size:11px">расписания — всегда Яндекс Rasp</span></label>
+<label>список станций: <select id="colStations" onchange="colStationsChanged()"><option value="yandex">Яндекс-дамп (по коду)</option><option value="overpass">Overpass (bbox региона, без кодов)</option></select> <span class="muted" style="font-size:11px">расписания — всегда Яндекс Rasp</span></label>
 </div>
 <div class="row" style="margin-top:6px;gap:8px;flex-wrap:wrap">
 <span class="muted">классы станций (пусто = терминальные):</span>
@@ -105,6 +105,7 @@
 <div class="row" style="margin-top:12px;gap:8px">
 <button class="ok" onclick="collectSkeleton()">1. Импорт станций региона → скелет</button>
 <button class="ok" style="background:#15803d" onclick="collectTrips()">2. Собрать расписания → рейсы</button>
+<button class="ok" style="background:#7c3aed" onclick="collectRoutesOSM()">3. Overpass: терминалы + маршруты (без расписания)</button>
 <button class="secondary" onclick="loadJobs()">Jobs</button>
 </div>
 <div id="colMsg" class="muted" style="margin-top:10px"></div>

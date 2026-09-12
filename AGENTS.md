@@ -148,6 +148,8 @@ Prefer the smallest correct change that satisfies the request.
 
 * Do not add comments unless they are necessary for correctness or explicitly
   requested by the user.
+* Code comments must be written in English. Existing Russian comments should
+  be translated to English during code changes.
 * Keep changes focused and consistent with existing code.
 * Do not silently introduce architectural exceptions to solve local symptoms.
 

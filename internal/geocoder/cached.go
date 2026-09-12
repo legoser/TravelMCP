@@ -2,6 +2,7 @@ package geocoder
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -100,12 +101,15 @@ func (c *CachedGeocoder) revalidate(ctx context.Context, norm, query string) (*C
 		}
 	}
 	if c.quota != nil {
-		ok, _, err := c.quota(ctx, c.provider, c.quotaLimit)
+		ok, used, err := c.quota(ctx, c.provider, c.quotaLimit)
 		if err != nil || !ok {
 			if e, found := c.cache.Get(norm, c.provider); found {
 				return &CachedResult{Result: Result{Lat: e.Lat, Lon: e.Lon, Name: e.Name}, Stale: true, Origin: e.Origin}, nil
 			}
-			return nil, context.DeadlineExceeded
+			if err != nil {
+				return nil, fmt.Errorf("geocode %s: quota: %w", c.provider, err)
+			}
+			return nil, fmt.Errorf("geocode %s: 429 quota exhausted (limit %d, used %d)", c.provider, c.quotaLimit, used)
 		}
 	}
 	if err := ctx.Err(); err != nil {

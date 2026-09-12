@@ -97,13 +97,6 @@ func tripDurationS(stopTimes []MatchedStopTime) *int {
 	return &d
 }
 
-func regionOfRouteReg(routeReg string) string {
-	if len(routeReg) >= 2 {
-		return routeReg[:2]
-	}
-	return ""
-}
-
 func PersistAttachReport(ctx context.Context, db store.Store, rep AttachReport, source string, logger *slog.Logger) (PersistSummary, error) {
 	var sum PersistSummary
 	if logger == nil {
@@ -229,8 +222,8 @@ func persistPromotedTrip(ctx context.Context, db store.Store, ts TripsStore, p P
 			return err
 		}
 		out.routes = 1
-		if reg := regionOfRouteReg(p.RouteReg); reg != "" {
-			if err := tts.UpsertRouteRegion(ctx, routeID, reg); err != nil {
+		if p.Region != "" {
+			if err := tts.UpsertRouteRegion(ctx, routeID, p.Region); err != nil {
 				return err
 			}
 		}
@@ -373,14 +366,10 @@ func persistStagedTrip(ctx context.Context, ts TripsStore, s StagedTrip, source 
 		"carrier": s.Carrier, "carrier_inn": s.CarrierINN,
 		"weekdays": s.Weekdays, "reason": s.Reason,
 	})
-	region := regionOfRouteReg(s.RouteReg)
-	if region == "" {
-		region = regionOfRouteReg(s.RouteNK)
-	}
 	_, err := ts.UpsertStagingTrip(ctx, store.StagingTripRow{
 		Source: source, ExternalRouteCode: s.RouteNK, ExternalTripCode: SplitTripNK(s.TripNK),
 		IsSyntheticKey: s.IsSyntheticKey, RouteRaw: string(raw),
-		Region: region, TransportType: "bus", State: s.State,
+		Region: s.Region, TransportType: "bus", State: s.State,
 		MatchedStopTimes: string(matched), UnmatchedStops: string(unmatched),
 	})
 	return err

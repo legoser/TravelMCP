@@ -144,21 +144,22 @@ type Pricing struct {
 }
 
 type Sync struct {
-	LogDir              string  `yaml:"log_dir"`
-	CoverageGate        float64 `yaml:"coverage_gate"`
-	AttachWait          string  `yaml:"attach_wait"`
-	SkeletonChunkSize   int     `yaml:"skeleton_chunk_size"`
-	OsmPath             string  `yaml:"osm_path"`
-	YandexDumpPath      string  `yaml:"yandex_dump_path"`
-	SkeletonRegion      string  `yaml:"skeleton_region"`
-	Bbox                string  `yaml:"bbox"`
-	FlatTripsPath       string  `yaml:"flat_trips_path"`
-	LegacyThreshold     float64 `yaml:"legacy_threshold"`
-	CoverageSoftScore   float64 `yaml:"coverage_soft_score"`
-	TripsChurnThreshold float64 `yaml:"trips_churn_threshold"`
-	TripsMaxSpeedKmh    float64 `yaml:"trips_max_speed_kmh"`
-	OverpassMax         int     `yaml:"overpass_max"`
-	StagingExpiryDays   int     `yaml:"staging_expiry_days"`
+	LogDir              string            `yaml:"log_dir"`
+	CoverageGate        float64           `yaml:"coverage_gate"`
+	AttachWait          string            `yaml:"attach_wait"`
+	SkeletonChunkSize   int               `yaml:"skeleton_chunk_size"`
+	OsmPath             string            `yaml:"osm_path"`
+	YandexDumpPath      string            `yaml:"yandex_dump_path"`
+	SkeletonRegion      string            `yaml:"skeleton_region"`
+	Bbox                string            `yaml:"bbox"`
+	RegionBBoxes        map[string]string `yaml:"region_bboxes"`
+	FlatTripsPath       string            `yaml:"flat_trips_path"`
+	LegacyThreshold     float64           `yaml:"legacy_threshold"`
+	CoverageSoftScore   float64           `yaml:"coverage_soft_score"`
+	TripsChurnThreshold float64           `yaml:"trips_churn_threshold"`
+	TripsMaxSpeedKmh    float64           `yaml:"trips_max_speed_kmh"`
+	OverpassMax         int               `yaml:"overpass_max"`
+	StagingExpiryDays   int               `yaml:"staging_expiry_days"`
 }
 
 type Config struct {
@@ -220,7 +221,25 @@ func Defaults() *Config {
 		Deduplication: Deduplication{DistanceM: 200},
 		Pricing:       Pricing{DefaultCurrency: "RUB"},
 		GTFS:          GTFS{TmpDir: "data/tmp/gtfs"},
-		Sync:          Sync{LogDir: "data/logs", CoverageGate: 0, SkeletonChunkSize: 100, OsmPath: "data/osm/stations.json", YandexDumpPath: "data/yandex/cache/global_stations_list.json", SkeletonRegion: "Кемеровская область - Кузбасс", Bbox: "53.5,84.0,57.0,88.5", LegacyThreshold: 0.6, CoverageSoftScore: 0.4, TripsChurnThreshold: 0.2, TripsMaxSpeedKmh: 200, OverpassMax: 200, StagingExpiryDays: 14},
+		Sync:          Sync{LogDir: "data/logs", CoverageGate: 0, SkeletonChunkSize: 100, OsmPath: "data/osm/stations.json", YandexDumpPath: "data/yandex/cache/global_stations_list.json", SkeletonRegion: "Кемеровская область - Кузбасс", Bbox: "53.5,84.0,57.0,88.5", RegionBBoxes: defaultRegionBBoxes(), LegacyThreshold: 0.6, CoverageSoftScore: 0.4, TripsChurnThreshold: 0.2, TripsMaxSpeedKmh: 200, OverpassMax: 200, StagingExpiryDays: 14},
+	}
+}
+
+// defaultRegionBBoxes — bbox регионов пилота (СФО): overpass-сбор обязан
+// получать станции выбранного региона, а не молчаливый глобальный bbox
+// (issue #12: запуск «Республика Алтай» со статическим bbox Кузбасса).
+func defaultRegionBBoxes() map[string]string {
+	return map[string]string{
+		"Кемеровская область - Кузбасс": "53.5,82.5,57.5,89.5",
+		"Алтайский край":                "51.0,78.5,54.5,86.5",
+		"Республика Алтай":              "49.0,83.5,52.7,89.5",
+		"Новосибирская область":         "53.0,75.0,57.0,85.0",
+		"Томская область":               "56.0,75.5,60.5,88.5",
+		"Омская область":                "53.0,70.0,58.5,78.0",
+		"Красноярский край":             "51.0,82.0,61.0,89.5",
+		"Иркутская область":             "51.5,98.0,62.0,110.0",
+		"Республика Хакасия":            "51.5,86.5,55.5,92.0",
+		"Республика Тыва":               "49.5,87.5,53.5,100.0",
 	}
 }
 
@@ -564,6 +583,18 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SYNC_BBOX"); v != "" {
 		cfg.Sync.Bbox = v
 	}
+	if v := os.Getenv("SYNC_REGION_BBOX"); v != "" {
+		// SYNC_REGION_BBOX="Регион=bbox;Регион2=bbox2" — точечное переопределение
+		// карт региональных bbox (приоритетнее YAML).
+		if cfg.Sync.RegionBBoxes == nil {
+			cfg.Sync.RegionBBoxes = map[string]string{}
+		}
+		for _, kv := range strings.Split(v, ";") {
+			if eq := strings.Index(kv, "="); eq > 0 {
+				cfg.Sync.RegionBBoxes[strings.TrimSpace(kv[:eq])] = strings.TrimSpace(kv[eq+1:])
+			}
+		}
+	}
 	if v := os.Getenv("SYNC_FLAT_TRIPS_PATH"); v != "" {
 		cfg.Sync.FlatTripsPath = v
 	}
@@ -888,4 +919,19 @@ func splitCsv(v string) []string {
 		}
 	}
 	return out
+}
+
+// RegionBBox — bbox региона (minLat,minLon,maxLat,maxLon). Приоритет:
+// карта region_bboxes → глобальный bbox пилота (fallback). ok=false —
+// региона нет в карте: вызывающий решает, молчаливый ли это fallback.
+func (s Sync) RegionBBox(region string) (string, bool) {
+	if s.RegionBBoxes != nil {
+		if v, ok := s.RegionBBoxes[region]; ok && v != "" {
+			return v, true
+		}
+	}
+	if s.Bbox != "" {
+		return s.Bbox, false
+	}
+	return "", false
 }

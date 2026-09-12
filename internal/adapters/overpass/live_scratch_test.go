@@ -26,5 +26,20 @@ func TestScratchLiveRoute101(t *testing.T) {
 	if len(trip.Stops) < 2 {
 		t.Fatalf("городской маршрут без остановок: %+v", trip)
 	}
-	t.Logf("records=%d, first: ref=%s operator=%q stops=%d", len(recs), trip.Ref, trip.Operator, len(trip.Stops))
+	// issue #11: координаты стопов и геометрия обязаны наполняться из
+	// node/way элементов пачки (раньше выбрасывались парсером).
+	coordStops := 0
+	for _, s := range trip.Stops {
+		if s.Lat != 0 || s.Lon != 0 {
+			coordStops++
+		}
+	}
+	if coordStops == 0 {
+		t.Fatal("живая пачка содержит координаты стопов, парсер обязан их сохранять")
+	}
+	if len(trip.Geometry) == 0 {
+		t.Fatal("живая пачка содержит way-члены геометрии, полилиния обязана строиться")
+	}
+	t.Logf("records=%d, first: ref=%s operator=%q stops=%d (with coords: %d) geometry_points=%d",
+		len(recs), trip.Ref, trip.Operator, len(trip.Stops), coordStops, len(trip.Geometry))
 }
