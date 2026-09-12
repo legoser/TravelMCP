@@ -820,7 +820,15 @@ O-блоки (коннектор), затем S-блоки (settlement), зат�
   `store.DefaultQuotaLimit`; ошибки квоты явные (`429 quota exhausted … /
   quota: …`, обёрнутая причина), воркер логирует `job failed/dead`.
   Регио-маршруты идут через `CachedRoutesProvider.FetchAllRouteRelations`
-  (cache+quota), сырой адаптер из sync убран. Тесты:
+  (cache+quota), сырой адаптер из sync убран. (6) Инцидент job 53,
+  попытка 7 (SQLSTATE 22021 «invalid byte sequence UTF8 0xd0»): регион
+  трипа вычислялся `routeReg[:2]` — слайс по байтам; для кириллических
+  ref OSM («1к», «3к») это рвёт UTF-8, для остальных годами писал мусор
+  в `staging_trips.region`/`route_regions` (первые буквы имён яндекс-
+  маршрутов «К»/«Б», номера маршрутов «10»/«13»). Удалён; регион трипа
+  (`StagedTrip.Region`/`PromotableTrip.Region`) теперь первый непустой
+  `FlatStop.Region` источника (настоящее название, «Республика Алтай»).
+  Тесты:
   `TestCachedStationsProviderBBox*` (кэш-хит без квоты, вежливый отказ,
   no-inner), `TestRunCollectOverpassSkeletonPromotes`,
   `TestFlattenOverpassRoute/TooFewStops`, `TestAttachUntimedTripAwaitsTimes`
@@ -829,7 +837,9 @@ O-блоки (коннектор), затем S-блоки (settlement), зат�
   `TestCachedStationsProviderQuotaErrorExplicit` (ошибка квоты не
   маскируется под deadline; фиксы инцидента job 53),
   `TestCachedRoutesProviderBBoxQuota` (регио-маршруты через cache+quota,
-  без ref-фильтра, кэш-хит не жжёт квоту).
+  без ref-фильтра, кэш-хит не жжёт квоту),
+  `TestStagedTripRegionFromStops` (кириллический ref «1к»: регион из
+  стопов, персист не падает на битом UTF-8).
   UI: кнопка «Overpass: терминалы + маршруты (без расписания)», подсказка
   при overpass+offline, `stations=overpass` в collect/trips берёт bbox
   региона.

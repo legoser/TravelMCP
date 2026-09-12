@@ -63,6 +63,7 @@ type PromotableTrip struct {
 	RouteNK        string            `json:"route_nk"`
 	TripNK         string            `json:"trip_nk"`
 	RouteReg       string            `json:"route_reg"`
+	Region         string            `json:"region"`
 	Direction      string            `json:"direction"`
 	ServiceID      int64             `json:"service_id"`
 	Run            int               `json:"run"`
@@ -80,6 +81,7 @@ type StagedTrip struct {
 	RouteNK        string            `json:"route_nk"`
 	TripNK         string            `json:"trip_nk"`
 	RouteReg       string            `json:"route_reg"`
+	Region         string            `json:"region"`
 	Direction      string            `json:"direction"`
 	ServiceID      int64             `json:"service_id"`
 	Run            int               `json:"run"`
@@ -132,6 +134,20 @@ type AttachReport struct {
 // стопов — легитимный сквозной рейс, а не skeleton_gap. Концы строгие
 // (без них трип не публикуется вовсе — пассажир не поедет в никуда),
 // середина добирается later (§5.4).
+// tripRegionOf — регион рейса из стопов (первый непустой): у FlatStop он
+// проставляется источником (yandex/overpass) и несёт настоящее название
+// («Республика Алтай»). Раньше регион срезался с route_reg по байтам —
+// для кириллических ref («1к») это рвало UTF-8 (SQLSTATE 22021), для
+// остальных давало мусор (первые буквы имени маршрута / номер маршрута).
+func tripRegionOf(ft model.FlatTrip) string {
+	for _, s := range ft.Stops {
+		if s.Region != "" {
+			return s.Region
+		}
+	}
+	return ""
+}
+
 func backbonePromotable(matched []MatchedStopTime, ft model.FlatTrip) bool {
 	if len(matched) < 2 {
 		return false
@@ -182,11 +198,12 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 		}
 		routeSynthetic := routeNK != ft.RouteReg
 		tripNK := routeNK + "|" + ft.Direction + ":" + strconv.FormatInt(ft.ServiceID, 10) + ":" + strconv.Itoa(ft.Run)
+		region := tripRegionOf(ft)
 		// В diff против канона (§5.3) входят только промоутнутые рейсы:
 		// staged/dead в каноне не живут, их «добавление» не churn.
 		if ft.FrequencyOnly || len(ft.Stops) < 2 {
 			rep.Staged = append(rep.Staged, StagedTrip{
-				RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg,
+				RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg, Region: region,
 				Direction: ft.Direction, ServiceID: ft.ServiceID, Run: ft.Run,
 				State:          "awaiting_times",
 				Reason:         "нет точных времён: frequency-only или меньше двух timed-стопов",
@@ -196,7 +213,7 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 		}
 		if len(ft.Untimed) > 0 && untimedPositions(ft) == 0 {
 			rep.Staged = append(rep.Staged, StagedTrip{
-				RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg,
+				RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg, Region: region,
 				Direction: ft.Direction, ServiceID: ft.ServiceID, Run: ft.Run,
 				State:          "incomplete_trip",
 				Reason:         "стопы без времён, интерполяция запрещена",
@@ -212,7 +229,7 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 			tripTag := logger.With("step", "match_stop", "route_nk", routeNK, "trip_nk", tripNK, "direction", ft.Direction)
 			matched, _, _, unmatched := matchStops(ft, mindex, source, classFor, in.ParamsFor, logger)
 			rep.Staged = append(rep.Staged, StagedTrip{
-				RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg,
+				RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg, Region: region,
 				Direction: ft.Direction, ServiceID: ft.ServiceID, Run: ft.Run,
 				State:          "awaiting_times",
 				Reason:         "рейс без расписания (только топология): время даст источник расписаний",
@@ -227,7 +244,7 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 		matched, worstReason, worstScore, unmatched := matchStops(ft, mindex, source, classFor, in.ParamsFor, logger)
 		if len(unmatched) > 0 && !backbonePromotable(matched, ft) {
 			st := StagedTrip{
-				RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg,
+				RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg, Region: region,
 				Direction: ft.Direction, ServiceID: ft.ServiceID, Run: ft.Run,
 				State:          "incomplete_trip",
 				Reason:         worstReason,
@@ -260,7 +277,7 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 		if fuzzy := countFuzzy(matched); fuzzy > 0 {
 			if err := interpolateFuzzyTimes(matched); err != nil {
 				rep.Staged = append(rep.Staged, StagedTrip{
-					RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg,
+					RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg, Region: region,
 					Direction: ft.Direction, ServiceID: ft.ServiceID, Run: ft.Run,
 					State:          "incomplete_trip",
 					Reason:         err.Error(),
@@ -286,7 +303,7 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 		}
 		if soft := softSpeeds(collapsed, in.Terminals, maxSpeed); soft != "" {
 			rep.Staged = append(rep.Staged, StagedTrip{
-				RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg,
+				RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg, Region: region,
 				Direction: ft.Direction, ServiceID: ft.ServiceID, Run: ft.Run,
 				State:          "needs_review",
 				Reason:         soft,
@@ -300,7 +317,7 @@ func AttachTrips(ctx context.Context, in AttachInput) (AttachReport, error) {
 		tripTag.Info("trip promoted", "matched_stops", len(collapsed), "transfers", len(collapsed)-1)
 		current[tripNK] = routeNK
 		rep.Promoted = append(rep.Promoted, PromotableTrip{
-			RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg,
+			RouteNK: routeNK, TripNK: tripNK, RouteReg: ft.RouteReg, Region: region,
 			Direction: ft.Direction, ServiceID: ft.ServiceID, Run: ft.Run,
 			IsSyntheticKey: true, RouteSynthetic: routeSynthetic,
 			WinnerSource: source + ":" + ft.Period, WinnerPeriod: ft.Period,
