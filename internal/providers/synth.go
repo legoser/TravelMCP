@@ -78,6 +78,14 @@ func (s *Synth) build(dayBase time.Time) *model.Network {
 	s.addStop(net, "a-apt", "Пермь, аэропорт Большое Савино", 57.9148, 56.0217)
 	s.addStop(net, "b-apt", "Екатеринбург, аэропорт Кольцово", 56.7431, 60.8028)
 
+	// Транзитный сервис с 4 остановками для проверки посадки на промежуточной:
+	// старт → Юрга → Томск → финиш. Юрга и Томск — не концы рейса, поэтому
+	// поездка Юрга→Томск даст is_transit=true и stops=[юрга, томск] внутри лега.
+	s.addStop(net, "yrg-start", "Старт", 56.3000, 93.2000)
+	s.addStop(net, "yrg", "Юрга, автовокзол", 56.2667, 93.3167)
+	s.addStop(net, "tsk", "Томск, автовокзал", 56.0100, 97.0400)
+	s.addStop(net, "tsk-end", "Финиш", 56.0500, 97.1000)
+
 	net.Transfers = append(net.Transfers,
 		model.Transfer{FromStopID: "c2", ToStopID: "c2x", Minutes: 5, MinTransferTime: 5, DistanceM: 300},
 		model.Transfer{FromStopID: "c2x", ToStopID: "c2", Minutes: 5, MinTransferTime: 5, DistanceM: 300},
@@ -104,6 +112,13 @@ func (s *Synth) build(dayBase time.Time) *model.Network {
 	s.addLine(net, model.Route{ID: "fly", ShortName: "7V", LongName: "Пермь — Екатеринбург", Mode: model.ModeFlight},
 		[]string{"a-apt", "b-apt"}, []int{65}, 480, 120, 1260, dayBase)
 
+	// Транзитный сервис: старт → Юрга → Томск → финиш (4 остановки).
+	// Юрга и Томск — промежуточные, поэтому поездка Юрга→Томск даст
+	// is_transit=true и stops=[юрга, томск] внутри лега.
+	// yrg→tsk ≈ 230 км @ 80 км/ч ≈ 172 мин; прочие сегменты короче.
+	s.addLine(net, model.Route{ID: "yrg-tsk", ShortName: "99", LongName: "Старт — Юрга — Томск — Финиш", Mode: model.ModeBus},
+		[]string{"yrg-start", "yrg", "tsk", "tsk-end"}, []int{25, 172, 10}, 560, 30, 1340, dayBase)
+
 	net.Zones["perm"] = &model.Zone{ID: "perm", NameRu: "Пермь", NameEn: "Perm"}
 	net.Zones["ekb"] = &model.Zone{ID: "ekb", NameRu: "Екатеринбург", NameEn: "Ekaterinburg"}
 	net.Zones["pgu"] = &model.Zone{ID: "pgu", NameRu: "ПГУ", NameEn: "PSU"}
@@ -116,11 +131,12 @@ func (s *Synth) build(dayBase time.Time) *model.Network {
 	for _, sid := range []string{"c1", "c2", "c2x", "c3"} {
 		net.StopZones[sid] = "pgu"
 	}
-	net.FareAttributes["fare-a"] = &model.FareAttribute{FareID: "fare-a", Price: 50, Currency: "RUB", Basis: "fare"}
-	net.FareAttributes["fare-900"] = &model.FareAttribute{FareID: "fare-900", Price: 1200, Currency: "RUB", Basis: "fare"}
-	net.FareAttributes["fare-b"] = &model.FareAttribute{FareID: "fare-b", Price: 30, Currency: "RUB", Basis: "fare"}
-	net.FareAttributes["fare-fly"] = &model.FareAttribute{FareID: "fare-fly", Price: 3500, Currency: "RUB", Basis: "fare"}
-	net.FareAttributes["fare-r"] = &model.FareAttribute{FareID: "fare-r", Price: 70, Currency: "RUB", Basis: "fare"}
+	for _, sid := range []string{"yrg-start", "yrg", "tsk", "tsk-end"} {
+		net.StopZones[sid] = "yrg"
+	}
+	net.Zones["yrg"] = &model.Zone{ID: "yrg", NameRu: "Юрга", NameEn: "Yurga"}
+	net.FareAttributes["fare-yrg-tsk"] = &model.FareAttribute{FareID: "fare-yrg-tsk", Price: 300, Currency: "RUB", Basis: "fare"}
+	net.FareRules = append(net.FareRules, model.FareRule{FareID: "fare-yrg-tsk", RouteID: "yrg-tsk"})
 	net.FareRules = append(net.FareRules, model.FareRule{FareID: "fare-a", RouteID: "a"})
 	net.FareRules = append(net.FareRules, model.FareRule{FareID: "fare-900", RouteID: "900"})
 	net.FareRules = append(net.FareRules, model.FareRule{FareID: "fare-b", RouteID: "b"})

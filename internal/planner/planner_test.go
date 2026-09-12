@@ -441,3 +441,95 @@ func TestPlanPlaceNotFoundReturnsNoRoute(t *testing.T) {
 		t.Fatalf("expected 'нет остановок' error, got: %v", err)
 	}
 }
+
+// TestBuildLegsTransitStops проверяет, что для посадки на промежуточной
+// остановке транзитного рейса Leg получает Stops (все остановки пассажира:
+// от посадки до высадки включательно) и IsTransit=true.
+// Пример: рейс Томск—Кемерово через Юргу; пассажир едет Юрга→Кемерово.
+func TestBuildLegsTransitStops(t *testing.T) {
+	net := model.NewNetwork()
+	for _, s := range []model.Stop{
+		{ID: "t", Name: "Томск", Lat: 56.0, Lon: 97.0},
+		{ID: "y", Name: "Юрга", Lat: 56.1, Lon: 97.1},
+		{ID: "k", Name: "Кемерово", Lat: 55.3, Lon: 87.4},
+	} {
+		net.Stops[s.ID] = &s
+	}
+	tripID := "route1-tomsk-kemerovo"
+	net.Trips[tripID] = &model.Trip{
+		ID: tripID, RouteID: "route1", ProviderID: "p", Mode: model.ModeBus,
+		StopTimes: []model.StopTime{
+			{StopID: "t", ArrivalSec: 0, DepartureSec: 0},
+			{StopID: "y", ArrivalSec: 3600, DepartureSec: 3600},
+			{StopID: "k", ArrivalSec: 10800, DepartureSec: 10800},
+		},
+	}
+	day := time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC)
+	net.Connections = []model.Connection{{
+		TripID: tripID, ProviderID: "p", RouteID: "route1", Mode: model.ModeBus,
+		From: "y", To: "k",
+		Departure: day.Add(3600 * time.Second),
+		Arrival:   day.Add(10800 * time.Second),
+	}}
+	net.BuildIndexes()
+	steps := []step{{conn: &net.Connections[0]}}
+
+	legs := buildLegs(net, map[string]time.Time{}, steps)
+	if len(legs) != 1 {
+		t.Fatalf("want 1 leg, got %d", len(legs))
+	}
+	leg := legs[0]
+	if !leg.IsTransit {
+		t.Error("IsTransit should be true: посадка и высадка на промежуточных остановках")
+	}
+	if len(leg.Stops) != 2 {
+		t.Fatalf("want 2 stops (юрга→кемерово) in Stops, got %d", len(leg.Stops))
+	}
+	if leg.Stops[0].StopID != "y" {
+		t.Errorf("Stops[0]=%q want %q", leg.Stops[0].StopID, "y")
+	}
+	if leg.Stops[1].StopID != "k" {
+		t.Errorf("Stops[1]=%q want %q", leg.Stops[1].StopID, "k")
+	}
+}
+
+// TestBuildLegsNonTransitStops проверяет рейс от конечной посадки — Stops
+// заполняются (все остановки пассажира), но IsTransit=false.
+func TestBuildLegsNonTransitStops(t *testing.T) {
+	net := model.NewNetwork()
+	for _, s := range []model.Stop{
+		{ID: "t", Name: "Томск", Lat: 56.0, Lon: 97.0},
+		{ID: "k", Name: "Кемерово", Lat: 55.3, Lon: 87.4},
+	} {
+		net.Stops[s.ID] = &s
+	}
+	tripID := "route1-tomsk-kemerovo"
+	net.Trips[tripID] = &model.Trip{
+		ID: tripID, RouteID: "route1", ProviderID: "p", Mode: model.ModeBus,
+		StopTimes: []model.StopTime{
+			{StopID: "t", ArrivalSec: 0, DepartureSec: 0},
+			{StopID: "k", ArrivalSec: 10800, DepartureSec: 10800},
+		},
+	}
+	day := time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC)
+	net.Connections = []model.Connection{{
+		TripID: tripID, ProviderID: "p", RouteID: "route1", Mode: model.ModeBus,
+		From: "t", To: "k",
+		Departure: day,
+		Arrival:   day.Add(10800 * time.Second),
+	}}
+	net.BuildIndexes()
+	steps := []step{{conn: &net.Connections[0]}}
+
+	legs := buildLegs(net, map[string]time.Time{}, steps)
+	if len(legs) != 1 {
+		t.Fatalf("want 1 leg, got %d", len(legs))
+	}
+	leg := legs[0]
+	if leg.IsTransit {
+		t.Error("IsTransit should be false: посадка с конечной остановки")
+	}
+	if len(leg.Stops) != 2 {
+		t.Fatalf("want 2 stops in Stops, got %d", len(leg.Stops))
+	}
+}
