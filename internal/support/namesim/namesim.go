@@ -61,13 +61,19 @@ func ExtractSettlement(name string) string {
 		return ""
 	}
 	toks := strings.Fields(n)
+	// Формат Минтранса/Яндекса «Населённый пункт, тип ОП» («Чажемто,
+	// автовокзал»): топоним — первая часть до запятой. Шумные первые
+	// части («г.», «АВ») шаблон сам отклоняет — их подберут шаблоны ниже.
+	if first := firstCommaPart(name); first != "" {
+		return first
+	}
 	for i, t := range toks {
 		if !settlementPrefixes[t] {
 			continue
 		}
 		var out []string
 		for _, w := range toks[i+1:] {
-			if facilityStopWords[w] {
+			if facilityStopWords[w] || noiseTokens[w] {
 				break
 			}
 			out = append(out, w)
@@ -78,7 +84,7 @@ func ExtractSettlement(name string) string {
 		if len(out) == 0 {
 			continue
 		}
-		return strings.Join(out, " ")
+		return titleCase(strings.Join(out, " "))
 	}
 	// Паттерн реестра Минтранса: название — прилагательное города + тип
 	// объекта («Кемеровский АВ», «Мариинский автовокзал»). Префикса нет, но
@@ -88,12 +94,44 @@ func ExtractSettlement(name string) string {
 		if first := toks[0]; len([]rune(first)) >= 6 {
 			for _, suf := range adjectiveSuffixes {
 				if strings.HasSuffix(first, suf) && !facilityStopWords[first] {
-					return first
+					return titleCase(first)
 				}
 			}
 		}
 	}
 	return ""
+}
+
+// firstCommaPart — топоним из формата «Населённый пункт, тип ОП»: берём
+// часть до первой запятой в исходном регистре; если она — шум-токен
+// (тип ОП, адм. префикс) или короткая аббревиатура, шаблон не сработал.
+func firstCommaPart(name string) string {
+	idx := strings.IndexByte(name, ',')
+	if idx <= 0 {
+		return ""
+	}
+	part := strings.TrimSpace(name[:idx])
+	if part == "" {
+		return ""
+	}
+	for _, t := range strings.Fields(Normalize(part)) {
+		if noiseTokens[t] || facilityStopWords[t] || len([]rune(t)) < 3 {
+			return ""
+		}
+	}
+	return part
+}
+
+// titleCase — заглавная первая буква: тег settlement идёт в газетир,
+// где isPlausibleSettlement требует топоним с заглавной буквы
+// (строчные прилагательные «кемеровский» отсекаются как мусор).
+func titleCase(s string) string {
+	r := []rune(s)
+	if len(r) == 0 {
+		return ""
+	}
+	r[0] = unicode.ToUpper(r[0])
+	return string(r)
 }
 
 // adjectiveSuffixes — суффиксы городских прилагательных («Кемеровский» от
