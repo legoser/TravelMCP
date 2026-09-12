@@ -132,7 +132,22 @@ func (p *Planner) raptor(net *model.Network, fromStop, toStop string, depart tim
 					continue
 				}
 				// Check if we can board (dep >= arrival at from)
-				if atFrom, ok := arr[fromST.StopID]; ok && dep.Before(atFrom) {
+				boardAt, ok := arr[fromST.StopID]
+				if !ok {
+					continue
+				}
+				// issue #12: буфер стыковки — прибытие транзитом и посадка
+				// в другой trip (15 мин; flight → регистрация/посадка).
+				if pr := pred[fromST.StopID]; pr != nil && pr.conn != nil && pr.conn.TripID != trip.ID {
+					buf := p.minTransfer
+					if trip.Mode == model.ModeFlight {
+						buf = p.flightCheckIn
+					}
+					if buf > 0 && dep.Before(boardAt.Add(time.Duration(buf)*time.Minute)) {
+						continue
+					}
+				}
+				if dep.Before(boardAt) {
 					continue
 				}
 				// Speed filter: отсекать >120 bus / 1000 flight (model.MaxSpeed), без потери валидных Нск→Томск

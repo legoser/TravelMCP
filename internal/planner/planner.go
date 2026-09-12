@@ -23,6 +23,12 @@ type Planner struct {
 	logger         *slog.Logger
 	sem            chan struct{}
 	defaultMaxWalk int
+	// minTransfer — минимальная стыковка рейс→рейс (issue #12):
+	// переход/покупка билета; flightCheckIn — буфер на авиастыковку
+	// (регистрация+посадка). Оба применяются к посадке в НОВЫЙ trip
+	// после транзитного прибытия, не к продолжению того же рейса.
+	minTransfer   int
+	flightCheckIn int
 }
 
 func New(metrics *telemetry.Metrics) *Planner {
@@ -43,6 +49,18 @@ func NewWithLogger(metrics *telemetry.Metrics, engine string, logger *slog.Logge
 func (p *Planner) WithDefaultMaxWalk(minutes int) *Planner {
 	if minutes > 0 {
 		p.defaultMaxWalk = minutes
+	}
+	return p
+}
+
+// WithMinTransfer — буферы стыковок (issue #12): минимальная стыковка
+// рейс→рейс (переход/билет) и авиа-буфер (регистрация/посадка).
+func (p *Planner) WithMinTransfer(transferMinutes, flightCheckInMinutes int) *Planner {
+	if transferMinutes > 0 {
+		p.minTransfer = transferMinutes
+	}
+	if flightCheckInMinutes > 0 {
+		p.flightCheckIn = flightCheckInMinutes
 	}
 	return p
 }
@@ -778,6 +796,24 @@ func (p *Planner) csa(net *model.Network, fromStop, toStop string, depart time.T
 	arr := map[string]time.Time{fromStop: depart}
 	pred := map[string]*prev{}
 
+	// issue #12: буфер стыковки рейс→рейс. Прибытие транзитом (pred по
+	// connection) и посадка в другой trip → нужен запас: 15 мин
+	// (переход/билет) или flightCheckIn при стыковке с авиарейсом.
+	// Продолжение того же trip, старт и пешие переходы буфера не требуют.
+	boardBuffer := func(stopID string, c *model.Connection) time.Duration {
+		if p.minTransfer <= 0 && p.flightCheckIn <= 0 {
+			return 0
+		}
+		pr := pred[stopID]
+		if pr == nil || pr.conn == nil || pr.conn.TripID == c.TripID {
+			return 0
+		}
+		if c.Mode == model.ModeFlight {
+			return time.Duration(p.flightCheckIn) * time.Minute
+		}
+		return time.Duration(p.minTransfer) * time.Minute
+	}
+
 	relax := func(stopID string) {
 		queue := []string{stopID}
 		for len(queue) > 0 {
@@ -802,7 +838,7 @@ func (p *Planner) csa(net *model.Network, fromStop, toStop string, depart time.T
 	}
 	relax(fromStop)
 
-	skippedMode, skippedImplausible, skippedNotReached, skippedLate, skippedWorse := 0, 0, 0, 0, 0
+	skippedMode, skippedImplausible, skippedNotReached, skippedLate, skippedWorse, skippedTight := 0, 0, 0, 0, 0, 0
 	boarded := 0
 	for i := range conns {
 		c := &conns[i]
@@ -819,8 +855,11 @@ func (p *Planner) csa(net *model.Network, fromStop, toStop string, depart time.T
 			skippedNotReached++
 			continue
 		}
-		if c.Departure.Before(atFrom) {
+		if c.Departure.Before(atFrom.Add(boardBuffer(c.From, c))) {
 			skippedLate++
+			if buf := boardBuffer(c.From, c); buf > 0 {
+				skippedTight++
+			}
 			continue
 		}
 		if atTo, ok := arr[c.To]; ok && !c.Arrival.Before(atTo) {
@@ -834,7 +873,7 @@ func (p *Planner) csa(net *model.Network, fromStop, toStop string, depart time.T
 	}
 
 	if p.logger != nil {
-		p.logger.Debug("csa scan done", "from", fromStop, "to", toStop, "connections", len(conns), "boarded", boarded, "skipped_mode", skippedMode, "skipped_implausible", skippedImplausible, "skipped_stop_not_reached", skippedNotReached, "skipped_departed_before_arrival", skippedLate, "skipped_not_improving", skippedWorse, "reached_stops", len(arr))
+		p.logger.Debug("csa scan done", "from", fromStop, "to", toStop, "connections", len(conns), "boarded", boarded, "skipped_mode", skippedMode, "skipped_implausible", skippedImplausible, "skipped_stop_not_reached", skippedNotReached, "skipped_departed_before_arrival", skippedLate, "skipped_tight_connection", skippedTight, "skipped_not_improving", skippedWorse, "reached_stops", len(arr))
 	}
 
 	if pred[toStop] == nil {

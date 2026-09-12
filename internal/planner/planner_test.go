@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -531,5 +532,112 @@ func TestBuildLegsNonTransitStops(t *testing.T) {
 	}
 	if len(leg.Stops) != 2 {
 		t.Fatalf("want 2 stops in Stops, got %d", len(leg.Stops))
+	}
+}
+
+// issue #12: буфер минимальной стыковки рейс→рейс (15 мин) и
+// авиа-буфер (2 ч на регистрацию/посадку) при смене trip.
+func minTransferNet(t *testing.T) (*Planner, *model.Network) {
+	t.Helper()
+	day := time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC)
+	net := model.NewNetwork()
+	for id, c := range map[string][2]float64{
+		"A": {56.00, 92.00}, "X": {56.30, 92.90}, "B": {56.60, 93.80},
+	} {
+		sid := id
+		net.Stops[sid] = &model.Stop{ID: sid, ProviderID: "p", Name: sid, Lat: c[0], Lon: c[1], Type: model.StopTypeStation}
+	}
+	mk := func(tripID, from, to string, depMin, arrMin int, mode model.Mode) {
+		net.Trips[tripID] = &model.Trip{ID: tripID, RouteID: tripID, ProviderID: "p", Mode: mode, StopTimes: []model.StopTime{
+			{StopID: from, Sequence: 0, ArrivalSec: depMin * 60, DepartureSec: depMin * 60},
+			{StopID: to, Sequence: 1, ArrivalSec: arrMin * 60, DepartureSec: arrMin * 60},
+		}}
+		net.Connections = append(net.Connections, model.Connection{
+			TripID: tripID, ProviderID: "p", RouteID: tripID, Mode: mode,
+			From: from, To: to,
+			Departure: day.Add(time.Duration(depMin) * time.Minute),
+			Arrival:   day.Add(time.Duration(arrMin) * time.Minute),
+		})
+	}
+	// Первый рейс прибывает в X в 10:00; стыковка в B-поезд.
+	mk("first", "A", "X", 9*60, 10*60, model.ModeBus)
+	// уходит через 10 мин — стыковка невозможна с буфером 15 мин
+	mk("tight", "X", "B", 10*60+10, 11*60, model.ModeBus)
+	// уходит в 10:20 — ровно буфер: допустимо (>=)
+	mk("edge", "X", "B", 10*60+20, 11*60+10, model.ModeBus)
+	// уходит в 10:30 — комфортная стыковка
+	mk("comfy", "X", "B", 10*60+30, 11*60+30, model.ModeBus)
+	// flight: уходит в 11:30 — 90 мин < 2 ч регистрации: недоступен
+	mk("fly-tight", "X", "B", 11*60+30, 12*60+30, model.ModeFlight)
+	// flight в 12:15 — 2ч15м: допустим
+	mk("fly-ok", "X", "B", 12*60+15, 13*60+15, model.ModeFlight)
+	sort.Slice(net.Connections, func(i, j int) bool { return net.Connections[i].Departure.Before(net.Connections[j].Departure) })
+	net.BuildIndexes()
+	p := New(nil).WithMinTransfer(15, 120)
+	return p, net
+}
+
+func TestMinTransferBufferRejectsTightConnection(t *testing.T) {
+	p, net := minTransferNet(t)
+	legs, err := p.csa(net, "A", "B", dep("08:00"), model.SearchParams{MaxTransfers: -1})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if len(legs) != 2 {
+		t.Fatalf("want 2 legs (A→X, X→B), got %d: %+v", len(legs), legs)
+	}
+	if legs[1].TripID != "edge" {
+		t.Fatalf("tight (10:10) must be rejected by 15m buffer; want edge (10:20), got %s (%v)", legs[1].TripID, legs[1].Departure)
+	}
+}
+
+func TestMinTransferBufferFlightCheckIn(t *testing.T) {
+	p, net := minTransferNet(t)
+	params := model.SearchParams{MaxTransfers: -1, AllowedModes: []model.Mode{model.ModeBus, model.ModeFlight}}
+	legs, err := p.csa(net, "A", "B", dep("08:00"), params)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if len(legs) != 2 {
+		t.Fatalf("want 2 legs (A→X, X→B), got %d: %+v", len(legs), legs)
+	}
+	// CSA минимизирует прибытие: edge (10:20→11:10) быстрее comfy (11:30)
+	if legs[1].TripID != "edge" {
+		t.Fatalf("want edge (bus) as fastest; got %s (%v)", legs[1].TripID, legs[1].Departure)
+	}
+	// фильтр по flight-only: fly-tight (90 мин < 2 ч) должен отсеяться,
+	// останется fly-ok
+	onlyFly := model.SearchParams{MaxTransfers: -1, AllowedModes: []model.Mode{model.ModeFlight}}
+	flegs, err := p.csa(net, "A", "B", dep("08:00"), onlyFly)
+	if err == nil && len(flegs) == 2 {
+		if flegs[1].TripID != "fly-ok" {
+			t.Fatalf("fly-tight (90m after arrival) must be rejected by 2h check-in; got %s (%v)", flegs[1].TripID, flegs[1].Departure)
+		}
+	}
+}
+
+func TestMinTransferNoBufferSameStartOrContinuation(t *testing.T) {
+	// стартовая посадка — буфер не нужен: рейс first отправляется в 09:00,
+	// пешеход стоит на A с 09:30... нет: departure 09:00 раньше 09:30 —
+	// берём сцену A→X напрямую: единственный рейс first должен быть доступен.
+	p, net := minTransferNet(t)
+	legs, err := p.csa(net, "A", "X", dep("08:30"), model.SearchParams{MaxTransfers: -1})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if len(legs) != 1 || legs[0].TripID != "first" {
+		t.Fatalf("first leg must board without buffer at origin; got %+v", legs)
+	}
+}
+
+func TestMinTransferDisabledKeepsOldBehavior(t *testing.T) {
+	p, net := minTransferNet(t)
+	p.minTransfer, p.flightCheckIn = 0, 0
+	legs, err := p.csa(net, "A", "B", dep("08:00"), model.SearchParams{MaxTransfers: -1})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if len(legs) != 2 || legs[1].TripID != "tight" {
+		t.Fatalf("without buffers tight (10:10) must be used; got %+v", legs)
 	}
 }
