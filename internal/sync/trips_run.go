@@ -43,9 +43,12 @@ type TripsRunConfig struct {
 	// сравнивает только затронутые маршруты, остальной канон
 	// не считается исчезнувшим.
 	TerminalScope bool
-	ParamsFor     func(model.DensityClass) verification.Params
-	ClassFor      func(string) model.DensityClass
-	Logger        *slog.Logger
+	// GapFill — автодобавление терминалов конечных стопов из дампа
+	// Яндекса (issue #16). Пустой DumpPath = шаг пропущен.
+	GapFill   GapFillConfig
+	ParamsFor func(model.DensityClass) verification.Params
+	ClassFor  func(string) model.DensityClass
+	Logger    *slog.Logger
 }
 
 type RouteOps struct {
@@ -65,6 +68,7 @@ type TripsRunSummary struct {
 	Skipped      []string            `json:"skipped_routes"`
 	ByRoute      map[string]RouteOps `json:"by_route"`
 	Waited       bool                `json:"waited"`
+	GapFill      *GapFillSummary     `json:"gap_fill,omitempty"`
 	Persist      PersistSummary      `json:"persist"`
 	FullTripRate float64             `json:"full_trip_rate"`
 }
@@ -256,6 +260,18 @@ func RunTripsSync(ctx context.Context, db store.Store, st TripsRunnerStore, trip
 	sum.Waited = waited
 	if !gatePass && !cfg.Force {
 		logger.Warn("starvation alert, regions blocked by gate", "blocked", blocked, "gate", cfg.CoverageGate)
+	}
+	// issue #16: конечные стопы без терминала в каноне закрываются
+	// станцией из дампа Яндекса (точный код) до attach — иначе
+	// межрегиональные рейсы целиком падают в skeleton_gap, хотя
+	// дамп несёт валидную станцию с кодом и координатами.
+	if cfg.GapFill.DumpPath != "" {
+		gf, terms2, err := GapFillEndpoints(ctx, st, terms, filtered, cfg.GapFill)
+		if err != nil {
+			return sum, err
+		}
+		terms = terms2
+		sum.GapFill = &gf
 	}
 	sum.Forced = cfg.Force
 	if filled, missing := ResolveStopCoords(filtered, terms, cfg.Source); missing > 0 {
