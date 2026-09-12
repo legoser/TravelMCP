@@ -451,6 +451,12 @@ func (a *App) networkForDay(ctx context.Context, day time.Time) (*model.Network,
 	}
 	net := model.NewNetwork()
 	for _, p := range a.registry.List() {
+		if e, ok := p.(interface{ Empty() bool }); ok && e.Empty() {
+			if a.logger != nil {
+				a.logger.DebugContext(ctx, "networkForDay: provider has no data, skipping", "provider", p.ID())
+			}
+			continue
+		}
 		var n *model.Network
 		var err error
 		switch prov := p.(type) {
@@ -631,6 +637,9 @@ func (a *App) networkForDay(ctx context.Context, day time.Time) (*model.Network,
 	net.BuildIndexes()
 	if a.logger != nil {
 		a.logger.DebugContext(ctx, "promote: network merged from registry", "providers", len(a.registry.List()), "stops", len(net.Stops), "routes", len(net.Routes), "trips", len(net.Trips), "connections", len(net.Connections), "transfers", len(net.Transfers))
+	}
+	if len(net.Stops) == 0 {
+		return nil, fmt.Errorf("нет транспортных данных: канон пуст и провайдеры без данных — запустите skeleton-sync или загрузите расписания (сбор данных)")
 	}
 	return net, nil
 }

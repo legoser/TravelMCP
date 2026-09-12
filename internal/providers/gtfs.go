@@ -26,6 +26,8 @@ func (p *GTFS) Health() HealthStatus {
 
 func (p *GTFS) Network() (*model.Network, error) { return p.adapter.Load() }
 
+func (p *GTFS) Empty() bool { return p.adapter.Empty() }
+
 func (p *GTFS) Capabilities() Capabilities {
 	return Capabilities{Modes: []model.Mode{model.ModeBus, model.ModeTram, model.ModeRail}}
 }

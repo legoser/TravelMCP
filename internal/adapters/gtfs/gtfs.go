@@ -21,6 +21,8 @@ type Adapter struct {
 
 func New(path string) *Adapter { return &Adapter{path: path} }
 
+func (a *Adapter) Empty() bool { return a.path == "" }
+
 func (a *Adapter) Load() (*model.Network, error) {
 	if a.path == "" {
 		return nil, fmt.Errorf("gtfs path empty")
