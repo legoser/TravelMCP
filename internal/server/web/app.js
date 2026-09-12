@@ -368,8 +368,16 @@ function rtLegRow(l){
   const nm=x=>x.name||x.stop_id||'—';
   const coord=x=>(+x.lat).toFixed(3)+','+(+x.lon).toFixed(3);
   const hint=l.time_hint?' <span class="badge pending" style="font-size:11px" title="'+l.time_hint+'">⚠ время уточнить</span>':'';
+  const tbadge=l.is_transit?' <span class="badge pending" style="font-size:11px;background:#fee;color:#933" title="транзитный рейс: садитесь/выходите на промежуточной остановке">транзит</span>':'';
+  let stops='';
+  if(l.stops&&l.stops.length){
+    stops='<div class="muted" style="font-size:11px;margin-top:4px">';
+    if(l.is_transit) stops+='<div>Маршрут рейса:</div>';
+    stops+='<span style="white-space:nowrap">'+l.stops.map((s,i)=>nm(s)+(s.stop_id!==undefined?' ('+s.stop_id+')':'')+(i<l.stops.length-1?' → ':'')).join('')+'</span>';
+    stops+='</div>';
+  }
   return '<tr>'
-    +'<td style="white-space:nowrap"><b>'+rtHM(l.departure)+'</b> → <b>'+rtHM(l.arrival)+'</b>'+hint+'</td>'
+    +'<td style="white-space:nowrap"><b>'+rtHM(l.departure)+'</b> → <b>'+rtHM(l.arrival)+'</b>'+hint+tbadge+stops+'</td>'
     +'<td style="white-space:nowrap">'+rtModeBadge(l.mode)+'</td>'
     +'<td>'+nm(l.from)+' <span class="muted" style="font-size:11px">'+coord(l.from)+'</span><br>↓ '+Math.round((new Date(l.arrival)-new Date(l.departure))/60000)+' мин'+(l.cost&&l.cost.amount?' • '+l.cost.amount+' '+l.cost.currency:'')+'</td>'
     +'<td>'+nm(l.to)+' <span class="muted" style="font-size:11px">'+coord(l.to)+'</span></td>'

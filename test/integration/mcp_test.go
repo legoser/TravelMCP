@@ -154,6 +154,11 @@ func TestFindRouteFlight(t *testing.T) {
 	common.AssertFlightJourney(t, client)
 }
 
+func TestFindRouteTransit(t *testing.T) {
+	_, client := newApp(t)
+	common.AssertTransitJourney(t, client)
+}
+
 func TestFindRouteNoRoute(t *testing.T) {
 	_, client := newApp(t)
 	common.AssertNoRoute(t, client)

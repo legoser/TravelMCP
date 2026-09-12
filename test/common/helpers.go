@@ -313,9 +313,11 @@ type JourneyView struct {
 }
 
 type LegView struct {
-	Mode string       `json:"mode"`
-	From LegPointView `json:"from"`
-	To   LegPointView `json:"to"`
+	Mode      string         `json:"mode"`
+	From      LegPointView   `json:"from"`
+	To        LegPointView   `json:"to"`
+	IsTransit bool           `json:"is_transit,omitempty"`
+	Stops     []LegPointView `json:"stops,omitempty"`
 }
 
 type LegPointView struct {
@@ -406,6 +408,46 @@ func AssertFlightJourney(t *testing.T, c *MCPClient) {
 	}
 	if want := time.Date(2026, 8, 30, 9, 5, 0, 0, time.UTC); !j.Arrival.Equal(want) {
 		t.Fatalf("arrival = %s, want %s", j.Arrival.Format(time.RFC3339), want.Format(time.RFC3339))
+	}
+}
+
+// AssertTransitJourney — сценарий посадки на промежуточной остановке транзитного рейса.
+// Рейс Юрга → Сухарка → Томск (Synth ID "yrg-tsk"); пассажир едет Юрга → Томск,
+// т.е. садится и выходит на промежуточных. В ответе: IsTransit=true, Stops
+// должен включать все остановки пассажира в порядке посадки-высадки.
+func AssertTransitJourney(t *testing.T, c *MCPClient) {
+	t.Helper()
+	text, isErr := c.CallTool(t, "find_route", map[string]any{
+		"from_lat": 56.2667, "from_lon": 93.3167,
+		"to_lat": 56.0100, "to_lon": 97.0400,
+		"departure": "2026-08-30T11:00:00Z",
+	})
+	if isErr {
+		t.Fatalf("transit route failed: %s", text)
+	}
+	j := assertJourney(t, text)
+
+	var transitLeg *LegView
+	for i := range j.Legs {
+		if j.Legs[i].IsTransit {
+			transitLeg = &j.Legs[i]
+			break
+		}
+	}
+	if transitLeg == nil {
+		t.Fatal("ожидался транзитный leg (is_transit=true) для Юрга→Томск")
+	}
+	if len(transitLeg.Stops) < 2 {
+		t.Fatalf("транзитный leg: stops=%d, хотя пассажир проходит минимум 2 остановки", len(transitLeg.Stops))
+	}
+	if transitLeg.From.StopID != "yrg" || transitLeg.To.StopID != "tsk" {
+		t.Errorf("from=%q to=%q, хотели yrg→tsk", transitLeg.From.StopID, transitLeg.To.StopID)
+	}
+	if transitLeg.Stops[0].StopID != transitLeg.From.StopID {
+		t.Errorf("stops[0]=%q не совпадает с from=%q", transitLeg.Stops[0].StopID, transitLeg.From.StopID)
+	}
+	if transitLeg.Stops[len(transitLeg.Stops)-1].StopID != transitLeg.To.StopID {
+		t.Errorf("stops[last]=%q не совпадает с to=%q", transitLeg.Stops[len(transitLeg.Stops)-1].StopID, transitLeg.To.StopID)
 	}
 }
 
