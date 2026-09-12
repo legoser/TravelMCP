@@ -220,9 +220,13 @@ func RunCollectTrips(ctx context.Context, st store.Store, rst TripsRunnerStore, 
 		WaitForGate: wait, Force: cc.Force, DryRun: false, Regions: regions,
 		TerminalScope: cc.TerminalScope,
 		Flatten:       cc.Flatten,
-		ParamsFor:     DefaultStopTerminalParamsFor(cfg.Verification),
-		ClassFor:      UrbanClassFor,
-		Logger:        logger,
+		GapFill: GapFillConfig{
+			DumpPath: sc.YandexDumpPath,
+			Logger:   logger,
+		},
+		ParamsFor: DefaultStopTerminalParamsFor(cfg.Verification),
+		ClassFor:  UrbanClassFor,
+		Logger:    logger,
 	}
 	inputSHA := tripsInputSHA(cc)
 	planID := ComputePlanID(LogicVersionID(), collectTripsConfigHash(cc), []string{inputSHA})
