@@ -66,6 +66,28 @@ func TestLoadSettlementsOverridesStaticEntry(t *testing.T) {
 	}
 }
 
+// issue #4: ExtractSettlement теперь возвращает Proper Case («Чажемто»),
+// такие теги обязаны проходить isPlausibleSettlement и попадать в газетир.
+func TestLoadSettlementsAcceptsProperCaseFromCommaNames(t *testing.T) {
+	g, err := DefaultGazetteer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := fakeSettlementSrc{list: []Settlement{
+		{Name: "Чажемто", Lat: 58.0675, Lon: 82.8293},
+	}}
+	added, skipped, err := g.LoadSettlements(context.Background(), src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if added != 1 || skipped != 0 {
+		t.Fatalf("Чажемто должен добавиться: added=%d skipped=%d", added, skipped)
+	}
+	if _, ok := g.Resolve("Чажемто"); !ok {
+		t.Fatal("Чажемто не резолвится после LoadSettlements")
+	}
+}
+
 func TestWordBoundContains(t *testing.T) {
 	cases := []struct {
 		name, query string

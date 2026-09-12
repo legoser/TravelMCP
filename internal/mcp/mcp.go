@@ -376,7 +376,7 @@ func (a *App) resolvePointWithPlace(ctx context.Context, args map[string]any, ki
 			if a.logger != nil {
 				a.logger.WarnContext(ctx, "resolvePoint: place not in gazetteer", "kind", kind, "place", place, "hint", "нет в каноне settlement-тегов и статических записях")
 			}
-			return model.Coords{}, nil, fmt.Errorf("%s: населённый пункт %q не найден", kind, place)
+			return model.Coords{}, nil, fmt.Errorf("%s: населённый пункт %q не найден в справочнике; проверьте название или укажите координаты %s_lat/%s_lon", kind, place, kind, kind)
 		}
 		if a.logger != nil {
 			a.logger.DebugContext(ctx, "resolvePoint: georesolve ok", "kind", kind, "place", place, "coords", rr.Coords, "method", rr.Method, "matched", rr.Matched)
