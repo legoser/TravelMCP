@@ -80,6 +80,9 @@ func NewWithConfig(metrics *telemetry.Metrics, engine string, logger *slog.Logge
 }
 
 func (p *Planner) acquire(ctx context.Context) error {
+	if p.sem == nil {
+		return nil
+	}
 	select {
 	case p.sem <- struct{}{}:
 		return nil
@@ -88,7 +91,11 @@ func (p *Planner) acquire(ctx context.Context) error {
 	}
 }
 
-func (p *Planner) release() { <-p.sem }
+func (p *Planner) release() {
+	if p.sem != nil {
+		<-p.sem
+	}
+}
 
 func (p *Planner) Plan(net *model.Network, from, to model.Coords, params model.SearchParams) (*model.Journey, error) {
 	return p.planWithStops(net, from, to, params, nil, nil)
