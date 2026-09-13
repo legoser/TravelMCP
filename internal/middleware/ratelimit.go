@@ -56,11 +56,30 @@ func NewRateLimiter(cfg config.HTTP) *RateLimiter {
 	if defBurst <= 0 {
 		defBurst = def.Burst
 	}
-	return &RateLimiter{
+	rl := &RateLimiter{
 		limiters:  map[string]*bucket{},
 		defRPS:    defRPS,
 		defBurst:  defBurst,
 		overrides: cfg.RateLimitOverrides,
+	}
+	go rl.cleanupLoop()
+	return rl
+}
+
+func (rl *RateLimiter) cleanupLoop() {
+	ticker := time.NewTicker(5 * time.Minute)
+	for range ticker.C {
+		rl.mu.Lock()
+		now := time.Now()
+		for k, b := range rl.limiters {
+			b.mu.Lock()
+			last := b.last
+			b.mu.Unlock()
+			if now.Sub(last) > 15*time.Minute {
+				delete(rl.limiters, k)
+			}
+		}
+		rl.mu.Unlock()
 	}
 }
 
