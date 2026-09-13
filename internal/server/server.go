@@ -216,8 +216,9 @@ func (s *Server) auth(next http.Handler, requiredScope string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.logger.DebugContext(r.Context(), "auth check", "path", r.URL.Path, "required", requiredScope, "remote", r.RemoteAddr)
 		if s.cfg.Auth.AdminToken == "" {
-			s.logger.WarnContext(r.Context(), "auth open-mode: ADMIN_TOKEN empty", "path", r.URL.Path)
-			next.ServeHTTP(w, r)
+			s.logger.ErrorContext(r.Context(), "auth error: ADMIN_TOKEN empty", "path", r.URL.Path)
+			w.Header().Set("WWW-Authenticate", `Bearer realm="travelmcp"`)
+			writeJSONResponse(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized", "message": "auth system is misconfigured"})
 			return
 		}
 		key := ""
