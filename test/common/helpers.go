@@ -87,6 +87,9 @@ func (b *safeBuffer) String() string {
 	return b.Buffer.String()
 }
 
+// AdminToken — тестовый API-ключ, выдаваемый StartServer во все smoke-сценарии.
+const AdminToken = "smoke-test-admin-token"
+
 // StartServer запускает собранный бинарник и возвращает его базовый URL.
 // Процесс корректно останавливается по SIGTERM в конце теста.
 func StartServer(t *testing.T, bin string, port int) string {
@@ -97,7 +100,7 @@ func StartServer(t *testing.T, bin string, port int) string {
 	cmd.Env = append(os.Environ(),
 		"HTTP_ADDR="+fmt.Sprintf("127.0.0.1:%d", port),
 		"PROVIDERS_ENABLED=synth",
-		"ADMIN_TOKEN=",
+		"ADMIN_TOKEN="+AdminToken,
 		"DATABASE_DSN=memory",
 		"TRAVELMCP__STORE__DSN=memory",
 		"TRAVELMCP__STORE__KIND=memory",
@@ -149,7 +152,20 @@ func waitHealthy(t *testing.T, addr string, logs *safeBuffer) {
 // Get выполняет GET-запрос и возвращает тело при статусе 200.
 func Get(t *testing.T, base, path string) []byte {
 	t.Helper()
-	resp, err := http.Get(base + path)
+	return GetWithKey(t, base, path, "")
+}
+
+// GetWithKey выполняет GET-запрос с API-ключом (X-API-Key) и возвращает тело при статусе 200.
+func GetWithKey(t *testing.T, base, path, key string) []byte {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, base+path, nil)
+	if err != nil {
+		t.Fatalf("GET %s: %v", path, err)
+	}
+	if key != "" {
+		req.Header.Set("X-API-Key", key)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET %s: %v", path, err)
 	}

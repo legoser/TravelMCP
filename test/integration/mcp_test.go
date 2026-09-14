@@ -27,11 +27,13 @@ func newApp(t *testing.T) (*httptest.Server, *common.MCPClient) {
 	reg := providers.NewRegistry([]string{"synth"})
 	metrics := telemetry.New()
 	cfg := config.Defaults()
+	cfg.Auth.AdminToken = "test-admin-token"
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ts := httptest.NewServer(server.New(cfg, logger, metrics, reg))
 	t.Cleanup(ts.Close)
 
 	client := common.NewMCPClient(ts.URL)
+	client.Key = "test-admin-token"
 	return ts, client
 }
 
@@ -88,7 +90,7 @@ func TestProvidersAndDashboardAPI(t *testing.T) {
 	ts, client := newApp(t)
 
 	var prov map[string]providers.HealthStatus
-	if err := json.Unmarshal(common.Get(t, ts.URL, "/api/v1/providers"), &prov); err != nil {
+	if err := json.Unmarshal(common.GetWithKey(t, ts.URL, "/api/v1/providers", client.Key), &prov); err != nil {
 		t.Fatalf("providers: %v", err)
 	}
 	synth, ok := prov["synth"]
@@ -104,7 +106,7 @@ func TestProvidersAndDashboardAPI(t *testing.T) {
 	var dash struct {
 		Counters []telemetry.Named `json:"counters"`
 	}
-	if err := json.Unmarshal(common.Get(t, ts.URL, "/api/v1/dashboard"), &dash); err != nil {
+	if err := json.Unmarshal(common.GetWithKey(t, ts.URL, "/api/v1/dashboard", client.Key), &dash); err != nil {
 		t.Fatalf("dashboard: %v", err)
 	}
 	found := false
@@ -171,6 +173,7 @@ func TestFindRouteValidation(t *testing.T) {
 
 func TestFindRouteDebugLogging(t *testing.T) {
 	cfg := config.Defaults()
+	cfg.Auth.AdminToken = "test-admin-token"
 	cfg.Log.Level = "debug"
 	cfg.Log.Format = "json"
 
@@ -192,6 +195,7 @@ func TestFindRouteDebugLogging(t *testing.T) {
 	t.Cleanup(ts.Close)
 
 	client := common.NewMCPClient(ts.URL)
+	client.Key = "test-admin-token"
 	common.AssertPlaceJourney(t, client)
 
 	_ = w.Close()
@@ -254,4 +258,34 @@ func TestToolsCallWithoutInitialize(t *testing.T) {
 	_, client := newApp(t)
 	common.AssertGroundJourney(t, client)
 	common.AssertFlightJourney(t, client)
+}
+
+// TestAuthFailsClosedWhenAdminTokenEmpty — fail-closed: пустой ADMIN_TOKEN
+// не открывает доступ, а гарантирует 401 на всех защищённых эндпоинтах.
+func TestAuthFailsClosedWhenAdminTokenEmpty(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Auth.AdminToken = ""
+	reg := providers.NewRegistry([]string{"synth"})
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ts := httptest.NewServer(server.New(cfg, logger, telemetry.New(), reg))
+	t.Cleanup(ts.Close)
+
+	for _, path := range []string{"/api/v1/providers", "/api/v1/dashboard", "/mcp", "/api/v1/review"} {
+		req, err := http.NewRequest(http.MethodGet, ts.URL+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("X-API-Key", "any-attempt")
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("%s with empty ADMIN_TOKEN: http %d, want 401 (fail-closed)", path, resp.StatusCode)
+		}
+		if www := resp.Header.Get("WWW-Authenticate"); www == "" {
+			t.Fatalf("%s: WWW-Authenticate header missing", path)
+		}
+	}
 }
