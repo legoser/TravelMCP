@@ -641,28 +641,20 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 	net := model.NewNetwork()
 	stopIDMap := map[int64]string{}
 	// canonical stops: stops_canonical + stop_names + terminals geom
-	srows, err := p.pool.Query(ctx, `SELECT sc.id, sc.terminal_id, ST_Y(sc.geom::geometry) as lat, ST_X(sc.geom::geometry) as lon, sc.stop_type, coalesce(sn.name, tname.name, 'stop') as name FROM stops_canonical sc JOIN terminals t ON t.id=sc.terminal_id AND t.valid_to IS NULL LEFT JOIN stop_names sn ON sn.stop_id=sc.id AND sn.lang='ru' LEFT JOIN terminal_names tname ON tname.terminal_id=sc.terminal_id AND tname.lang='ru'`)
+	// Use COALESCE to fall back to terminal geometry when stop geometry is NULL,
+	// avoiding a per-row query (N+1).
+	srows, err := p.pool.Query(ctx, `SELECT sc.id, sc.terminal_id, COALESCE(ST_Y(sc.geom::geometry), ST_Y(t.geom::geometry), 0) as lat, COALESCE(ST_X(sc.geom::geometry), ST_X(t.geom::geometry), 0) as lon, sc.stop_type, coalesce(sn.name, tname.name, 'stop') as name FROM stops_canonical sc JOIN terminals t ON t.id=sc.terminal_id AND t.valid_to IS NULL LEFT JOIN stop_names sn ON sn.stop_id=sc.id AND sn.lang='ru' LEFT JOIN terminal_names tname ON tname.terminal_id=sc.terminal_id AND tname.lang='ru'`)
 	if err != nil {
 		return nil, err
 	}
 	defer srows.Close()
 	for srows.Next() {
 		var id, terminalID int64
-		var lat, lon sql.NullFloat64
+		var lat, lon float64
 		var stopType, name sql.NullString
 		_ = srows.Scan(&id, &terminalID, &lat, &lon, &stopType, &name)
-		la, lo := 0.0, 0.0
-		if lat.Valid {
-			la = lat.Float64
-		}
-		if lon.Valid {
-			lo = lon.Float64
-		}
-		if !lat.Valid || !lon.Valid {
-			_ = p.pool.QueryRow(ctx, `SELECT ST_Y(geom::geometry), ST_X(geom::geometry) FROM terminals WHERE id=$1`, terminalID).Scan(&la, &lo)
-		}
 		code := fmt.Sprintf("%d", id)
-		net.Stops[code] = &model.Stop{ID: code, ProviderID: "gov-registry", Name: name.String, Lat: la, Lon: lo, Type: model.StopType(stopType.String)}
+		net.Stops[code] = &model.Stop{ID: code, ProviderID: "gov-registry", Name: name.String, Lat: lat, Lon: lon, Type: model.StopType(stopType.String)}
 		stopIDMap[id] = code
 	}
 	routeRows, err := p.pool.Query(ctx, `SELECT id, source_provider, carrier_id, external_route_code, short_name, long_name, mode FROM routes WHERE valid_to IS NULL`)
