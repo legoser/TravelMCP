@@ -780,9 +780,14 @@ func (p *Planner) csa(net *model.Network, fromStop, toStop string, depart time.T
 	}
 
 	conns := net.Connections
-	if len(conns) == 0 || conns[0].Departure.After(conns[len(conns)-1].Departure) {
-		tmp := make([]model.Connection, len(net.Connections))
-		copy(tmp, net.Connections)
+	if len(conns) > 1 && !sort.SliceIsSorted(conns, func(i, j int) bool {
+		if conns[i].Departure.Equal(conns[j].Departure) {
+			return conns[i].Arrival.Before(conns[j].Arrival)
+		}
+		return conns[i].Departure.Before(conns[j].Departure)
+	}) {
+		tmp := make([]model.Connection, len(conns))
+		copy(tmp, conns)
 		sort.Slice(tmp, func(i, j int) bool {
 			if tmp[i].Departure.Equal(tmp[j].Departure) {
 				return tmp[i].Arrival.Before(tmp[j].Arrival)
