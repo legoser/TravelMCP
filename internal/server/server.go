@@ -235,7 +235,7 @@ func (s *Server) auth(next http.Handler, requiredScope string) http.Handler {
 		} else if h := r.Header.Get("X-API-Key"); h != "" {
 			key = h
 		}
-		if s.cfg.Auth.AdminToken != "" && subtle.ConstantTimeCompare([]byte(key), []byte(s.cfg.Auth.AdminToken)) == 1 {
+		if subtle.ConstantTimeCompare([]byte(key), []byte(s.cfg.Auth.AdminToken)) == 1 {
 			s.logger.InfoContext(r.Context(), "auth admin token", "path", r.URL.Path, "remote", r.RemoteAddr)
 			ctx := context.WithValue(r.Context(), ctxUserKey, &store.UserRow{ID: 0, Email: "admin", Role: "admin", Status: "active"})
 			next.ServeHTTP(w, r.WithContext(ctx))
@@ -1995,8 +1995,6 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSONResponse(w, http.StatusOK, map[string]any{
 		"http":          map[string]any{"addr": cfg.HTTP.Addr, "rate_limit": cfg.HTTP.RateLimit},
 		"store":         map[string]any{"dsn": maskDSNShort(cfg.Store.DSN), "kind": cfg.Store.Kind},
-		"cache":         cfg.Cache,
-		"queue":         cfg.Queue,
 		"providers":     cfg.Providers,
 		"planner":       cfg.Planner,
 		"log":           cfg.Log,

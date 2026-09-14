@@ -11,15 +11,6 @@ store:
   kind: "postgres" # postgres|sqlite|memory — prod: postgres (pgx/PostGIS)
   dsn: "${DATABASE_DSN}" # postgres://user:***@db:5432/travelmcp?sslmode=disable
 
-cache:
-  kind: "redis" # memory|redis
-  addr: "${CACHE_ADDR:-redis:6379}"
-  ttl: "5m"
-
-queue:
-  kind: "nats" # memory|nats
-  url: "${QUEUE_URL:-nats://nats:4222}"
-
 providers:
   # Legacy JSON-провайдер intercity вырезан (Фаза 6): канон пишут
   # skeleton-sync + trips-sync, сеть строит Store.
