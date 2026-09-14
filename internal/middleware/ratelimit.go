@@ -44,7 +44,10 @@ type RateLimiter struct {
 	defRPS    int
 	defBurst  int
 	overrides map[string]config.RateLimit
+	idleTTL   time.Duration
 }
+
+const defaultRateLimiterIdleTTL = 15 * time.Minute
 
 func NewRateLimiter(cfg config.HTTP) *RateLimiter {
 	defRPS := cfg.RateLimit.RPS
@@ -56,30 +59,27 @@ func NewRateLimiter(cfg config.HTTP) *RateLimiter {
 	if defBurst <= 0 {
 		defBurst = def.Burst
 	}
-	rl := &RateLimiter{
+	return &RateLimiter{
 		limiters:  map[string]*bucket{},
 		defRPS:    defRPS,
 		defBurst:  defBurst,
 		overrides: cfg.RateLimitOverrides,
+		idleTTL:   defaultRateLimiterIdleTTL,
 	}
-	go rl.cleanupLoop()
-	return rl
 }
 
-func (rl *RateLimiter) cleanupLoop() {
-	ticker := time.NewTicker(5 * time.Minute)
-	for range ticker.C {
-		rl.mu.Lock()
-		now := time.Now()
-		for k, b := range rl.limiters {
-			b.mu.Lock()
-			last := b.last
-			b.mu.Unlock()
-			if now.Sub(last) > 15*time.Minute {
-				delete(rl.limiters, k)
-			}
+// cleanupLocked удаляет корзины, не использовавшиеся дольше idleTTL.
+// Вызывается лениво при создании новой корзины, поэтому размер карты
+// ограничен активными клиентами и не требует фоновой горутины,
+// время жизни которой не связано с временем жизни лимитера.
+func (rl *RateLimiter) cleanupLocked(now time.Time) {
+	for k, b := range rl.limiters {
+		b.mu.Lock()
+		idle := now.Sub(b.last)
+		b.mu.Unlock()
+		if idle > rl.idleTTL {
+			delete(rl.limiters, k)
 		}
-		rl.mu.Unlock()
 	}
 }
 
@@ -89,6 +89,9 @@ func (rl *RateLimiter) getLimiter(key, path string) *bucket {
 	k := key + "|" + path
 	if lim, ok := rl.limiters[k]; ok {
 		return lim
+	}
+	if len(rl.limiters) >= rl.maxTracked() {
+		rl.cleanupLocked(time.Now())
 	}
 	rps, burst := rl.defRPS, rl.defBurst
 	if ov, ok := rl.overrides[path]; ok && (ov.RPS > 0 || ov.Burst > 0) {
@@ -102,6 +105,14 @@ func (rl *RateLimiter) getLimiter(key, path string) *bucket {
 	lim := newBucket(rps, burst)
 	rl.limiters[k] = lim
 	return lim
+}
+
+// maxTracked — мягкий верхний предел корзин, при превышении которого
+// запускается ленивая очистка. Достаточно большим, чтобы не срабатывать
+// на обычной нагрузке, но ограничивает память при сканировании
+// множества IP/путей.
+func (rl *RateLimiter) maxTracked() int {
+	return 10000
 }
 
 func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
