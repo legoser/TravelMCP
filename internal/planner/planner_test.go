@@ -672,4 +672,3 @@ func TestCSASortsNonMonotonicConnections(t *testing.T) {
 		t.Fatalf("expected earliest arrival trip t2, got %s", legs[1].TripID)
 	}
 }
-
