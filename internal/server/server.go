@@ -210,7 +210,15 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 
 type ctxKey string
 
-const ctxUserKey ctxKey = "user"
+const (
+	ctxUserKey ctxKey = "user"
+
+	defaultPageLimit    = 20
+	maxPageLimit        = 100
+	maxMultipartFormMem = 32 << 20
+	maxMCPBodySize      = 1 << 20
+	maxLogBodySize      = 4096
+)
 
 func (s *Server) auth(next http.Handler, requiredScope string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -831,7 +839,7 @@ func (s *Server) handleImportGTFS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.Contains(r.Header.Get("Content-Type"), "multipart/form-data") {
-		if err := r.ParseMultipartForm(32 << 20); err == nil {
+		if err := r.ParseMultipartForm(maxMultipartFormMem); err == nil {
 			f, hdr, err := r.FormFile("file")
 			if err == nil {
 				defer f.Close()
@@ -913,10 +921,10 @@ func (s *Server) handleAdminListTerminals(w http.ResponseWriter, r *http.Request
 		writeJSONResponse(w, http.StatusOK, map[string]any{"items": []any{}, "total": 0})
 		return
 	}
-	limit := 20
+	limit := defaultPageLimit
 	offset := 0
 	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 100 {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= maxPageLimit {
 			limit = n
 		}
 	}
@@ -2202,7 +2210,7 @@ func writeJSONResponse(w http.ResponseWriter, status int, v any) {
 func (s *Server) mcpJSONValidation(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && strings.Contains(r.Header.Get("Content-Type"), "application/json") {
-			body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+			body, err := io.ReadAll(io.LimitReader(r.Body, maxMCPBodySize))
 			if err != nil {
 				writeJSONRPCParseError(w, err)
 				return
@@ -2284,7 +2292,7 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 		var bodyLog string
 		if s.logger.Enabled(r.Context(), slog.LevelDebug) && (r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch) {
 			if r.Body != nil {
-				limited := io.LimitReader(r.Body, 4096)
+				limited := io.LimitReader(r.Body, maxLogBodySize)
 				b, _ := io.ReadAll(limited)
 				if len(b) > 0 {
 					bodyLog = string(b)
