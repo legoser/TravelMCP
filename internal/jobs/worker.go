@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"travelmcp/internal/store"
@@ -12,9 +13,9 @@ import (
 
 type Handler func(ctx context.Context, job store.JobRow) error
 
-// Локальные значения воркера (не конфиг): maxAttempts — попыток до
-// dead-letter (транзиентные ошибки переживают ретраи с Backoff);
-// defaultPollInterval — опрос очереди, когда Run вызван без интервала.
+// Worker-local values (not config): maxAttempts — attempts before
+// dead-letter (transient errors survive retries with Backoff);
+// defaultPollInterval — queue poll when Run is called without interval.
 const (
 	maxAttempts         = 5
 	defaultPollInterval = 5 * time.Second
@@ -150,19 +151,14 @@ func isRateLimited(err error) bool {
 	if err == nil {
 		return false
 	}
-	s := err.Error()
-	return contains(s, "429") || contains(s, "rate") || contains(s, "quota")
-}
-
-func contains(s, sub string) bool {
-	return len(s) >= len(sub) && (func() bool {
-		for i := 0; i <= len(s)-len(sub); i++ {
-			if s[i:i+len(sub)] == sub {
-				return true
-			}
-		}
-		return false
-	})()
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "429") ||
+		strings.Contains(s, "quota") ||
+		strings.Contains(s, "rate limit") ||
+		strings.Contains(s, "rate_limit") ||
+		strings.Contains(s, "ratelimit") ||
+		strings.Contains(s, "too many requests") ||
+		strings.Contains(s, "try again")
 }
 
 func (w *Worker) Run(ctx context.Context, interval time.Duration) {
