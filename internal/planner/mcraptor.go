@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"travelmcp/internal/geo"
 	"travelmcp/internal/model"
 )
 
@@ -56,6 +57,58 @@ func mergeLabel(bags map[string][]*mcLabel, L *mcLabel) bool {
 // earliest arrival within the transfer limit. Boarding/day-roll/buffer/speed
 // semantics mirror raptor; no-route falls back to csa like raptor does.
 func (p *Planner) mcraptor(net *model.Network, fromStop, toStop string, depart time.Time, params model.SearchParams) ([]model.Leg, error) {
+	bags := p.mcraptorBags(net, fromStop, depart, params)
+	best := selectTargetLabel(bags[toStop], params.MaxTransfers)
+	if best == nil {
+		return p.csa(net, fromStop, toStop, depart, params)
+	}
+	legs := legsForLabel(p, net, best, fromStop)
+	if mx := params.MaxTransfers; mx > 0 && len(legs)-1 > mx {
+		return nil, fmt.Errorf("planner: маршрут требует %d пересадок, больше лимита %d", len(legs)-1, mx)
+	}
+	if params.MaxTransfers == 0 && len(legs)-1 > 0 {
+		return nil, fmt.Errorf("planner: маршрут требует пересадок, а лимит — без пересадок")
+	}
+	return legs, nil
+}
+
+// selectTargetLabel — earliest arrival within the transfer limit
+// (trips-1, floor 0); ties go to fewer trips.
+func selectTargetLabel(bag []*mcLabel, maxTransfers int) *mcLabel {
+	var best *mcLabel
+	for _, l := range bag {
+		tr := l.trips - 1
+		if tr < 0 {
+			tr = 0
+		}
+		if maxTransfers >= 0 && tr > maxTransfers {
+			continue
+		}
+		if best == nil || l.arr.Before(best.arr) || (l.arr.Equal(best.arr) && l.trips < best.trips) {
+			best = l
+		}
+	}
+	return best
+}
+
+// legsForLabel — reconstruct transit legs along the label parent chain.
+func legsForLabel(p *Planner, net *model.Network, best *mcLabel, fromStop string) []model.Leg {
+	pred := map[string]*prev{}
+	arr := map[string]time.Time{}
+	for cur := best; cur != nil; {
+		pred[cur.stop] = cur.pr
+		arr[cur.stop] = cur.arr
+		if cur.stop == fromStop {
+			break
+		}
+		cur = cur.parent
+	}
+	return buildLegs(net, arr, p.reconstruct(pred, fromStop, best.stop))
+}
+
+// mcraptorBags — search core: Pareto label bags per stop. Shared by the
+// single-best query and the native alternatives front.
+func (p *Planner) mcraptorBags(net *model.Network, fromStop string, depart time.Time, params model.SearchParams) map[string][]*mcLabel {
 	maxTransfers := params.MaxTransfers
 	rounds := maxTransfers + 1
 	if maxTransfers < 0 {
@@ -220,39 +273,55 @@ func (p *Planner) mcraptor(net *model.Network, fromStop, toStop string, depart t
 		}
 	}
 
-	var best *mcLabel
-	for _, l := range bags[toStop] {
-		tr := l.trips - 1
-		if tr < 0 {
-			tr = 0
-		}
-		if maxTransfers >= 0 && tr > maxTransfers {
+	return bags
+}
+
+// nativeAlternatives — alternatives front from the SAME McRAPTOR run family:
+// non-dominated target labels (same departure) instead of the N re-runs
+// with shifted departures. Assembly mirrors paretoAlternatives (transit
+// legs + access/egress-adjusted endpoints, preference sort, best excluded,
+// cap 2) so downstream swap/pricing behave identically.
+func (p *Planner) nativeAlternatives(net *model.Network, from, to model.Coords, params model.SearchParams, fromStop, toStop *model.Stop, best *model.Journey, transitDepart time.Time) []model.Journey {
+	bags := p.mcraptorBags(net, fromStop.ID, transitDepart, params)
+	labels := append([]*mcLabel(nil), bags[toStop.ID]...)
+	pref := params.Preference
+	if pref == "" {
+		pref = model.PreferenceTransfers
+	}
+	if pref == model.PreferenceTransfers {
+		sort.Slice(labels, func(i, j int) bool {
+			tri, trj := labels[i].trips, labels[j].trips
+			if tri != trj {
+				return tri < trj
+			}
+			return labels[i].arr.Before(labels[j].arr)
+		})
+	} else {
+		sort.Slice(labels, func(i, j int) bool {
+			if labels[i].arr.Equal(labels[j].arr) {
+				return labels[i].trips < labels[j].trips
+			}
+			return labels[i].arr.Before(labels[j].arr)
+		})
+	}
+	accessMin := geo.WalkTimeMinutes(geo.Haversine(from, fromStop.Coordinates()))
+	egressMin := geo.WalkTimeMinutes(geo.Haversine(to, toStop.Coordinates()))
+	var alts []model.Journey
+	for _, l := range labels {
+		legs := legsForLabel(p, net, l, fromStop.ID)
+		if len(legs) == 0 {
 			continue
 		}
-		if best == nil || l.arr.Before(best.arr) || (l.arr.Equal(best.arr) && l.trips < best.trips) {
-			best = l
+		j := model.Journey{From: from, To: to, Legs: legs, Transfers: len(legs) - 1}
+		j.Departure = legs[0].Departure.Add(-time.Duration(accessMin) * time.Minute)
+		j.Arrival = legs[len(legs)-1].Arrival.Add(time.Duration(egressMin) * time.Minute)
+		if j.Arrival.Equal(best.Arrival) && j.Transfers == best.Transfers {
+			continue
 		}
-	}
-	if best == nil {
-		return p.csa(net, fromStop, toStop, depart, params)
-	}
-	pred := map[string]*prev{}
-	arr := map[string]time.Time{}
-	for cur := best; cur != nil; {
-		pred[cur.stop] = cur.pr
-		arr[cur.stop] = cur.arr
-		if cur.stop == fromStop {
+		alts = append(alts, j)
+		if len(alts) >= 2 {
 			break
 		}
-		cur = cur.parent
 	}
-	steps := p.reconstruct(pred, fromStop, toStop)
-	legs := buildLegs(net, arr, steps)
-	if maxTransfers > 0 && len(legs)-1 > maxTransfers {
-		return nil, fmt.Errorf("planner: маршрут требует %d пересадок, больше лимита %d", len(legs)-1, maxTransfers)
-	}
-	if maxTransfers == 0 && len(legs)-1 > 0 {
-		return nil, fmt.Errorf("planner: маршрут требует пересадок, а лимит — без пересадок")
-	}
-	return legs, nil
+	return alts
 }

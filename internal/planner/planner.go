@@ -356,7 +356,7 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 		})
 		journey.Departure = journey.Legs[0].Departure
 		journey.Arrival = journey.Legs[len(journey.Legs)-1].Arrival
-		journey.Alternatives = p.paretoAlternatives(net, from, to, params, fromStop, toStop, journey)
+		journey.Alternatives = p.alternatives(net, from, to, params, fromStop, toStop, journey, departAtStop)
 		pricing.EnrichJourney(net, journey)
 		pref := params.Preference
 		if pref == "" {
@@ -449,7 +449,7 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 	})
 
 	journey.Arrival = journey.Legs[len(journey.Legs)-1].Arrival
-	journey.Alternatives = p.paretoAlternatives(net, from, to, params, fromStop, toStop, journey)
+	journey.Alternatives = p.alternatives(net, from, to, params, fromStop, toStop, journey, departAtStop)
 	pricing.EnrichJourney(net, journey)
 	pref := params.Preference
 	if pref == "" {
@@ -484,6 +484,17 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 		p.metrics.Inc("planner.planned")
 	}
 	return journey, nil
+}
+
+// alternatives — dispatch: mcraptor serves the native Pareto front from the
+// same-departure label bags (one extra search instead of up to 6 shifted
+// re-runs); csa/raptor keep the departure-shifted heuristic for
+// missed-departure scenarios.
+func (p *Planner) alternatives(net *model.Network, from, to model.Coords, params model.SearchParams, fromStop, toStop *model.Stop, best *model.Journey, transitDepart time.Time) []model.Journey {
+	if p.engine == "mcraptor" {
+		return p.nativeAlternatives(net, from, to, params, fromStop, toStop, best, transitDepart)
+	}
+	return p.paretoAlternatives(net, from, to, params, fromStop, toStop, best)
 }
 
 func (p *Planner) paretoAlternatives(net *model.Network, from, to model.Coords, params model.SearchParams, fromStop, toStop *model.Stop, best *model.Journey) []model.Journey {

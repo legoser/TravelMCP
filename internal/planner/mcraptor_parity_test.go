@@ -82,7 +82,10 @@ func TestMcraptorParityIntercity(t *testing.T) {
 }
 
 // TestMcraptorTransferLimitChoice — критерий вместо пост-проверки: быстрый
-// маршрут с пересадкой и медленный прямой. При лимите 0 mcraptor обязан
+// маршрут с пересадкой и медленный прямой. Нативный фронт видит обоих
+// (эвристика сдвигов видела только попутных победителей), поэтому при
+// дефолтном preference=transfers лучшим становится прямой 08:00,
+// а при preference=arrival — быстрый 06:35. При лимите 0 mcraptor обязан
 // выбрать прямой (раннее прибытие среди допустимых), а не упасть.
 func TestMcraptorTransferLimitChoice(t *testing.T) {
 	day := time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC)
@@ -115,8 +118,35 @@ func TestMcraptorTransferLimitChoice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unlimited: %v", err)
 	}
+	// Default preference=transfers: the slow direct wins as best, the fast
+	// one stays visible as the alternative (invisible to the old heuristic).
+	if mc.Transfers != 0 {
+		t.Fatalf("default-pref best transfers=%d, want 0 (slow direct)", mc.Transfers)
+	}
+	if got := mc.Arrival.Hour()*60 + mc.Arrival.Minute(); got != 480 {
+		t.Fatalf("default-pref arrival=%v, want 08:00", mc.Arrival)
+	}
+	if len(mc.Alternatives) != 1 || mc.Alternatives[0].Transfers != 1 {
+		t.Fatalf("want exactly the fast alternative (transfers=1), got %+v", mc.Alternatives)
+	}
+
+	mc, err = NewWithEngine(nil, "mcraptor").Plan(net, from, to,
+		model.SearchParams{Departure: day.Add(6 * time.Hour), MaxTransfers: -1, Preference: model.PreferenceArrival})
+	if err != nil {
+		t.Fatalf("arrival-pref: %v", err)
+	}
 	if got := mc.Arrival.Hour()*60 + mc.Arrival.Minute(); got != 395 {
-		t.Fatalf("unlimited arrival=%v, want 06:35 (fast with transfer)", mc.Arrival)
+		t.Fatalf("arrival-pref arrival=%v, want 06:35 (fast with transfer)", mc.Arrival)
+	}
+
+	arrival := day.Add(8 * time.Hour)
+	mc, err = NewWithEngine(nil, "mcraptor").Plan(net, from, to,
+		model.SearchParams{Arrival: &arrival, MaxTransfers: -1, Preference: model.PreferenceArrival})
+	if err != nil {
+		t.Fatalf("arrival query: %v", err)
+	}
+	if got := mc.Arrival.Hour()*60 + mc.Arrival.Minute(); got != 395 {
+		t.Fatalf("arrival query arrival=%v, want 06:35", mc.Arrival)
 	}
 
 	mc, err = NewWithEngine(nil, "mcraptor").Plan(net, from, to,
