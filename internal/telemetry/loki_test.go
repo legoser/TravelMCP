@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,10 +26,13 @@ func TestLokiHandlerReceivesLogsWithTraceID(t *testing.T) {
 		} `json:"streams"`
 	}
 	var sent []pushPayload
+	var mu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body pushPayload
 		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
 		sent = append(sent, body)
+		mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer srv.Close()
@@ -42,10 +46,13 @@ func TestLokiHandlerReceivesLogsWithTraceID(t *testing.T) {
 	lg.DebugContext(ctx, "test message", "key", "value")
 
 	time.Sleep(500 * time.Millisecond)
-	if len(sent) == 0 {
+	mu.Lock()
+	sentCopy := append([]pushPayload(nil), sent...)
+	mu.Unlock()
+	if len(sentCopy) == 0 {
 		t.Fatal("expected at least one Loki push request")
 	}
-	first := sent[0]
+	first := sentCopy[0]
 	if len(first.Streams) == 0 || len(first.Streams[0].Values) == 0 {
 		t.Fatalf("malformed push payload: %+v", first)
 	}
@@ -67,10 +74,13 @@ func TestLokiHandlerLevelLabels(t *testing.T) {
 		} `json:"streams"`
 	}
 	var sent []pushPayload
+	var mu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body pushPayload
 		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
 		sent = append(sent, body)
+		mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer srv.Close()
@@ -86,12 +96,15 @@ func TestLokiHandlerLevelLabels(t *testing.T) {
 	lg.Error("error msg")
 
 	time.Sleep(500 * time.Millisecond)
-	if len(sent) == 0 {
+	mu.Lock()
+	sentCopy := append([]pushPayload(nil), sent...)
+	mu.Unlock()
+	if len(sentCopy) == 0 {
 		t.Fatal("expected at least one Loki push request")
 	}
 
 	levels := map[string]bool{}
-	for _, p := range sent {
+	for _, p := range sentCopy {
 		for _, s := range p.Streams {
 			lvl := s.Stream["level"]
 			if lvl == "" {
@@ -115,10 +128,13 @@ func TestLokiHandlerJSONFields(t *testing.T) {
 		} `json:"streams"`
 	}
 	var sent []pushPayload
+	var mu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body pushPayload
 		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
 		sent = append(sent, body)
+		mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer srv.Close()
@@ -131,10 +147,13 @@ func TestLokiHandlerJSONFields(t *testing.T) {
 	lg.InfoContext(context.Background(), "search", "route", "X", "status", 200, "count", 5)
 
 	time.Sleep(500 * time.Millisecond)
-	if len(sent) == 0 {
+	mu.Lock()
+	sentCopy := append([]pushPayload(nil), sent...)
+	mu.Unlock()
+	if len(sentCopy) == 0 {
 		t.Fatal("expected at least one Loki push request")
 	}
-	line := sent[0].Streams[0].Values[0][1]
+	line := sentCopy[0].Streams[0].Values[0][1]
 
 	var parsed map[string]any
 	if err := json.Unmarshal([]byte(line), &parsed); err != nil {

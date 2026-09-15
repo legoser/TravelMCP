@@ -641,3 +641,34 @@ func TestMinTransferDisabledKeepsOldBehavior(t *testing.T) {
 		t.Fatalf("without buffers tight (10:10) must be used; got %+v", legs)
 	}
 }
+
+func TestCSASortsNonMonotonicConnections(t *testing.T) {
+	base := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+	net := &model.Network{
+		Stops: map[string]*model.Stop{
+			"S1": {ID: "S1"},
+			"S2": {ID: "S2"},
+			"S3": {ID: "S3"},
+		},
+		Connections: []model.Connection{
+			// First: 10:00
+			{TripID: "t1", From: "S1", To: "S2", Departure: base, Arrival: base.Add(10 * time.Minute), Mode: model.ModeBus},
+			// Out-of-order in the middle: 10:30 before 10:15
+			{TripID: "t3", From: "S2", To: "S3", Departure: base.Add(30 * time.Minute), Arrival: base.Add(40 * time.Minute), Mode: model.ModeBus},
+			{TripID: "t2", From: "S2", To: "S3", Departure: base.Add(15 * time.Minute), Arrival: base.Add(25 * time.Minute), Mode: model.ModeBus},
+			// Last: 11:00 (so conns[0].Departure is before conns[len-1].Departure)
+			{TripID: "t4", From: "S2", To: "S3", Departure: base.Add(60 * time.Minute), Arrival: base.Add(70 * time.Minute), Mode: model.ModeBus},
+		},
+	}
+	p := New(nil)
+	legs, err := p.csa(net, "S1", "S3", base, model.SearchParams{MaxTransfers: -1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(legs) != 2 {
+		t.Fatalf("expected 2 legs, got %d", len(legs))
+	}
+	if legs[1].TripID != "t2" {
+		t.Fatalf("expected earliest arrival trip t2, got %s", legs[1].TripID)
+	}
+}

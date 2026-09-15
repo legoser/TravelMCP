@@ -48,14 +48,14 @@ func TestSmokeHealthAPI(t *testing.T) {
 	}
 
 	var prov map[string]providers.HealthStatus
-	if err := json.Unmarshal(common.Get(t, base, "/api/v1/providers"), &prov); err != nil {
+	if err := json.Unmarshal(common.GetWithKey(t, base, "/api/v1/providers", common.AdminToken), &prov); err != nil {
 		t.Fatalf("providers: %v", err)
 	}
 	if !prov["synth"].Up {
 		t.Fatalf("synth not up: %+v", prov["synth"])
 	}
 
-	common.Get(t, base, "/api/v1/dashboard")
+	common.GetWithKey(t, base, "/api/v1/dashboard", common.AdminToken)
 	common.Get(t, base, "/readyz")
 }
 
@@ -63,6 +63,7 @@ func TestSmokeMCPFlow(t *testing.T) {
 	base := common.StartServer(t, builtBinary(t), common.FreePort(t))
 
 	client := common.NewMCPClient(base)
+	client.Key = common.AdminToken
 
 	names := client.ToolNames(t)
 	if len(names) == 0 {

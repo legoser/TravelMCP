@@ -30,17 +30,6 @@ type Store struct {
 	DSN  string `yaml:"dsn"`
 }
 
-type Cache struct {
-	Kind string `yaml:"kind"`
-	Addr string `yaml:"addr"`
-	TTL  string `yaml:"ttl"`
-}
-
-type Queue struct {
-	Kind string `yaml:"kind"`
-	URL  string `yaml:"url"`
-}
-
 type GTFS struct {
 	Path   string `yaml:"path"`
 	TmpDir string `yaml:"tmp_dir"`
@@ -176,8 +165,6 @@ type Sync struct {
 type Config struct {
 	HTTP          HTTP          `yaml:"http"`
 	Store         Store         `yaml:"store"`
-	Cache         Cache         `yaml:"cache"`
-	Queue         Queue         `yaml:"queue"`
 	Providers     Providers     `yaml:"providers"`
 	Auth          Auth          `yaml:"auth"`
 	Geocoder      Geocoder      `yaml:"geocoder"`
@@ -204,8 +191,6 @@ func Defaults() *Config {
 			RateLimit:         RateLimit{RPS: 100, Burst: 200},
 		},
 		Store: Store{Kind: "memory"},
-		Cache: Cache{Kind: "memory", TTL: "5m"},
-		Queue: Queue{Kind: "memory"},
 		Providers: Providers{
 			Enabled: []string{},
 		},
@@ -706,13 +691,6 @@ func setByPath(cfg *Config, parts []string, v string) {
 		}
 		if len(parts) == 2 && parts[1] == "kind" {
 			cfg.Store.Kind = v
-		}
-	case "cache":
-		if len(parts) == 2 && parts[1] == "kind" {
-			cfg.Cache.Kind = v
-		}
-		if len(parts) == 2 && parts[1] == "addr" {
-			cfg.Cache.Addr = v
 		}
 	case "log":
 		if len(parts) == 2 && parts[1] == "level" {

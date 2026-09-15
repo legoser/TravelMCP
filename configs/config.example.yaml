@@ -12,15 +12,6 @@ store:
   # postgres: dsn: "postgres://user:***@localhost:5432/travelmcp?sslmode=disable"
   dsn: "${DATABASE_DSN:-}" # env DATABASE_DSN или TRAVELMCP__STORE__DSN
 
-cache:
-  kind: "memory" # memory|redis
-  addr: ""
-  ttl: "1440m"
-
-queue:
-  kind: "memory" # memory|nats
-  url: ""
-
 providers:
   # По умолчанию источников нет: реальные провайдеры подключаются по мере
   # реализации. Мок synth для демо/тестов включается явно:
