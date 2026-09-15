@@ -574,9 +574,13 @@ func (p *PostgresStore) ListTerminalsFiltered(ctx context.Context, limit, offset
 	hasQ := q != ""
 	var total int
 	if hasQ {
-		_ = p.pool.QueryRow(ctx, `SELECT count(*) FROM terminals t WHERE t.valid_to IS NULL AND (EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE '%' || $1 || '%') OR EXISTS (SELECT 1 FROM terminal_aliases ta WHERE ta.terminal_id=t.id AND ta.alias ILIKE '%' || $1 || '%'))`, q).Scan(&total)
+		if err := p.pool.QueryRow(ctx, `SELECT count(*) FROM terminals t WHERE t.valid_to IS NULL AND (EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE '%' || $1 || '%') OR EXISTS (SELECT 1 FROM terminal_aliases ta WHERE ta.terminal_id=t.id AND ta.alias ILIKE '%' || $1 || '%'))`, q).Scan(&total); err != nil {
+			return nil, 0, fmt.Errorf("count terminals: %w", err)
+		}
 	} else {
-		_ = p.pool.QueryRow(ctx, `SELECT count(*) FROM terminals WHERE valid_to IS NULL`).Scan(&total)
+		if err := p.pool.QueryRow(ctx, `SELECT count(*) FROM terminals WHERE valid_to IS NULL`).Scan(&total); err != nil {
+			return nil, 0, fmt.Errorf("count terminals: %w", err)
+		}
 	}
 	var rows pgx.Rows
 	var err error
@@ -598,8 +602,13 @@ func (p *PostgresStore) ListTerminalsFiltered(ctx context.Context, limit, offset
 		var placeID *int64
 		var validFrom, validTo string
 		var tripsServed int64
-		_ = rows.Scan(&id, &name, &lat, &lon, &locked, &placeID, &validFrom, &validTo, &tripsServed)
+		if err := rows.Scan(&id, &name, &lat, &lon, &locked, &placeID, &validFrom, &validTo, &tripsServed); err != nil {
+			return nil, 0, fmt.Errorf("list terminals: %w", err)
+		}
 		out = append(out, map[string]any{"id": id, "name": name, "lat": lat, "lon": lon, "is_locked": locked, "place_id": placeID, "valid_from": validFrom, "valid_to": validTo, "trips_served": tripsServed, "dead": tripsServed == 0})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("list terminals: %w", err)
 	}
 	return out, total, nil
 }
@@ -657,10 +666,15 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 		var id, terminalID int64
 		var lat, lon float64
 		var stopType, name sql.NullString
-		_ = srows.Scan(&id, &terminalID, &lat, &lon, &stopType, &name)
+		if err := srows.Scan(&id, &terminalID, &lat, &lon, &stopType, &name); err != nil {
+			return nil, fmt.Errorf("load stops: %w", err)
+		}
 		code := fmt.Sprintf("%d", id)
 		net.Stops[code] = &model.Stop{ID: code, ProviderID: "gov-registry", Name: name.String, Lat: lat, Lon: lon, Type: model.StopType(stopType.String)}
 		stopIDMap[id] = code
+	}
+	if err := srows.Err(); err != nil {
+		return nil, fmt.Errorf("load stops: %w", err)
 	}
 	routeRows, err := p.pool.Query(ctx, `SELECT id, source_provider, carrier_id, external_route_code, short_name, long_name, mode FROM routes WHERE valid_to IS NULL`)
 	if err != nil {
@@ -671,7 +685,9 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 	routeIDToMode := map[int64]string{}
 	for routeRows.Next() {
 		var r RouteRow
-		_ = routeRows.Scan(&r.ID, &r.ProviderID, &r.CarrierID, &r.ExternalRouteCode, &r.ShortName, &r.LongName, &r.Mode)
+		if err := routeRows.Scan(&r.ID, &r.ProviderID, &r.CarrierID, &r.ExternalRouteCode, &r.ShortName, &r.LongName, &r.Mode); err != nil {
+			return nil, fmt.Errorf("load routes: %w", err)
+		}
 		if len(allow) > 0 && !allow[r.ProviderID] {
 			continue
 		}
@@ -683,20 +699,30 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 		}
 		net.Routes[r.ExternalRouteCode] = route
 	}
+	if err := routeRows.Err(); err != nil {
+		return nil, fmt.Errorf("load routes: %w", err)
+	}
 	// carriers + route→carrier: контакты для fuzzy-легов (§5.4)
 	routeCarrier := map[string]string{}
-	if cRows, err := p.pool.Query(ctx, `SELECT c.id, c.name_ru, coalesce(c.inn,''), coalesce(c.phone,''), coalesce(c.info_url,''), coalesce(c.address,''), r.external_route_code FROM carriers c JOIN routes r ON r.carrier_id=c.id AND r.valid_to IS NULL`); err == nil {
-		defer cRows.Close()
-		for cRows.Next() {
-			var cid int64
-			var name, inn, phone, infoURL, addr, routeCode string
-			_ = cRows.Scan(&cid, &name, &inn, &phone, &infoURL, &addr, &routeCode)
-			id := fmt.Sprintf("%d", cid)
-			if _, ok := net.Carriers[id]; !ok {
-				net.Carriers[id] = &model.Carrier{ID: id, Name: name, INN: inn, Phone: phone, InfoURL: infoURL, Address: addr}
-			}
-			routeCarrier[routeCode] = id
+	cRows, err := p.pool.Query(ctx, `SELECT c.id, c.name_ru, coalesce(c.inn,''), coalesce(c.phone,''), coalesce(c.info_url,''), coalesce(c.address,''), r.external_route_code FROM carriers c JOIN routes r ON r.carrier_id=c.id AND r.valid_to IS NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer cRows.Close()
+	for cRows.Next() {
+		var cid int64
+		var name, inn, phone, infoURL, addr, routeCode string
+		if err := cRows.Scan(&cid, &name, &inn, &phone, &infoURL, &addr, &routeCode); err != nil {
+			return nil, fmt.Errorf("load carriers: %w", err)
 		}
+		id := fmt.Sprintf("%d", cid)
+		if _, ok := net.Carriers[id]; !ok {
+			net.Carriers[id] = &model.Carrier{ID: id, Name: name, INN: inn, Phone: phone, InfoURL: infoURL, Address: addr}
+		}
+		routeCarrier[routeCode] = id
+	}
+	if err := cRows.Err(); err != nil {
+		return nil, fmt.Errorf("load carriers: %w", err)
 	}
 	tRows, err := p.pool.Query(ctx, `SELECT id, route_id, provider_id, direction, service_id, service_days, external_trip_code FROM trips WHERE valid_to IS NULL`)
 	if err != nil {
@@ -708,7 +734,9 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 	for tRows.Next() {
 		var r TripRow
 		var serviceDays sql.NullString
-		_ = tRows.Scan(&r.ID, &r.RouteID, &r.ProviderID, &r.Direction, &r.ServiceID, &serviceDays, &r.ExternalTripCode)
+		if err := tRows.Scan(&r.ID, &r.RouteID, &r.ProviderID, &r.Direction, &r.ServiceID, &serviceDays, &r.ExternalTripCode); err != nil {
+			return nil, fmt.Errorf("load trips: %w", err)
+		}
 		if len(allow) > 0 && !allow[r.ProviderID] {
 			continue
 		}
@@ -716,137 +744,201 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 		trips = append(trips, r)
 		tripByID[r.ID] = r
 	}
+	if err := tRows.Err(); err != nil {
+		return nil, fmt.Errorf("load trips: %w", err)
+	}
 	stRows, err := p.pool.Query(ctx, `SELECT trip_id, stop_id, seq, arrival, departure, coalesce(is_provisional, false), coalesce(is_fuzzy, false) FROM stop_times ORDER BY trip_id, seq`)
-	if err == nil {
-		defer stRows.Close()
-		grouped := map[int64][]model.StopTime{}
-		for stRows.Next() {
-			var tripID, stopID int64
-			var seq, arr, dep int
-			var provisional, fuzzy bool
-			_ = stRows.Scan(&tripID, &stopID, &seq, &arr, &dep, &provisional, &fuzzy)
-			sid, ok := stopIDMap[stopID]
-			if !ok {
-				continue
-			}
-			if _, ok := tripByID[tripID]; !ok {
-				continue
-			}
-			grouped[tripID] = append(grouped[tripID], model.StopTime{StopID: sid, Sequence: seq, ArrivalSec: arr, DepartureSec: dep, IsProvisional: provisional, IsFuzzy: fuzzy})
+	if err != nil {
+		return nil, err
+	}
+	defer stRows.Close()
+	grouped := map[int64][]model.StopTime{}
+	for stRows.Next() {
+		var tripID, stopID int64
+		var seq, arr, dep int
+		var provisional, fuzzy bool
+		if err := stRows.Scan(&tripID, &stopID, &seq, &arr, &dep, &provisional, &fuzzy); err != nil {
+			return nil, fmt.Errorf("load stop_times: %w", err)
 		}
-		for _, t := range trips {
-			times := grouped[t.ID]
-			if len(times) == 0 {
-				continue
-			}
-			if !serviceDaysMatch(t.ServiceDays, dayBase) {
-				continue
-			}
-			code := routeIDToCode[t.RouteID]
-			mode := routeIDToMode[t.RouteID]
-			tripID := code + "|" + t.ExternalTripCode
-			mt := &model.Trip{ID: tripID, RouteID: code, ProviderID: t.ProviderID, Mode: model.Mode(mode), ServiceID: t.ServiceID, StopTimes: times}
-			net.Trips[mt.ID] = mt
+		sid, ok := stopIDMap[stopID]
+		if !ok {
+			continue
 		}
+		if _, ok := tripByID[tripID]; !ok {
+			continue
+		}
+		grouped[tripID] = append(grouped[tripID], model.StopTime{StopID: sid, Sequence: seq, ArrivalSec: arr, DepartureSec: dep, IsProvisional: provisional, IsFuzzy: fuzzy})
+	}
+	if err := stRows.Err(); err != nil {
+		return nil, fmt.Errorf("load stop_times: %w", err)
+	}
+	for _, t := range trips {
+		times := grouped[t.ID]
+		if len(times) == 0 {
+			continue
+		}
+		if !serviceDaysMatch(t.ServiceDays, dayBase) {
+			continue
+		}
+		code := routeIDToCode[t.RouteID]
+		mode := routeIDToMode[t.RouteID]
+		tripID := code + "|" + t.ExternalTripCode
+		mt := &model.Trip{ID: tripID, RouteID: code, ProviderID: t.ProviderID, Mode: model.Mode(mode), ServiceID: t.ServiceID, StopTimes: times}
+		net.Trips[mt.ID] = mt
 	}
 	trRows, err := p.pool.Query(ctx, `SELECT from_stop_id, to_stop_id, minutes FROM transfers`)
-	if err == nil {
-		defer trRows.Close()
-		for trRows.Next() {
-			var fid, tid int64
-			var minutes int
-			_ = trRows.Scan(&fid, &tid, &minutes)
-			from, ok1 := stopIDMap[fid]
-			to, ok2 := stopIDMap[tid]
-			if !ok1 || !ok2 {
-				continue
-			}
-			net.Transfers = append(net.Transfers, model.Transfer{FromStopID: from, ToStopID: to, Minutes: minutes})
-		}
+	if err != nil {
+		return nil, err
 	}
-	if faRows, err := p.pool.Query(ctx, `SELECT fare_id, price, currency, basis FROM fare_attributes`); err == nil {
-		defer faRows.Close()
-		for faRows.Next() {
-			var fid string
-			var price float64
-			var cur, basis string
-			_ = faRows.Scan(&fid, &price, &cur, &basis)
-			net.FareAttributes[fid] = &model.FareAttribute{FareID: fid, Price: price, Currency: cur, Basis: basis}
+	defer trRows.Close()
+	for trRows.Next() {
+		var fid, tid int64
+		var minutes int
+		if err := trRows.Scan(&fid, &tid, &minutes); err != nil {
+			return nil, fmt.Errorf("load transfers: %w", err)
 		}
+		from, ok1 := stopIDMap[fid]
+		to, ok2 := stopIDMap[tid]
+		if !ok1 || !ok2 {
+			continue
+		}
+		net.Transfers = append(net.Transfers, model.Transfer{FromStopID: from, ToStopID: to, Minutes: minutes})
 	}
-	if zRows, err := p.pool.Query(ctx, `SELECT zone_id, name_ru, name_en FROM zones`); err == nil {
-		defer zRows.Close()
-		for zRows.Next() {
-			var zid, nru, nen string
-			_ = zRows.Scan(&zid, &nru, &nen)
-			net.Zones[zid] = &model.Zone{ID: zid, NameRu: nru, NameEn: nen}
+	if err := trRows.Err(); err != nil {
+		return nil, fmt.Errorf("load transfers: %w", err)
+	}
+	faRows, err := p.pool.Query(ctx, `SELECT fare_id, price, currency, basis FROM fare_attributes`)
+	if err != nil {
+		return nil, err
+	}
+	defer faRows.Close()
+	for faRows.Next() {
+		var fid string
+		var price float64
+		var cur, basis string
+		if err := faRows.Scan(&fid, &price, &cur, &basis); err != nil {
+			return nil, fmt.Errorf("load fare_attributes: %w", err)
 		}
+		net.FareAttributes[fid] = &model.FareAttribute{FareID: fid, Price: price, Currency: cur, Basis: basis}
+	}
+	if err := faRows.Err(); err != nil {
+		return nil, fmt.Errorf("load fare_attributes: %w", err)
+	}
+	zRows, err := p.pool.Query(ctx, `SELECT zone_id, name_ru, name_en FROM zones`)
+	if err != nil {
+		return nil, err
+	}
+	defer zRows.Close()
+	for zRows.Next() {
+		var zid, nru, nen string
+		if err := zRows.Scan(&zid, &nru, &nen); err != nil {
+			return nil, fmt.Errorf("load zones: %w", err)
+		}
+		net.Zones[zid] = &model.Zone{ID: zid, NameRu: nru, NameEn: nen}
+	}
+	if err := zRows.Err(); err != nil {
+		return nil, fmt.Errorf("load zones: %w", err)
 	}
 	routeIDToFare := map[int64]string{}
-	if frRows, err := p.pool.Query(ctx, `SELECT fare_id, route_id, origin_zone, destination_zone FROM fare_rules`); err == nil {
-		defer frRows.Close()
-		for frRows.Next() {
-			var fid string
-			var rid int64
-			var o, d *string
-			_ = frRows.Scan(&fid, &rid, &o, &d)
-			code := routeIDToCode[rid]
-			net.FareRules = append(net.FareRules, model.FareRule{FareID: fid, RouteID: code, OriginZone: o, DestinationZone: d})
-			routeIDToFare[rid] = fid
+	frRows, err := p.pool.Query(ctx, `SELECT fare_id, route_id, origin_zone, destination_zone FROM fare_rules`)
+	if err != nil {
+		return nil, err
+	}
+	defer frRows.Close()
+	for frRows.Next() {
+		var fid string
+		var rid int64
+		var o, d *string
+		if err := frRows.Scan(&fid, &rid, &o, &d); err != nil {
+			return nil, fmt.Errorf("load fare_rules: %w", err)
+		}
+		code := routeIDToCode[rid]
+		net.FareRules = append(net.FareRules, model.FareRule{FareID: fid, RouteID: code, OriginZone: o, DestinationZone: d})
+		routeIDToFare[rid] = fid
+	}
+	if err := frRows.Err(); err != nil {
+		return nil, fmt.Errorf("load fare_rules: %w", err)
+	}
+	szRows, err := p.pool.Query(ctx, `SELECT stop_id, zone_id FROM stop_zones`)
+	if err != nil {
+		return nil, err
+	}
+	defer szRows.Close()
+	for szRows.Next() {
+		var sid int64
+		var zid string
+		if err := szRows.Scan(&sid, &zid); err != nil {
+			return nil, fmt.Errorf("load stop_zones: %w", err)
+		}
+		if code, ok := stopIDMap[sid]; ok {
+			net.StopZones[code] = zid
 		}
 	}
-	if szRows, err := p.pool.Query(ctx, `SELECT stop_id, zone_id FROM stop_zones`); err == nil {
-		defer szRows.Close()
-		for szRows.Next() {
-			var sid int64
-			var zid string
-			_ = szRows.Scan(&sid, &zid)
-			if code, ok := stopIDMap[sid]; ok {
-				net.StopZones[code] = zid
-			}
-		}
+	if err := szRows.Err(); err != nil {
+		return nil, fmt.Errorf("load stop_zones: %w", err)
 	}
-	if svcRows, err := p.pool.Query(ctx, `SELECT id, name, start_date, end_date FROM services`); err == nil {
-		defer svcRows.Close()
-		for svcRows.Next() {
-			var id int64
-			var name sql.NullString
-			var startD, endD sql.NullTime
-			_ = svcRows.Scan(&id, &name, &startD, &endD)
-			svc := &model.Service{ID: int(id)}
-			if name.Valid {
-				svc.Name = name.String
-			}
-			if startD.Valid {
-				svc.StartDate = startD.Time
-			}
-			if endD.Valid {
-				svc.EndDate = endD.Time
-			}
-			net.Services[id] = svc
-		}
+	svcRows, err := p.pool.Query(ctx, `SELECT id, name, start_date, end_date FROM services`)
+	if err != nil {
+		return nil, err
 	}
-	if sdRows, err := p.pool.Query(ctx, `SELECT service_id, weekday FROM service_days`); err == nil {
-		defer sdRows.Close()
-		for sdRows.Next() {
-			var sid int64
-			var wd int
-			_ = sdRows.Scan(&sid, &wd)
-			net.ServiceDays[sid] = append(net.ServiceDays[sid], model.ServiceDay{ServiceID: sid, Weekday: wd})
+	defer svcRows.Close()
+	for svcRows.Next() {
+		var id int64
+		var name sql.NullString
+		var startD, endD sql.NullTime
+		if err := svcRows.Scan(&id, &name, &startD, &endD); err != nil {
+			return nil, fmt.Errorf("load services: %w", err)
 		}
+		svc := &model.Service{ID: int(id)}
+		if name.Valid {
+			svc.Name = name.String
+		}
+		if startD.Valid {
+			svc.StartDate = startD.Time
+		}
+		if endD.Valid {
+			svc.EndDate = endD.Time
+		}
+		net.Services[id] = svc
 	}
-	if seRows, err := p.pool.Query(ctx, `SELECT service_id, date, exception_type FROM service_exceptions`); err == nil {
-		defer seRows.Close()
-		for seRows.Next() {
-			var sid int64
-			var d sql.NullTime
-			var typ sql.NullString
-			_ = seRows.Scan(&sid, &d, &typ)
-			if !d.Valid {
-				continue
-			}
-			net.ServiceExceptions[sid] = append(net.ServiceExceptions[sid], model.ServiceException{ServiceID: sid, Date: d.Time, ExceptionType: model.ExceptionType(typ.String)})
+	if err := svcRows.Err(); err != nil {
+		return nil, fmt.Errorf("load services: %w", err)
+	}
+	sdRows, err := p.pool.Query(ctx, `SELECT service_id, weekday FROM service_days`)
+	if err != nil {
+		return nil, err
+	}
+	defer sdRows.Close()
+	for sdRows.Next() {
+		var sid int64
+		var wd int
+		if err := sdRows.Scan(&sid, &wd); err != nil {
+			return nil, fmt.Errorf("load service_days: %w", err)
 		}
+		net.ServiceDays[sid] = append(net.ServiceDays[sid], model.ServiceDay{ServiceID: sid, Weekday: wd})
+	}
+	if err := sdRows.Err(); err != nil {
+		return nil, fmt.Errorf("load service_days: %w", err)
+	}
+	seRows, err := p.pool.Query(ctx, `SELECT service_id, date, exception_type FROM service_exceptions`)
+	if err != nil {
+		return nil, err
+	}
+	defer seRows.Close()
+	for seRows.Next() {
+		var sid int64
+		var d sql.NullTime
+		var typ sql.NullString
+		if err := seRows.Scan(&sid, &d, &typ); err != nil {
+			return nil, fmt.Errorf("load service_exceptions: %w", err)
+		}
+		if !d.Valid {
+			continue
+		}
+		net.ServiceExceptions[sid] = append(net.ServiceExceptions[sid], model.ServiceException{ServiceID: sid, Date: d.Time, ExceptionType: model.ExceptionType(typ.String)})
+	}
+	if err := seRows.Err(); err != nil {
+		return nil, fmt.Errorf("load service_exceptions: %w", err)
 	}
 	for _, trip := range net.Trips {
 		for i := 0; i < len(trip.StopTimes)-1; i++ {
@@ -1338,7 +1430,9 @@ func (p *PostgresStore) MarkJobRetry(ctx context.Context, id int64, errMsg strin
 		return nil
 	}
 	var attempts int
-	_ = p.pool.QueryRow(ctx, `SELECT attempts FROM jobs WHERE id=$1`, id).Scan(&attempts)
+	if err := p.pool.QueryRow(ctx, `SELECT attempts FROM jobs WHERE id=$1`, id).Scan(&attempts); err != nil {
+		return fmt.Errorf("job attempts: %w", err)
+	}
 	backoff := time.Duration((attempts+1)*2) * time.Minute
 	if backoff > 30*time.Minute {
 		backoff = 30 * time.Minute
@@ -1689,9 +1783,13 @@ func (t *pgTxStore) ListTerminalsFiltered(ctx context.Context, limit, offset int
 	hasQ := q != ""
 	var total int
 	if hasQ {
-		_ = t.tx.QueryRow(ctx, `SELECT count(*) FROM terminals t WHERE t.valid_to IS NULL AND (EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE '%' || $1 || '%') OR EXISTS (SELECT 1 FROM terminal_aliases ta WHERE ta.terminal_id=t.id AND ta.alias ILIKE '%' || $1 || '%'))`, q).Scan(&total)
+		if err := t.tx.QueryRow(ctx, `SELECT count(*) FROM terminals t WHERE t.valid_to IS NULL AND (EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE '%' || $1 || '%') OR EXISTS (SELECT 1 FROM terminal_aliases ta WHERE ta.terminal_id=t.id AND ta.alias ILIKE '%' || $1 || '%'))`, q).Scan(&total); err != nil {
+			return nil, 0, fmt.Errorf("count terminals: %w", err)
+		}
 	} else {
-		_ = t.tx.QueryRow(ctx, `SELECT count(*) FROM terminals WHERE valid_to IS NULL`).Scan(&total)
+		if err := t.tx.QueryRow(ctx, `SELECT count(*) FROM terminals WHERE valid_to IS NULL`).Scan(&total); err != nil {
+			return nil, 0, fmt.Errorf("count terminals: %w", err)
+		}
 	}
 	var rows pgx.Rows
 	var err error
@@ -1713,8 +1811,13 @@ func (t *pgTxStore) ListTerminalsFiltered(ctx context.Context, limit, offset int
 		var placeID *int64
 		var validFrom, validTo string
 		var tripsServed int64
-		_ = rows.Scan(&id, &name, &lat, &lon, &locked, &placeID, &validFrom, &validTo, &tripsServed)
+		if err := rows.Scan(&id, &name, &lat, &lon, &locked, &placeID, &validFrom, &validTo, &tripsServed); err != nil {
+			return nil, 0, fmt.Errorf("list terminals: %w", err)
+		}
 		out = append(out, map[string]any{"id": id, "name": name, "lat": lat, "lon": lon, "is_locked": locked, "place_id": placeID, "valid_from": validFrom, "valid_to": validTo, "trips_served": tripsServed, "dead": tripsServed == 0})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("list terminals: %w", err)
 	}
 	return out, total, nil
 }

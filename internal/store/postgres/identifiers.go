@@ -18,10 +18,12 @@ type identDB interface {
 
 // schemePriority — приоритет системы; для систем без записи в
 // identifier_schemes приоритет 0 (минимальный).
-func schemePriority(ctx context.Context, db identDB, system string) int {
+func schemePriority(ctx context.Context, db identDB, system string) (int, error) {
 	var pr int
-	_ = db.QueryRow(ctx, `SELECT max(priority) FROM identifier_schemes WHERE system=$1`, system).Scan(&pr)
-	return pr
+	if err := db.QueryRow(ctx, `SELECT coalesce(max(priority),0) FROM identifier_schemes WHERE system=$1`, system).Scan(&pr); err != nil {
+		return 0, err
+	}
+	return pr, nil
 }
 
 func applyIdentifierPrimaryRule(ctx context.Context, db identDB, terminalID int64, system, codeType, code string) error {
@@ -31,7 +33,15 @@ func applyIdentifierPrimaryRule(ctx context.Context, db identDB, terminalID int6
 		_, err2 := db.Exec(ctx, `UPDATE terminal_identifiers SET is_primary=true WHERE terminal_id=$1 AND system=$2 AND code_type=$3 AND code=$4`, terminalID, system, codeType, code)
 		return err2
 	}
-	if schemePriority(ctx, db, system) <= schemePriority(ctx, db, cur) {
+	newPr, err := schemePriority(ctx, db, system)
+	if err != nil {
+		return err
+	}
+	curPr, err := schemePriority(ctx, db, cur)
+	if err != nil {
+		return err
+	}
+	if newPr <= curPr {
 		return nil
 	}
 	if _, err := db.Exec(ctx, `UPDATE terminal_identifiers SET is_primary=false WHERE terminal_id=$1 AND is_primary`, terminalID); err != nil {

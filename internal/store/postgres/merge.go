@@ -35,7 +35,9 @@ func (p *PostgresStore) terminalState(ctx context.Context, q interface {
 	} else if err != pgx.ErrNoRows {
 		return st, err
 	}
-	_ = q.QueryRow(ctx, `SELECT is_locked FROM terminals WHERE id=$1`, id).Scan(&st.locked)
+	if err := q.QueryRow(ctx, `SELECT is_locked FROM terminals WHERE id=$1`, id).Scan(&st.locked); err != nil {
+		return st, err
+	}
 	return st, nil
 }
 

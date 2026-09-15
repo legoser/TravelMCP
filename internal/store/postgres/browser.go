@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -19,9 +20,13 @@ func (p *PostgresStore) ListRoutesAdmin(ctx context.Context, limit, offset int, 
 	hasQ := q != ""
 	var total int
 	if hasQ {
-		_ = p.pool.QueryRow(ctx, `SELECT count(*) FROM routes r WHERE r.short_name ILIKE '%' || $1 || '%' OR r.long_name ILIKE '%' || $1 || '%' OR r.external_route_code ILIKE '%' || $1 || '%' OR EXISTS (SELECT 1 FROM trips t JOIN stop_times st ON st.trip_id=t.id JOIN stops_canonical sc ON sc.id=st.stop_id LEFT JOIN stop_names sn ON sn.stop_id=sc.id LEFT JOIN terminal_names tn ON tn.terminal_id=sc.terminal_id AND tn.lang='ru' WHERE t.route_id=r.id AND t.valid_to IS NULL AND (coalesce(sn.name, tn.name, '') ILIKE '%' || $1 || '%' OR sc.id::text = $1))`, q).Scan(&total)
+		if err := p.pool.QueryRow(ctx, `SELECT count(*) FROM routes r WHERE r.short_name ILIKE '%' || $1 || '%' OR r.long_name ILIKE '%' || $1 || '%' OR r.external_route_code ILIKE '%' || $1 || '%' OR EXISTS (SELECT 1 FROM trips t JOIN stop_times st ON st.trip_id=t.id JOIN stops_canonical sc ON sc.id=st.stop_id LEFT JOIN stop_names sn ON sn.stop_id=sc.id LEFT JOIN terminal_names tn ON tn.terminal_id=sc.terminal_id AND tn.lang='ru' WHERE t.route_id=r.id AND t.valid_to IS NULL AND (coalesce(sn.name, tn.name, '') ILIKE '%' || $1 || '%' OR sc.id::text = $1))`, q).Scan(&total); err != nil {
+			return nil, 0, fmt.Errorf("count routes: %w", err)
+		}
 	} else {
-		_ = p.pool.QueryRow(ctx, `SELECT count(*) FROM routes`).Scan(&total)
+		if err := p.pool.QueryRow(ctx, `SELECT count(*) FROM routes`).Scan(&total); err != nil {
+			return nil, 0, fmt.Errorf("count routes: %w", err)
+		}
 	}
 	var rows pgx.Rows
 	var err error
@@ -53,7 +58,9 @@ func (p *PostgresStore) ListTripsAdmin(ctx context.Context, routeID int64, limit
 		return []map[string]any{}, 0, nil
 	}
 	var total int
-	_ = p.pool.QueryRow(ctx, `SELECT count(*) FROM trips WHERE route_id=$1`, routeID).Scan(&total)
+	if err := p.pool.QueryRow(ctx, `SELECT count(*) FROM trips WHERE route_id=$1`, routeID).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count trips: %w", err)
+	}
 	rows, err := p.pool.Query(ctx, `SELECT t.id, t.external_trip_code, coalesce(t.direction,''), t.direction_id, coalesce(t.service_days,''), coalesce(t.headsign_ru,''), t.duration_s, t.distance_m, t.valid_to, (SELECT count(*) FROM stop_times st WHERE st.trip_id=t.id), (SELECT count(*) FROM stop_times st WHERE st.trip_id=t.id AND st.is_provisional) FROM trips t WHERE t.route_id=$1 ORDER BY t.id LIMIT $2 OFFSET $3`, routeID, limit, offset)
 	if err != nil {
 		return nil, 0, err
@@ -107,8 +114,12 @@ func (p *PostgresStore) GetTerminalStats(ctx context.Context, terminalID int64) 
 		return map[string]any{}, nil
 	}
 	var stopTimes, provisionalStops, liveTrips int
-	_ = p.pool.QueryRow(ctx, `SELECT count(*), coalesce(sum(CASE WHEN st.is_provisional THEN 1 ELSE 0 END),0) FROM stop_times st JOIN stops_canonical sc ON sc.id=st.stop_id WHERE sc.terminal_id=$1`, terminalID).Scan(&stopTimes, &provisionalStops)
-	_ = p.pool.QueryRow(ctx, `SELECT count(DISTINCT st.trip_id) FROM stop_times st JOIN stops_canonical sc ON sc.id=st.stop_id JOIN trips t ON t.id=st.trip_id WHERE sc.terminal_id=$1 AND t.valid_to IS NULL`, terminalID).Scan(&liveTrips)
+	if err := p.pool.QueryRow(ctx, `SELECT count(*), coalesce(sum(CASE WHEN st.is_provisional THEN 1 ELSE 0 END),0) FROM stop_times st JOIN stops_canonical sc ON sc.id=st.stop_id WHERE sc.terminal_id=$1`, terminalID).Scan(&stopTimes, &provisionalStops); err != nil {
+		return nil, fmt.Errorf("terminal stats: %w", err)
+	}
+	if err := p.pool.QueryRow(ctx, `SELECT count(DISTINCT st.trip_id) FROM stop_times st JOIN stops_canonical sc ON sc.id=st.stop_id JOIN trips t ON t.id=st.trip_id WHERE sc.terminal_id=$1 AND t.valid_to IS NULL`, terminalID).Scan(&liveTrips); err != nil {
+		return nil, fmt.Errorf("terminal stats: %w", err)
+	}
 	return map[string]any{"stop_times": stopTimes, "provisional_stop_times": provisionalStops, "live_trips": liveTrips, "dead": stopTimes == 0}, nil
 }
 
@@ -205,7 +216,9 @@ func (p *PostgresStore) ListTerminalsByLiveness(ctx context.Context, limit, offs
 		cond = ` WHERE t.valid_to IS NULL`
 	}
 	var total int
-	_ = p.pool.QueryRow(ctx, `SELECT count(*) FROM terminals t`+cond).Scan(&total)
+	if err := p.pool.QueryRow(ctx, `SELECT count(*) FROM terminals t`+cond).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count terminals: %w", err)
+	}
 	rows, err := p.pool.Query(ctx, `SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, coalesce(t.place_id,0)::bigint, (SELECT count(DISTINCT st.trip_id) FROM stops_canonical sc JOIN stop_times st ON st.stop_id=sc.id WHERE sc.terminal_id=t.id), to_char(t.valid_from,'YYYY-MM-DD'), coalesce(to_char(t.valid_to,'YYYY-MM-DD'),'') FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru'`+cond+` ORDER BY t.id LIMIT $1 OFFSET $2`, args...)
 	if err != nil {
 		return nil, 0, err
