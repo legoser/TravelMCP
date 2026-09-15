@@ -559,6 +559,7 @@ func (p *PostgresStore) ListTerminalsFiltered(ctx context.Context, limit, offset
 	if p.pool == nil {
 		return []map[string]any{}, 0, nil
 	}
+	limit, offset = clampPage(limit, offset)
 	dir := "ASC"
 	if strings.ToLower(order) == "desc" {
 		dir = "DESC"
@@ -574,7 +575,7 @@ func (p *PostgresStore) ListTerminalsFiltered(ctx context.Context, limit, offset
 	hasQ := q != ""
 	var total int
 	if hasQ {
-		if err := p.pool.QueryRow(ctx, `SELECT count(*) FROM terminals t WHERE t.valid_to IS NULL AND (EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE '%' || $1 || '%') OR EXISTS (SELECT 1 FROM terminal_aliases ta WHERE ta.terminal_id=t.id AND ta.alias ILIKE '%' || $1 || '%'))`, q).Scan(&total); err != nil {
+		if err := p.pool.QueryRow(ctx, `SELECT count(*) FROM terminals t WHERE t.valid_to IS NULL AND (EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE $1 ESCAPE '\') OR EXISTS (SELECT 1 FROM terminal_aliases ta WHERE ta.terminal_id=t.id AND ta.alias ILIKE $1 ESCAPE '\'))`, likePattern(q)).Scan(&total); err != nil {
 			return nil, 0, fmt.Errorf("count terminals: %w", err)
 		}
 	} else {
@@ -585,7 +586,7 @@ func (p *PostgresStore) ListTerminalsFiltered(ctx context.Context, limit, offset
 	var rows pgx.Rows
 	var err error
 	if hasQ {
-		rows, err = p.pool.Query(ctx, fmt.Sprintf(`SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id, to_char(t.valid_from,'YYYY-MM-DD'), coalesce(to_char(t.valid_to,'YYYY-MM-DD'),''), (SELECT count(DISTINCT st.trip_id) FROM stops_canonical sc JOIN stop_times st ON st.stop_id=sc.id WHERE sc.terminal_id=t.id) FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' WHERE t.valid_to IS NULL AND (EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE '%%' || $3 || '%%') OR EXISTS (SELECT 1 FROM terminal_aliases ta WHERE ta.terminal_id=t.id AND ta.alias ILIKE '%%' || $3 || '%%')) ORDER BY %s LIMIT $1 OFFSET $2`, orderClause), limit, offset, q)
+		rows, err = p.pool.Query(ctx, fmt.Sprintf(`SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id, to_char(t.valid_from,'YYYY-MM-DD'), coalesce(to_char(t.valid_to,'YYYY-MM-DD'),''), (SELECT count(DISTINCT st.trip_id) FROM stops_canonical sc JOIN stop_times st ON st.stop_id=sc.id WHERE sc.terminal_id=t.id) FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' WHERE t.valid_to IS NULL AND (EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE $3 ESCAPE '\') OR EXISTS (SELECT 1 FROM terminal_aliases ta WHERE ta.terminal_id=t.id AND ta.alias ILIKE $3 ESCAPE '\')) ORDER BY %s LIMIT $1 OFFSET $2`, orderClause), limit, offset, likePattern(q))
 	} else {
 		rows, err = p.pool.Query(ctx, fmt.Sprintf(`SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id, to_char(t.valid_from,'YYYY-MM-DD'), coalesce(to_char(t.valid_to,'YYYY-MM-DD'),''), (SELECT count(DISTINCT st.trip_id) FROM stops_canonical sc JOIN stop_times st ON st.stop_id=sc.id WHERE sc.terminal_id=t.id) FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' WHERE t.valid_to IS NULL ORDER BY %s LIMIT $1 OFFSET $2`, orderClause), limit, offset)
 	}
@@ -1768,6 +1769,7 @@ func (t *pgTxStore) ListTerminals(ctx context.Context, limit, offset int, sort s
 }
 
 func (t *pgTxStore) ListTerminalsFiltered(ctx context.Context, limit, offset int, sort, order, q string) ([]map[string]any, int, error) {
+	limit, offset = clampPage(limit, offset)
 	dir := "ASC"
 	if strings.ToLower(order) == "desc" {
 		dir = "DESC"
@@ -1783,7 +1785,7 @@ func (t *pgTxStore) ListTerminalsFiltered(ctx context.Context, limit, offset int
 	hasQ := q != ""
 	var total int
 	if hasQ {
-		if err := t.tx.QueryRow(ctx, `SELECT count(*) FROM terminals t WHERE t.valid_to IS NULL AND (EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE '%' || $1 || '%') OR EXISTS (SELECT 1 FROM terminal_aliases ta WHERE ta.terminal_id=t.id AND ta.alias ILIKE '%' || $1 || '%'))`, q).Scan(&total); err != nil {
+		if err := t.tx.QueryRow(ctx, `SELECT count(*) FROM terminals t WHERE t.valid_to IS NULL AND (EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE $1 ESCAPE '\') OR EXISTS (SELECT 1 FROM terminal_aliases ta WHERE ta.terminal_id=t.id AND ta.alias ILIKE $1 ESCAPE '\'))`, likePattern(q)).Scan(&total); err != nil {
 			return nil, 0, fmt.Errorf("count terminals: %w", err)
 		}
 	} else {
@@ -1794,7 +1796,7 @@ func (t *pgTxStore) ListTerminalsFiltered(ctx context.Context, limit, offset int
 	var rows pgx.Rows
 	var err error
 	if hasQ {
-		rows, err = t.tx.Query(ctx, fmt.Sprintf(`SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id, to_char(t.valid_from,'YYYY-MM-DD'), coalesce(to_char(t.valid_to,'YYYY-MM-DD'),''), (SELECT count(DISTINCT st.trip_id) FROM stops_canonical sc JOIN stop_times st ON st.stop_id=sc.id WHERE sc.terminal_id=t.id) FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' WHERE t.valid_to IS NULL AND (EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE '%%' || $3 || '%%') OR EXISTS (SELECT 1 FROM terminal_aliases ta WHERE ta.terminal_id=t.id AND ta.alias ILIKE '%%' || $3 || '%%')) ORDER BY %s LIMIT $1 OFFSET $2`, orderClause), limit, offset, q)
+		rows, err = t.tx.Query(ctx, fmt.Sprintf(`SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id, to_char(t.valid_from,'YYYY-MM-DD'), coalesce(to_char(t.valid_to,'YYYY-MM-DD'),''), (SELECT count(DISTINCT st.trip_id) FROM stops_canonical sc JOIN stop_times st ON st.stop_id=sc.id WHERE sc.terminal_id=t.id) FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' WHERE t.valid_to IS NULL AND (EXISTS (SELECT 1 FROM terminal_names tns WHERE tns.terminal_id=t.id AND tns.name ILIKE $3 ESCAPE '\') OR EXISTS (SELECT 1 FROM terminal_aliases ta WHERE ta.terminal_id=t.id AND ta.alias ILIKE $3 ESCAPE '\')) ORDER BY %s LIMIT $1 OFFSET $2`, orderClause), limit, offset, likePattern(q))
 	} else {
 		rows, err = t.tx.Query(ctx, fmt.Sprintf(`SELECT t.id, coalesce(tn.name,''), ST_Y(t.geom::geometry), ST_X(t.geom::geometry), t.is_locked, t.place_id, to_char(t.valid_from,'YYYY-MM-DD'), coalesce(to_char(t.valid_to,'YYYY-MM-DD'),''), (SELECT count(DISTINCT st.trip_id) FROM stops_canonical sc JOIN stop_times st ON st.stop_id=sc.id WHERE sc.terminal_id=t.id) FROM terminals t LEFT JOIN terminal_names tn ON tn.terminal_id=t.id AND tn.lang='ru' WHERE t.valid_to IS NULL ORDER BY %s LIMIT $1 OFFSET $2`, orderClause), limit, offset)
 	}

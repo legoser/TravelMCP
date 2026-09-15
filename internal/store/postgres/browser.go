@@ -12,15 +12,31 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+func clampPage(limit, offset int) (int, int) {
+	if limit < 0 {
+		limit = 0
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return limit, offset
+}
+
+func likePattern(q string) string {
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(q)
+	return `%` + r + `%`
+}
+
 func (p *PostgresStore) ListRoutesAdmin(ctx context.Context, limit, offset int, q string) ([]map[string]any, int, error) {
 	if p.pool == nil {
 		return []map[string]any{}, 0, nil
 	}
+	limit, offset = clampPage(limit, offset)
 	q = strings.TrimSpace(q)
 	hasQ := q != ""
 	var total int
 	if hasQ {
-		if err := p.pool.QueryRow(ctx, `SELECT count(*) FROM routes r WHERE r.short_name ILIKE '%' || $1 || '%' OR r.long_name ILIKE '%' || $1 || '%' OR r.external_route_code ILIKE '%' || $1 || '%' OR EXISTS (SELECT 1 FROM trips t JOIN stop_times st ON st.trip_id=t.id JOIN stops_canonical sc ON sc.id=st.stop_id LEFT JOIN stop_names sn ON sn.stop_id=sc.id LEFT JOIN terminal_names tn ON tn.terminal_id=sc.terminal_id AND tn.lang='ru' WHERE t.route_id=r.id AND t.valid_to IS NULL AND (coalesce(sn.name, tn.name, '') ILIKE '%' || $1 || '%' OR sc.id::text = $1))`, q).Scan(&total); err != nil {
+		if err := p.pool.QueryRow(ctx, `SELECT count(*) FROM routes r WHERE r.short_name ILIKE $1 ESCAPE '\' OR r.long_name ILIKE $1 ESCAPE '\' OR r.external_route_code ILIKE $1 ESCAPE '\' OR EXISTS (SELECT 1 FROM trips t JOIN stop_times st ON st.trip_id=t.id JOIN stops_canonical sc ON sc.id=st.stop_id LEFT JOIN stop_names sn ON sn.stop_id=sc.id LEFT JOIN terminal_names tn ON tn.terminal_id=sc.terminal_id AND tn.lang='ru' WHERE t.route_id=r.id AND t.valid_to IS NULL AND (coalesce(sn.name, tn.name, '') ILIKE $1 ESCAPE '\' OR sc.id::text = $2))`, likePattern(q), q).Scan(&total); err != nil {
 			return nil, 0, fmt.Errorf("count routes: %w", err)
 		}
 	} else {
@@ -31,7 +47,7 @@ func (p *PostgresStore) ListRoutesAdmin(ctx context.Context, limit, offset int, 
 	var rows pgx.Rows
 	var err error
 	if hasQ {
-		rows, err = p.pool.Query(ctx, `SELECT r.id, r.source_provider, r.external_route_code, coalesce(r.short_name,''), coalesce(r.long_name,''), coalesce(r.mode,''), coalesce(c.name_ru,''), to_char(r.valid_from,'YYYY-MM-DD'), to_char(r.valid_to,'YYYY-MM-DD'), (SELECT count(*) FROM trips t WHERE t.route_id=r.id AND t.valid_to IS NULL) FROM routes r LEFT JOIN carriers c ON c.id=r.carrier_id WHERE r.short_name ILIKE '%' || $3 || '%' OR r.long_name ILIKE '%' || $3 || '%' OR r.external_route_code ILIKE '%' || $3 || '%' OR EXISTS (SELECT 1 FROM trips t JOIN stop_times st ON st.trip_id=t.id JOIN stops_canonical sc ON sc.id=st.stop_id LEFT JOIN stop_names sn ON sn.stop_id=sc.id LEFT JOIN terminal_names tn ON tn.terminal_id=sc.terminal_id AND tn.lang='ru' WHERE t.route_id=r.id AND t.valid_to IS NULL AND (coalesce(sn.name, tn.name, '') ILIKE '%' || $3 || '%' OR sc.id::text = $3)) ORDER BY r.id LIMIT $1 OFFSET $2`, limit, offset, q)
+		rows, err = p.pool.Query(ctx, `SELECT r.id, r.source_provider, r.external_route_code, coalesce(r.short_name,''), coalesce(r.long_name,''), coalesce(r.mode,''), coalesce(c.name_ru,''), to_char(r.valid_from,'YYYY-MM-DD'), to_char(r.valid_to,'YYYY-MM-DD'), (SELECT count(*) FROM trips t WHERE t.route_id=r.id AND t.valid_to IS NULL) FROM routes r LEFT JOIN carriers c ON c.id=r.carrier_id WHERE r.short_name ILIKE $3 ESCAPE '\' OR r.long_name ILIKE $3 ESCAPE '\' OR r.external_route_code ILIKE $3 ESCAPE '\' OR EXISTS (SELECT 1 FROM trips t JOIN stop_times st ON st.trip_id=t.id JOIN stops_canonical sc ON sc.id=st.stop_id LEFT JOIN stop_names sn ON sn.stop_id=sc.id LEFT JOIN terminal_names tn ON tn.terminal_id=sc.terminal_id AND tn.lang='ru' WHERE t.route_id=r.id AND t.valid_to IS NULL AND (coalesce(sn.name, tn.name, '') ILIKE $3 ESCAPE '\' OR sc.id::text = $4)) ORDER BY r.id LIMIT $1 OFFSET $2`, limit, offset, likePattern(q), q)
 	} else {
 		rows, err = p.pool.Query(ctx, `SELECT r.id, r.source_provider, r.external_route_code, coalesce(r.short_name,''), coalesce(r.long_name,''), coalesce(r.mode,''), coalesce(c.name_ru,''), to_char(r.valid_from,'YYYY-MM-DD'), to_char(r.valid_to,'YYYY-MM-DD'), (SELECT count(*) FROM trips t WHERE t.route_id=r.id AND t.valid_to IS NULL) FROM routes r LEFT JOIN carriers c ON c.id=r.carrier_id ORDER BY r.id LIMIT $1 OFFSET $2`, limit, offset)
 	}
@@ -57,6 +73,7 @@ func (p *PostgresStore) ListTripsAdmin(ctx context.Context, routeID int64, limit
 	if p.pool == nil {
 		return []map[string]any{}, 0, nil
 	}
+	limit, offset = clampPage(limit, offset)
 	var total int
 	if err := p.pool.QueryRow(ctx, `SELECT count(*) FROM trips WHERE route_id=$1`, routeID).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count trips: %w", err)
@@ -205,6 +222,7 @@ func (p *PostgresStore) ListTerminalsByLiveness(ctx context.Context, limit, offs
 	if p.pool == nil {
 		return []map[string]any{}, 0, nil
 	}
+	limit, offset = clampPage(limit, offset)
 	cond := ""
 	args := []any{limit, offset}
 	switch dead {

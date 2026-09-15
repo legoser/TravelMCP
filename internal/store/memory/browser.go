@@ -37,6 +37,7 @@ func (m *MemoryStore) terminalNameByID(id int64) string {
 func (m *MemoryStore) ListRoutesAdmin(ctx context.Context, limit, offset int, q string) ([]map[string]any, int, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	limit, offset = clampPage(limit, offset)
 	q = strings.TrimSpace(strings.ToLower(q))
 	filtered := []map[string]any{}
 	for _, r := range m.routes {
@@ -70,6 +71,7 @@ func (m *MemoryStore) ListRoutesAdmin(ctx context.Context, limit, offset int, q 
 func (m *MemoryStore) ListTripsAdmin(ctx context.Context, routeID int64, limit, offset int) ([]map[string]any, int, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	limit, offset = clampPage(limit, offset)
 	filtered := []map[string]any{}
 	for _, t := range m.trips {
 		if t.RouteID != routeID {
@@ -259,6 +261,7 @@ func (m *MemoryStore) ApproveTerminal(ctx context.Context, terminalID int64, tr 
 func (m *MemoryStore) ListTerminalsByLiveness(ctx context.Context, limit, offset int, dead string) ([]map[string]any, int, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	limit, offset = clampPage(limit, offset)
 	filtered := []map[string]any{}
 	for id, tr := range m.terminals {
 		stopIDs := map[int64]bool{}

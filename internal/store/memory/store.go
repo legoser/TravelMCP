@@ -442,6 +442,7 @@ func (m *MemoryStore) ListTerminals(ctx context.Context, limit, offset int, sort
 func (m *MemoryStore) ListTerminalsFiltered(ctx context.Context, limit, offset int, sort, order, q string) ([]map[string]any, int, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	limit, offset = clampPage(limit, offset)
 	q = strings.TrimSpace(strings.ToLower(q))
 	filtered := make([]map[string]any, 0)
 	for id, tr := range m.terminals {
@@ -490,6 +491,9 @@ func (m *MemoryStore) ListTerminalsFiltered(ctx context.Context, limit, offset i
 		sortSlice(out, func(a, b map[string]any) bool {
 			av := fmt.Sprint(a["name"])
 			bv := fmt.Sprint(b["name"])
+			if av == bv {
+				return a["id"].(int64) < b["id"].(int64)
+			}
 			if dirDesc {
 				return av > bv
 			}
@@ -529,6 +533,16 @@ func (m *MemoryStore) ListTerminalsFiltered(ctx context.Context, limit, offset i
 
 func sortSlice[T any](s []T, less func(a, b T) bool) {
 	sort.Slice(s, func(i, j int) bool { return less(s[i], s[j]) })
+}
+
+func clampPage(limit, offset int) (int, int) {
+	if limit < 0 {
+		limit = 0
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return limit, offset
 }
 
 func derefOrEmpty[T any](p *T) T {
