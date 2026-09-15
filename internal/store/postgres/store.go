@@ -70,17 +70,20 @@ func NewPostgresStore(ctx context.Context, dsn string) (*PostgresStore, error) {
 }
 
 func (p *PostgresStore) Migrate(ctx context.Context) error {
+	return p.MigrateDir(ctx, "migrations")
+}
+
+func (p *PostgresStore) MigrateDir(ctx context.Context, dir string) error {
 	if p.pool == nil {
 		slog.Warn("postgres Migrate: pool nil", "dsn", p.dsn)
 		return nil
 	}
-	matches, err := filepath.Glob("migrations/*.sql")
+	matches, err := filepath.Glob(filepath.Join(dir, "*.sql"))
 	if err != nil {
 		return fmt.Errorf("glob migrations: %w", err)
 	}
 	if len(matches) == 0 {
-		slog.Warn("postgres Migrate: no migration files found", "dir", "migrations")
-		return nil
+		return fmt.Errorf("migrations: no *.sql files in %q (run from repo root or use MigrateDir)", dir)
 	}
 	sort.Strings(matches)
 	for _, path := range matches {

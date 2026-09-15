@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -42,7 +44,9 @@ func newPostgresApp(t *testing.T) *httptest.Server {
 		t.Skipf("postgres unavailable: %v", err)
 	}
 	t.Cleanup(func() { _ = ps.Close() })
-	if err := ps.Migrate(t.Context()); err != nil {
+	_, thisFile, _, _ := runtime.Caller(0)
+	migDir := filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations")
+	if err := ps.MigrateDir(t.Context(), migDir); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	cfg := config.Defaults()
