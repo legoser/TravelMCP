@@ -258,6 +258,9 @@ func applyEnv(cfg *Config) {
 			cfg.Sync.StagingExpiryDays = n
 		}
 	}
+	if v := os.Getenv("SYNC_JOBS_POLL_INTERVAL"); v != "" {
+		cfg.Sync.JobsPollInterval = v
+	}
 	if v := os.Getenv("SYNC_SKELETON_CHUNK_SIZE"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			cfg.Sync.SkeletonChunkSize = n
@@ -469,6 +472,9 @@ func setByPath(cfg *Config, parts []string, v string) {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
 				cfg.Sync.StagingExpiryDays = n
 			}
+		}
+		if len(parts) == 2 && parts[1] == "jobs_poll_interval" {
+			cfg.Sync.JobsPollInterval = v
 		}
 	case "yandex":
 		if len(parts) == 2 && parts[1] == "rasp_key" {

@@ -159,6 +159,9 @@ type Sync struct {
 	TripsMaxSpeedKmh    float64           `yaml:"trips_max_speed_kmh"`
 	OverpassMax         int               `yaml:"overpass_max"`
 	StagingExpiryDays   int               `yaml:"staging_expiry_days"`
+	// JobsPollInterval — jobs-worker queue poll interval ("5s", "1m"...).
+	// Empty = 5s fallback at the call site (same convention as AttachWait).
+	JobsPollInterval string `yaml:"jobs_poll_interval"`
 }
 
 type Config struct {

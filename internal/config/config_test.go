@@ -73,6 +73,20 @@ func TestPlannerArrivalWindowEnv(t *testing.T) {
 	}
 }
 
+func TestJobsPollIntervalEnv(t *testing.T) {
+	t.Setenv("SYNC_JOBS_POLL_INTERVAL", "2s")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Sync.JobsPollInterval != "2s" {
+		t.Fatalf("jobs_poll_interval = %q, want 2s", cfg.Sync.JobsPollInterval)
+	}
+	if d := Defaults(); d.Sync.JobsPollInterval != "5s" {
+		t.Fatalf("default jobs_poll_interval = %q, want 5s", d.Sync.JobsPollInterval)
+	}
+}
+
 func TestEnvOverride(t *testing.T) {
 	t.Setenv("HTTP_ADDR", ":9999")
 	t.Setenv("PROVIDERS_ENABLED", "synth, gtfs")

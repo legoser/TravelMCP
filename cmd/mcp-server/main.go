@@ -112,7 +112,7 @@ func main() {
 			workerLogger := factory.For("jobs")
 			w := newJobsWorker(st, cfg, workerLogger)
 			workerLogger.Info("jobs worker started")
-			w.Run(context.Background(), 5*time.Second)
+			w.Run(context.Background(), parseDuration(cfg.Sync.JobsPollInterval, 5*time.Second))
 		}()
 	}
 
