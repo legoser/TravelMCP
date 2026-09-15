@@ -870,8 +870,19 @@ at-rest не требуется (решение 2026-09-15).
   авторитетный источник на параметр» выполнен посекционно. Сознательно
   локальны (с комментарием в коде): `jobs.maxAttempts=5`,
   `TripsRunConfig.PollInterval` (дефолт 5с в `trips_run.go`).
-  Находка: `RunHygieneSweep` не вызывается из продакшн-пути (только тесты) —
-  планирование freshness-sweep относится к demand-driven-фазе трека Г.
+  Находка (исправлена 2026-09-15): `RunHygieneSweep` выполнялся только по
+  ручному `POST /api/v1/jobs` — автошедулер `scheduleCleanupJobs` в
+  `cmd/mcp-server` ставит `cleanup` каждые `sync.cleanup_interval` (24ч)
+  с дедупом по висящему cleanup; `sync.hygiene_retention_days` (90) и
+  `sync.quota_history_keep_days` (7) — в конфиге вместо хардкодов
+  хендлера. Stale-окно 30д оставлено константой: привязано к определению
+  дашборда `v_stale_attributes`.
+- **Воркер jobs (нюанс, исправлен 2026-09-15).** `isRateLimited` матчил
+  подстроку `rate`: ошибки вида «generate/separate/operate» уходили в
+  вечный ретрай мимо `maxAttempts`. Заменён на точный регистронезависимый
+  матчер (429/quota/rate limit/ratelimit/too many requests/try again) +
+  `ratelimit_test.go`. Не менялось сознательно: квота списывается до
+  выполнения хендлера (учёт «попыток вызовов», решение — в дизайн-фазу).
 - **Трек Г (backlog, решение 2026-09-15).** McRAPTOR вместо эвристики
   Парето-альтернатив и demand-driven/TTL-ресинк расписаний — отдельными
   фазами, не в этом коммите (требуют дизайна фронта Парето и учёта спроса

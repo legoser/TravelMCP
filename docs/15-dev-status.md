@@ -195,6 +195,8 @@ Done 7.1: `config.go` → `sections/defaults/env`; server/sync уже были
 пофайлово разделены (субпакеты отвергнуты, см. 14-plan §11).
 Done smoke-паритет: `AssertBadArgsTable` в `TestSmokeMCPFlow`.
 Трек Г: stale закрывается expiry (incl. `NULL last_attempt_at`); McRAPTOR
-и demand-driven — backlog отдельными фазами; `RunHygieneSweep` без
-прод-вызовов — туда же. Комментарии — только английские в файлах,
-тронутых текущей задачей.
+и demand-driven — backlog отдельными фазами. Находка закрыта: автошедулер
+`cleanup` (`sync.cleanup_interval`, дефолт 24ч, дедуп) — sweep больше не
+только ручной; `hygiene_retention_days`/`quota_history_keep_days` в конфиге.
+Нюанс закрыт: точный `isRateLimited` (был вечный ретрай на «generate»).
+Комментарии — только английские в файлах, тронутых текущей задачей.
