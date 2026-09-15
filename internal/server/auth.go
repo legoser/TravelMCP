@@ -4,11 +4,13 @@ package server
 
 import (
 	"context"
+	"sort"
 	"strings"
 
 	"crypto/subtle"
 	"golang.org/x/crypto/bcrypt"
 	"net/http"
+	"net/url"
 
 	_ "travelmcp/internal/adapters/nominatim"
 	_ "travelmcp/internal/adapters/yandex"
@@ -43,7 +45,7 @@ func (s *Server) auth(next http.Handler, requiredScope string) http.Handler {
 			key = h
 		}
 		if subtle.ConstantTimeCompare([]byte(key), []byte(s.cfg.Auth.AdminToken)) == 1 {
-			s.logger.InfoContext(r.Context(), "auth admin token", "path", r.URL.Path, "remote", r.RemoteAddr)
+			s.logger.DebugContext(r.Context(), "auth admin token", "path", r.URL.Path)
 			ctx := context.WithValue(r.Context(), ctxUserKey, &store.UserRow{ID: 0, Email: "admin", Role: "admin", Status: "active"})
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
@@ -121,6 +123,47 @@ func userEmail(u *store.UserRow) string {
 
 func userPublic(u *store.UserRow) map[string]any {
 	return map[string]any{"id": u.ID, "email": u.Email, "status": u.Status, "role": u.Role, "created_at": u.CreatedAt, "config": u.Config}
+}
+
+var logSafeHeaders = map[string]bool{
+	"Content-Type": true, "Accept": true, "Accept-Language": true,
+	"Content-Length": true, "User-Agent": true,
+	"X-Request-ID": true, "X-Trace-ID": true, "X-Span-ID": true,
+}
+
+func redactedHeaders(h http.Header) map[string]string {
+	out := make(map[string]string, len(logSafeHeaders))
+	for k := range logSafeHeaders {
+		if v := h.Get(k); v != "" {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func redactedQuery(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	q, err := url.ParseQuery(raw)
+	if err != nil {
+		return "***"
+	}
+	keys := make([]string, 0, len(q))
+	for k := range q {
+		keys = append(keys, k+"=***")
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, "&")
+}
+
+func redactMapKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func maskDSNShort(dsn string) string {

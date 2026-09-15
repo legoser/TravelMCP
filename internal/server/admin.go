@@ -651,7 +651,7 @@ func (s *Server) handleAdminExternalCall(w http.ResponseWriter, r *http.Request)
 func (s *Server) handleAdminPage(w http.ResponseWriter, r *http.Request) {
 	reqID := fmt.Sprint(r.Context().Value(ctxKey("request_id")))
 	s.logger.Info("admin page", "method", r.Method, "path", r.URL.Path, "remote", r.RemoteAddr, "request_id", reqID)
-	s.logger.Debug("admin page debug", "headers", fmt.Sprint(r.Header), "query", r.URL.RawQuery)
+	s.logger.Debug("admin page debug", "headers", redactedHeaders(r.Header), "query", redactedQuery(r.URL.RawQuery))
 	data, err := fs.ReadFile(webFS, "web/index.html")
 	if err != nil {
 		s.logger.Error("admin page read failed", "error", err)

@@ -19,7 +19,7 @@ import (
 
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("register attempt", "remote", r.RemoteAddr)
-	s.logger.Debug("register debug", "headers", fmt.Sprint(r.Header))
+	s.logger.Debug("register debug", "headers", redactedHeaders(r.Header))
 	if s.store == nil {
 		s.logger.Error("register failed: storage disabled")
 		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
@@ -43,7 +43,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(req.Password) < 8 || len(req.Password) > 72 {
-		s.logger.Warn("register bad password length", "email", req.Email, "len", len(req.Password))
+		s.logger.Warn("register bad password length")
 		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "password 8..72 required", "message": fmt.Sprintf("password: длина %d, ожидается 8..72", len(req.Password)), "field": "password"})
 		return
 	}
@@ -66,7 +66,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("login attempt", "remote", r.RemoteAddr)
-	s.logger.Debug("login debug", "headers", fmt.Sprint(r.Header))
+	s.logger.Debug("login debug", "headers", redactedHeaders(r.Header))
 	if s.store == nil {
 		s.logger.Error("login failed: storage disabled")
 		writeJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "storage disabled"})
@@ -575,7 +575,7 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 	actor, _ := r.Context().Value(ctxUserKey).(*store.UserRow)
 	s.logger.Info("put config", "actor", userEmail(actor), "remote", r.RemoteAddr)
-	s.logger.Debug("put config debug", "headers", fmt.Sprint(r.Header))
+	s.logger.Debug("put config debug", "headers", redactedHeaders(r.Header))
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	defer r.Body.Close()
 	var req map[string]any
@@ -583,7 +583,7 @@ func (s *Server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 		writeJSONDecodeError(w, err, s.logger, r.URL.Path)
 		return
 	}
-	s.logger.Debug("put config payload", "body", fmt.Sprint(req), "actor", userEmail(actor))
+	s.logger.Debug("put config payload", "keys", redactMapKeys(req), "actor", userEmail(actor))
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if v, ok := req["providers"]; ok {

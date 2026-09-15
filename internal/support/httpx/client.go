@@ -62,22 +62,28 @@ func (c *Client) Do(ctx context.Context, req *http.Request) (*http.Response, err
 	return resp, nil
 }
 
+var logSafeQueryParams = map[string]bool{
+	"q": true, "format": true, "addressdetails": true, "accept-language": true,
+	"limit": true, "lat": true, "lon": true, "bbox": true, "viewbox": true,
+}
+
 func redactURL(s string) string {
 	u, err := url.Parse(s)
 	if err != nil {
-		return s
+		return "***"
 	}
 	q := u.Query()
-	changed := false
-	for k := range q {
-		lk := strings.ToLower(k)
-		if lk == "apikey" || lk == "api_key" || lk == "key" || lk == "token" {
-			q.Set(k, "***")
-			changed = true
+	if len(q) == 0 {
+		return u.String()
+	}
+	redacted := url.Values{}
+	for k, vs := range q {
+		if logSafeQueryParams[strings.ToLower(k)] {
+			redacted[k] = vs
+		} else {
+			redacted.Set(k, "***")
 		}
 	}
-	if changed {
-		u.RawQuery = q.Encode()
-	}
+	u.RawQuery = redacted.Encode()
 	return u.String()
 }

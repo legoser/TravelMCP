@@ -195,7 +195,7 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 			}
 		}
 		if s.logger.Enabled(r.Context(), slog.LevelDebug) && rec.status >= 400 {
-			s.logger.DebugContext(r.Context(), "request debug", "method", r.Method, "path", r.URL.Path, "query", r.URL.RawQuery, "headers", fmt.Sprint(r.Header))
+			s.logger.DebugContext(r.Context(), "request debug", "method", r.Method, "path", r.URL.Path, "query", redactedQuery(r.URL.RawQuery), "headers", redactedHeaders(r.Header))
 		}
 	})
 }
