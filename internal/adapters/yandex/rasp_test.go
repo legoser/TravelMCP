@@ -401,3 +401,35 @@ func TestRaspThreadCacheRoundtrip(t *testing.T) {
 	}
 	_ = time.Now
 }
+
+func TestRaspQuotaLimitFromConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  int
+		want int
+	}{
+		{"config override", 7, 7},
+		{"zero falls back to default", 0, DefaultRaspQuotaLimit},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotLimit string
+			var gotInt int
+			cfg := config.Defaults()
+			cfg.Yandex.RaspQuotaLimit = tc.cfg
+			r := NewRasp(*cfg, httpx.New(nil, "test"), t.TempDir(), func(_ context.Context, provider string, limit int) (bool, int, error) {
+				gotLimit = provider
+				gotInt = limit
+				return false, 0, nil
+			}, false)
+			if _, err := r.Schedule(context.Background(), "s000", "2026-01-01"); err == nil {
+				t.Fatal("want quota-exhausted error")
+			}
+			if gotLimit != "yandex_rasp" || gotInt != tc.want {
+				t.Fatalf("quota called with (%q,%d), want (yandex_rasp,%d)", gotLimit, gotInt, tc.want)
+			}
+			if r.Stats().QuotaBlocked != 1 {
+				t.Fatalf("QuotaBlocked=%d, want 1", r.Stats().QuotaBlocked)
+			}
+		})
+	}
+}

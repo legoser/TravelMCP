@@ -117,6 +117,10 @@ func NewRasp(cfg config.Config, client *httpx.Client, cacheDir string, quota Quo
 	if quota == nil {
 		quota = func(context.Context, string, int) (bool, int, error) { return false, 0, nil }
 	}
+	limit := cfg.Yandex.RaspQuotaLimit
+	if limit <= 0 {
+		limit = DefaultRaspQuotaLimit
+	}
 	return &Rasp{
 		baseURL:  base,
 		apiKey:   cfg.Yandex.RaspKey,
@@ -124,12 +128,20 @@ func NewRasp(cfg config.Config, client *httpx.Client, cacheDir string, quota Quo
 		cacheDir: cacheDir,
 		quota:    quota,
 		offline:  offline,
+		limit:    limit,
 	}
 }
 
 // DefaultRaspQuotaLimit — суточный лимит вызовов Rasp API за прогон
 // (согласован с DefaultQuotaLimit стора; 500 — легальный лимит Яндекса).
 const DefaultRaspQuotaLimit = 500
+
+func (r *Rasp) quotaLimit() int {
+	if r.limit > 0 {
+		return r.limit
+	}
+	return DefaultRaspQuotaLimit
+}
 
 func (r *Rasp) Stats() RaspStats {
 	r.mu.Lock()
@@ -186,7 +198,7 @@ func (r *Rasp) Schedule(ctx context.Context, stationCode, date string) (*RaspSch
 }
 
 func (r *Rasp) fetchSchedule(ctx context.Context, out *RaspSchedule, stationCode, date string, offset int) error {
-	ok, _, err := r.quota(ctx, "yandex_rasp", DefaultRaspQuotaLimit)
+	ok, _, err := r.quota(ctx, "yandex_rasp", r.quotaLimit())
 	if err != nil || !ok {
 		r.mu.Lock()
 		r.stats.QuotaBlocked++
@@ -259,7 +271,7 @@ func (r *Rasp) Thread(ctx context.Context, uid string) (*RaspThread, error) {
 	if r.offline {
 		return nil, fmt.Errorf("rasp: нет кэша нитки %s (offline)", uid)
 	}
-	ok, _, err := r.quota(ctx, "yandex_rasp", DefaultRaspQuotaLimit)
+	ok, _, err := r.quota(ctx, "yandex_rasp", r.quotaLimit())
 	if err != nil || !ok {
 		r.mu.Lock()
 		r.stats.QuotaBlocked++
@@ -332,7 +344,7 @@ func (r *Rasp) NearestStation(ctx context.Context, lat, lon float64) (string, er
 	if r.offline {
 		return "", fmt.Errorf("rasp: нет кэша nearest для %.4f,%.4f (offline)", lat, lon)
 	}
-	ok, _, err := r.quota(ctx, "yandex_rasp", DefaultRaspQuotaLimit)
+	ok, _, err := r.quota(ctx, "yandex_rasp", r.quotaLimit())
 	if err != nil || !ok {
 		r.mu.Lock()
 		r.stats.QuotaBlocked++
