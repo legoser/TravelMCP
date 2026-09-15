@@ -299,10 +299,62 @@ func (a *App) handleFindRoute(ctx context.Context, req mcp.CallToolRequest) (*mc
 		a.logger.InfoContext(ctx, "find_route success", "departure", journey.Departure, "arrival", journey.Arrival, "legs", len(journey.Legs), "transfers", journey.Transfers, "alternatives", len(journey.Alternatives))
 		a.logger.DebugContext(ctx, "journey legs", "legs", journey.Legs)
 	}
+	a.recordDemand(ctx, journey)
 	enrichFuzzyLegs(journey, net)
 	normalizeJourneyTimezones(journey)
 
 	return mcp.NewToolResultJSON(journey)
+}
+
+// recordDemand — demand ticks for served canonical trips (track G slice):
+// fire-and-forget, never blocks the response. TripID carries
+// "routeCode|externalTripCode" (DB-loaded networks); anything else
+// (synth, gap walks) resolves to unknown and is skipped by the store.
+func (a *App) recordDemand(ctx context.Context, journey *model.Journey) {
+	if a.store == nil || journey == nil {
+		return
+	}
+	rec, ok := a.store.(interface {
+		RecordTripDemand(ctx context.Context, provider, routeCode, externalTripCode string) (bool, error)
+	})
+	if !ok {
+		return
+	}
+	type demandTick struct{ provider, route, ext string }
+	var ticks []demandTick
+	seen := map[demandTick]bool{}
+	addLegs := func(legs []model.Leg) {
+		for _, l := range legs {
+			if l.TripID == "" || l.ProviderID == "" {
+				continue
+			}
+			route, ext, ok := strings.Cut(l.TripID, "|")
+			if !ok || route == "" || ext == "" {
+				continue
+			}
+			t := demandTick{provider: l.ProviderID, route: route, ext: ext}
+			if !seen[t] {
+				seen[t] = true
+				ticks = append(ticks, t)
+			}
+		}
+	}
+	addLegs(journey.Legs)
+	for i := range journey.Alternatives {
+		addLegs(journey.Alternatives[i].Legs)
+	}
+	if len(ticks) == 0 {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		for _, t := range ticks {
+			if _, err := rec.RecordTripDemand(ctx, t.provider, t.route, t.ext); err != nil && a.logger != nil {
+				a.logger.Debug("demand tick failed", "provider", t.provider, "route", t.route, "trip", t.ext, "err", err)
+			}
+		}
+	}()
 }
 
 // normalizeJourneyTimezones — все времена легов/джорни в единый вид

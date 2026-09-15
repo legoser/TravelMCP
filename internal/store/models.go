@@ -381,6 +381,19 @@ type TripSourceRow struct {
 	Method        *string
 }
 
+// StaleDemandRow — trip with recorded user demand whose sources are stale
+// (no trip_sources rows, or oldest observed_at before the cutoff):
+// resync scheduler input, highest demand first.
+type StaleDemandRow struct {
+	TripID           int64
+	ProviderID       string
+	RouteCode        string
+	ExternalCode     string
+	RequestCount     int64
+	LastRequestedAt  string
+	OldestObservedAt string
+}
+
 type OutboxEvent struct {
 	ID          int64
 	Aggregate   string

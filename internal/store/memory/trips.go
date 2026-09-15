@@ -101,7 +101,104 @@ func (m *MemoryStore) UpsertTripSource(ctx context.Context, s store.TripSourceRo
 		m.tripSources[s.TripID] = map[string]store.TripSourceRow{}
 	}
 	m.tripSources[s.TripID][s.Source] = s
+	if m.tripSeen == nil {
+		m.tripSeen = map[int64]map[string]time.Time{}
+	}
+	if m.tripSeen[s.TripID] == nil {
+		m.tripSeen[s.TripID] = map[string]time.Time{}
+	}
+	m.tripSeen[s.TripID][s.Source] = time.Now()
 	return nil
+}
+
+// RecordTripDemand — demand tick for a served trip; unknown route/trip →
+// (false, nil), same contract as postgres.
+func (m *MemoryStore) RecordTripDemand(ctx context.Context, provider, routeCode, externalTripCode string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	routeID := int64(0)
+	for id, r := range m.routes {
+		if r.ProviderID == provider && r.ExternalRouteCode == routeCode && r.ValidTo == nil {
+			routeID = id
+			break
+		}
+	}
+	if routeID == 0 {
+		return false, nil
+	}
+	tripID := int64(0)
+	for id, t := range m.trips {
+		if t.RouteID == routeID && t.ExternalTripCode == externalTripCode {
+			tripID = id
+			break
+		}
+	}
+	if tripID == 0 {
+		return false, nil
+	}
+	if m.tripDemand == nil {
+		m.tripDemand = map[int64]*tripDemandEntry{}
+	}
+	e := m.tripDemand[tripID]
+	if e == nil {
+		e = &tripDemandEntry{}
+		m.tripDemand[tripID] = e
+	}
+	e.count++
+	e.last = time.Now()
+	return true, nil
+}
+
+// ListStaleDemandedTrips — demanded trips with no sources or oldest
+// verification before cutoff, highest demand first.
+func (m *MemoryStore) ListStaleDemandedTrips(ctx context.Context, cutoff time.Time, limit int) ([]store.StaleDemandRow, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	var out []store.StaleDemandRow
+	for tripID, e := range m.tripDemand {
+		t, ok := m.trips[tripID]
+		if !ok {
+			continue
+		}
+		r, ok := m.routes[t.RouteID]
+		if !ok {
+			continue
+		}
+		oldest := time.Time{}
+		hasSources := false
+		for _, at := range m.tripSeen[tripID] {
+			hasSources = true
+			if oldest.IsZero() || at.Before(oldest) {
+				oldest = at
+			}
+		}
+		if hasSources && !oldest.Before(cutoff) {
+			continue
+		}
+		oldestStr := ""
+		if hasSources {
+			oldestStr = oldest.UTC().Format(time.RFC3339)
+		}
+		out = append(out, store.StaleDemandRow{
+			TripID: tripID, ProviderID: t.ProviderID,
+			RouteCode: r.ExternalRouteCode, ExternalCode: t.ExternalTripCode,
+			RequestCount: e.count, LastRequestedAt: e.last.UTC().Format(time.RFC3339),
+			OldestObservedAt: oldestStr,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].RequestCount != out[j].RequestCount {
+			return out[i].RequestCount > out[j].RequestCount
+		}
+		return out[i].LastRequestedAt > out[j].LastRequestedAt
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 func (m *MemoryStore) UpsertStagingTrip(ctx context.Context, s store.StagingTripRow) (int64, error) {

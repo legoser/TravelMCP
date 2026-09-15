@@ -916,6 +916,16 @@ CREATE TABLE IF NOT EXISTS trip_sources (
   PRIMARY KEY (trip_id, source)
 );
 
+-- Demand-driven resync (track G): user demand per canonical trip.
+-- find_route records served trips; the resync scheduler refreshes
+-- high-demand trips whose sources went stale (observed_at older than
+-- the source TTL). No FK to providers: demand outlives source rows.
+CREATE TABLE IF NOT EXISTS trip_demand (
+  trip_id bigint PRIMARY KEY REFERENCES trips(id) ON DELETE CASCADE,
+  request_count bigint NOT NULL DEFAULT 0,
+  last_requested_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS attribute_state (
   entity_type text NOT NULL,
   entity_id bigint NOT NULL,

@@ -79,8 +79,18 @@ type MemoryStore struct {
 	reviewQueue    []store.ReviewQueueRow
 	stagingTrips   map[string]store.StagingTripRow
 	tripSources    map[int64]map[string]store.TripSourceRow
+	tripDemand     map[int64]*tripDemandEntry
+	tripSeen       map[int64]map[string]time.Time
 	outbox         []store.OutboxEvent
 	nextID         int64
+}
+
+// tripDemandEntry — demand counters per canonical trip (track G slice).
+// tripSeen mirrors trip_sources.observed_at (latest verification per
+// source); staleness compares the oldest across sources.
+type tripDemandEntry struct {
+	count int64
+	last  time.Time
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -105,6 +115,8 @@ func NewMemoryStore() *MemoryStore {
 		attrStates:     make(map[string]store.AttributeStateRow),
 		syncRuns:       make(map[int64]store.SyncRunRow),
 		syncChunks:     make(map[int64]store.SyncChunkRow),
+		tripDemand:     make(map[int64]*tripDemandEntry),
+		tripSeen:       make(map[int64]map[string]time.Time),
 		terminalIdents: make(map[int64][]model.AdaptedIdentifier),
 		schemes:        make(map[string]store.IdentifierSchemeRow),
 		provenance:     make(map[string]store.ProvenanceVote),

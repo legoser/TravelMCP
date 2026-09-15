@@ -2,7 +2,10 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"travelmcp/internal/model"
 	store "travelmcp/internal/store"
@@ -103,6 +106,54 @@ func (p *PostgresStore) UpsertTripSource(ctx context.Context, s store.TripSource
 	_, err := p.pool.Exec(ctx, `INSERT INTO trip_sources(trip_id, source, observed_at, price, price_currency, schedule_url, duration_s, distance_m, method) VALUES($1,$2,now(),$3,$4,$5,$6,$7,$8) ON CONFLICT(trip_id, source) DO UPDATE SET observed_at=now(), price=EXCLUDED.price, price_currency=EXCLUDED.price_currency, schedule_url=EXCLUDED.schedule_url, duration_s=EXCLUDED.duration_s, distance_m=EXCLUDED.distance_m, method=EXCLUDED.method`,
 		s.TripID, s.Source, s.Price, s.PriceCurrency, s.ScheduleURL, s.DurationS, s.DistanceM, s.Method)
 	return err
+}
+
+// RecordTripDemand — demand tick for a served trip. Resolves the canonical
+// trip via routes(source_provider, external_route_code) + trips NK and bumps
+// trip_demand. Unknown route/trip → (false, nil): non-canonical providers
+// (synth in tests) carry no demand by definition.
+func (p *PostgresStore) RecordTripDemand(ctx context.Context, provider, routeCode, externalTripCode string) (bool, error) {
+	if p.pool == nil {
+		return false, errNotImplemented
+	}
+	var tripID int64
+	err := p.pool.QueryRow(ctx, `SELECT t.id FROM trips t JOIN routes r ON r.id=t.route_id WHERE r.source_provider=$1 AND r.external_route_code=$2 AND t.external_trip_code=$3 AND t.valid_to IS NULL`, provider, routeCode, externalTripCode).Scan(&tripID)
+	if err == pgx.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("record demand resolve: %w", err)
+	}
+	_, err = p.pool.Exec(ctx, `INSERT INTO trip_demand(trip_id, request_count, last_requested_at) VALUES($1,1,now()) ON CONFLICT(trip_id) DO UPDATE SET request_count=trip_demand.request_count+1, last_requested_at=now()`, tripID)
+	if err != nil {
+		return false, fmt.Errorf("record demand upsert: %w", err)
+	}
+	return true, nil
+}
+
+// ListStaleDemandedTrips — resync scheduler input: demanded trips with no
+// sources or oldest observed_at before cutoff, highest demand first.
+func (p *PostgresStore) ListStaleDemandedTrips(ctx context.Context, cutoff time.Time, limit int) ([]store.StaleDemandRow, error) {
+	if p.pool == nil {
+		return nil, errNotImplemented
+	}
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	rows, err := p.pool.Query(ctx, `SELECT t.id, t.provider_id, r.external_route_code, t.external_trip_code, d.request_count, d.last_requested_at::text, coalesce(MIN(s.observed_at)::text,'') FROM trip_demand d JOIN trips t ON t.id=d.trip_id JOIN routes r ON r.id=t.route_id LEFT JOIN trip_sources s ON s.trip_id=t.id GROUP BY t.id, t.provider_id, r.external_route_code, t.external_trip_code, d.request_count, d.last_requested_at HAVING MIN(s.observed_at) IS NULL OR MIN(s.observed_at) < $1 ORDER BY d.request_count DESC, d.last_requested_at DESC LIMIT $2`, cutoff, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list stale demand: %w", err)
+	}
+	defer rows.Close()
+	var out []store.StaleDemandRow
+	for rows.Next() {
+		var r store.StaleDemandRow
+		if err := rows.Scan(&r.TripID, &r.ProviderID, &r.RouteCode, &r.ExternalCode, &r.RequestCount, &r.LastRequestedAt, &r.OldestObservedAt); err != nil {
+			return nil, fmt.Errorf("list stale demand scan: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 func (p *PostgresStore) UpsertStagingTrip(ctx context.Context, s store.StagingTripRow) (int64, error) {
