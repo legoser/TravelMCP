@@ -144,14 +144,10 @@ func deref(s *string) string {
 	return *s
 }
 
-func MustAdaptedFromMatchJSON(data []byte) model.AdaptedRecord {
+func AdaptedFromMatchJSON(data []byte) (model.AdaptedRecord, error) {
 	var m Match
 	if err := json.Unmarshal(data, &m); err != nil {
-		panic(fmt.Sprintf("unmarshal match: %v", err))
+		return model.AdaptedRecord{}, fmt.Errorf("unmarshal match: %w", err)
 	}
-	rec, err := MatchToAdapted(m, "motis")
-	if err != nil {
-		panic(err)
-	}
-	return rec
+	return MatchToAdapted(m, "motis")
 }

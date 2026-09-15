@@ -228,12 +228,12 @@ func (m *MemoryStore) DeleteUser(ctx context.Context, id int64) error {
 	}
 	return nil
 }
-func generateMemKey() string {
+func generateMemKey() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		panic(err)
+		return "", fmt.Errorf("rand key: %w", err)
 	}
-	return "tm_" + hex.EncodeToString(b)
+	return "tm_" + hex.EncodeToString(b), nil
 }
 
 func (m *MemoryStore) CreateApiKey(ctx context.Context, userID int64, scopes string) (ApiKeyRow, error) {
@@ -243,7 +243,10 @@ func (m *MemoryStore) CreateApiKey(ctx context.Context, userID int64, scopes str
 		scopes = "mcp:read"
 	}
 	id := m.allocID()
-	key := generateMemKey()
+	key, err := generateMemKey()
+	if err != nil {
+		return ApiKeyRow{}, err
+	}
 	row := ApiKeyRow{ID: id, UserID: userID, Key: key, Scopes: scopes, CreatedAt: time.Now().Unix()}
 	m.apiKeys[id] = row
 	m.apiKeysByKey[key] = id
