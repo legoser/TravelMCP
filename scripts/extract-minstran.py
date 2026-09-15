@@ -987,7 +987,7 @@ def main():
                     help="коды регионов через запятую, напр. 22,42,54,70 или 'all' для всех регионов")
     ap.add_argument("--snapshot", default="", help="дата выгрузки, напр. 2026-06-16")
     ap.add_argument("--osm", default="", help="OSM-датасет stops.json для геокодинга")
-    ap.add_argument("--gazetteer", default="internal/geo/places.json",
+    ap.add_argument("--gazetteer", default="testdata/places.json",
                     help="газетир городов для геокодинга")
     ap.add_argument("--out", dest="output", required=True, help="путь к JSON")
     args = ap.parse_args()

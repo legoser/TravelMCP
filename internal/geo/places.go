@@ -1,16 +1,13 @@
 package geo
 
 import (
-	_ "embed"
 	"encoding/json"
+	"os"
 	"sort"
 	"strings"
 
 	"travelmcp/internal/model"
 )
-
-//go:embed places.json
-var placesJSON []byte
 
 type Place struct {
 	Name    string   `json:"name"`
@@ -23,12 +20,35 @@ type Gazetteer struct {
 	places []Place
 }
 
-func DefaultGazetteer() (*Gazetteer, error) {
+func NewGazetteer(places []Place) *Gazetteer {
+	return &Gazetteer{places: places}
+}
+
+func EmptyGazetteer() *Gazetteer {
+	return &Gazetteer{}
+}
+
+func ParsePlacesJSON(data []byte) ([]Place, error) {
 	var places []Place
-	if err := json.Unmarshal(placesJSON, &places); err != nil {
+	if err := json.Unmarshal(data, &places); err != nil {
 		return nil, err
 	}
-	return &Gazetteer{places: places}, nil
+	return places, nil
+}
+
+// DefaultGazetteer — газетир из тест-фикстуры testdata/places.json.
+// Только для тестов: рантайм стартует с EmptyGazetteer и наполняется
+// поселениями из БД (ListSettlements: сид places + канон терминалов).
+func DefaultGazetteer() (*Gazetteer, error) {
+	data, err := os.ReadFile("../../testdata/places.json")
+	if err != nil {
+		return nil, err
+	}
+	places, err := ParsePlacesJSON(data)
+	if err != nil {
+		return nil, err
+	}
+	return NewGazetteer(places), nil
 }
 
 func (g *Gazetteer) Add(name string, lat, lon float64) {

@@ -189,7 +189,7 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 
 def load_osm_index() -> list[dict]:
-    for cand in [resolve_path("data/osm/stations.json"), resolve_path("internal/geo/places.json")]:
+    for cand in [resolve_path("data/osm/stations.json"), resolve_path("testdata/places.json")]:
         if cand.exists():
             try:
                 data = json.loads(cand.read_text(encoding="utf-8"))

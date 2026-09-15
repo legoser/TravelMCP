@@ -57,10 +57,10 @@ func New(plan *planner.Planner, registry *providers.Registry) *App {
 
 func NewWithStore(plan *planner.Planner, registry *providers.Registry, st store.Store, logger *slog.Logger) *App {
 	a := &App{plan: plan, registry: registry, store: st, logger: logger}
-	gz, err := geo.DefaultGazetteer()
-	if err == nil {
-		// Канон Postgres — основной источник поселений; статические 102 записи
-		// остаются базой, registry-провайдеры — fallback (реестр/synth).
+	gz := geo.EmptyGazetteer()
+	{
+		// Поселения — только из БД (ListSettlements: сид places + канон
+		// терминалов); registry-провайдеры — fallback (реестр/synth).
 		if st != nil {
 			if src, ok := st.(geo.SettlementSource); ok {
 				added, skipped, err := gz.LoadSettlements(context.Background(), src)

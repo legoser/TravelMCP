@@ -11,6 +11,8 @@ import (
 // (stop_times несённых валидными трипами) → bus_station → station → id.
 // Наличие живых рейсов важнее типа: автовокзал без расписаний бесполезен
 // как точка маршрута, даже если он «главнее».
+// Сид places (миграция, cold-start) добирает поселения, которых нет в каноне;
+// совпадения по имени (без учёта регистра) не дублируются — канон побеждает.
 func (p *PostgresStore) ListSettlements(ctx context.Context) ([]geo.Settlement, error) {
 	const q = `
 WITH reps AS (
@@ -32,8 +34,20 @@ WITH reps AS (
          WHEN t.object_type = 'station'     THEN 1
          ELSE 2 END,
     t.id
+),
+seed AS (
+  SELECT pn.name AS name,
+    ST_Y(p.geom::geometry) AS lat,
+    ST_X(p.geom::geometry) AS lon
+  FROM places p
+  JOIN place_names pn ON pn.place_id = p.id AND pn.lang = 'ru'
+  WHERE p.level = 4 AND p.is_current AND p.geom IS NOT NULL
 )
-SELECT name, lat, lon FROM reps ORDER BY name`
+SELECT name, lat, lon FROM reps
+UNION
+SELECT name, lat, lon FROM seed
+WHERE lower(name) NOT IN (SELECT lower(name) FROM reps)
+ORDER BY 1`
 	rows, err := p.pool.Query(ctx, q)
 	if err != nil {
 		return nil, err

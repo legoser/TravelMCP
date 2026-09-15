@@ -299,7 +299,7 @@ func (p *PostgresStore) UpsertPlace(ctx context.Context, r PlaceRow, names map[s
 	for lang, name := range names {
 		norm := strings.ToLower(strings.TrimSpace(name))
 		norm = strings.Join(strings.Fields(norm), " ")
-		if _, err := p.pool.Exec(ctx, `INSERT INTO place_names(place_id, lang, name, normalized) VALUES($1,$2,$3,$4) ON CONFLICT(place_id, lang) DO UPDATE SET name=EXCLUDED.name, normalized=EXCLUDED.normalized`, id, lang, name, norm); err != nil {
+		if _, err := p.pool.Exec(ctx, `INSERT INTO place_names(place_id, lang, name, normalized) VALUES($1,$2,$3,$4) ON CONFLICT(place_id, lang, name) DO UPDATE SET normalized=EXCLUDED.normalized`, id, lang, name, norm); err != nil {
 			return 0, err
 		}
 	}
@@ -1567,7 +1567,7 @@ func (t *pgTxStore) UpsertPlace(ctx context.Context, r PlaceRow, names map[strin
 	for lang, name := range names {
 		norm := strings.ToLower(strings.TrimSpace(name))
 		norm = strings.Join(strings.Fields(norm), " ")
-		if _, err := t.tx.Exec(ctx, `INSERT INTO place_names(place_id, lang, name, normalized) VALUES($1,$2,$3,$4) ON CONFLICT(place_id, lang) DO UPDATE SET name=EXCLUDED.name, normalized=EXCLUDED.normalized`, id, lang, name, norm); err != nil {
+		if _, err := t.tx.Exec(ctx, `INSERT INTO place_names(place_id, lang, name, normalized) VALUES($1,$2,$3,$4) ON CONFLICT(place_id, lang, name) DO UPDATE SET normalized=EXCLUDED.normalized`, id, lang, name, norm); err != nil {
 			return 0, err
 		}
 	}

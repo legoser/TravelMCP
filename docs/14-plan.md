@@ -677,7 +677,7 @@ availability-метриках здоровья коннектора.
 | `data/reestr/missing_stops.json` | Переведён в review-сигнал (Фаза 0) | закрыто |
 | `data/reestr/{yandex,nominatim}_geo.json` | Seed загружен (Фаза 2) → архив | закрыто |
 | `geocoder.max_calls` (`GEOCODER_MAX_CALLS`) | Живой knob: лимит квоты `api_quotas` для геокодеров (не deprecated) | — |
-| `internal/geo/places.json` | Static-fallback Gazetteer; канон из БД его перекрывает (upsert) | ревизия при полном переезде `places` в БД |
+| `internal/geo/places.json` → `testdata/places.json` | Переехал в сид `places`/`place_names` (102 места + алиасы); рантайм — `EmptyGazetteer` + `ListSettlements` из БД; JSON — только тест-фикстура | закрыто |
 | `internal/store/sqlite/*` | Удалён вместе с миграцией 002 — см. `15-dev-status.md` §1 | при прод-деплое |
 
 Правило: после каждого пункта — `make check-deprecated`; срок жизни Deprecated
