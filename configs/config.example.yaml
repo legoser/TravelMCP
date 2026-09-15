@@ -26,7 +26,7 @@ auth:
   admin_token: "${ADMIN_TOKEN}" # dev: export ADMIN_TOKEN=dev-secret; prod — env обязателен
 
 planner:
-  engine: "csa" # csa|raptor (RAPTOR frequency-based для межгорода)
+  engine: "csa" # csa|raptor|mcraptor (RAPTOR frequency-based для межгорода; mcraptor — многокритериальный Парето-поиск)
   semaphore_enable: true
   semaphore_size: 0 # 0 = NumCPU*2, иначе явный размер
   max_walk_minutes: 30 # дефолт пешей доступности, если запрос не задал; междугородние автовокзалы часто за окраиной — можно поднять (env PLANNER_MAX_WALK_MINUTES)

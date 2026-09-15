@@ -124,6 +124,20 @@ func (p *Planner) release() {
 	}
 }
 
+// runTransit — departure-query engine dispatch: csa (default), raptor
+// (frequency-based earliest arrival), mcraptor (multi-criteria Pareto
+// labels: earliest arrival within the transfer limit).
+func (p *Planner) runTransit(net *model.Network, fromStop, toStop string, depart time.Time, params model.SearchParams) ([]model.Leg, error) {
+	switch p.engine {
+	case "raptor":
+		return p.raptor(net, fromStop, toStop, depart, params)
+	case "mcraptor":
+		return p.mcraptor(net, fromStop, toStop, depart, params)
+	default:
+		return p.csa(net, fromStop, toStop, depart, params)
+	}
+}
+
 func (p *Planner) Plan(net *model.Network, from, to model.Coords, params model.SearchParams) (*model.Journey, error) {
 	return p.planWithStops(net, from, to, params, nil, nil)
 }
@@ -395,11 +409,7 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 
 	var transitLegs []model.Leg
 	var err error
-	if p.engine == "raptor" {
-		transitLegs, err = p.raptor(net, fromStop.ID, toStop.ID, departAtStop, params)
-	} else {
-		transitLegs, err = p.csa(net, fromStop.ID, toStop.ID, departAtStop, params)
-	}
+	transitLegs, err = p.runTransit(net, fromStop.ID, toStop.ID, departAtStop, params)
 	if err != nil {
 		if !params.AllowGap {
 			return nil, err
@@ -508,11 +518,7 @@ func (p *Planner) paretoAlternatives(net *model.Network, from, to model.Coords, 
 			_ = accessMin
 		} else {
 			depAtStop := candParams.Departure.Add(time.Duration(accessMin) * time.Minute)
-			if p.engine == "raptor" {
-				legs, err = p.raptor(net, fromStop.ID, toStop.ID, depAtStop, candParams)
-			} else {
-				legs, err = p.csa(net, fromStop.ID, toStop.ID, depAtStop, candParams)
-			}
+			legs, err = p.runTransit(net, fromStop.ID, toStop.ID, depAtStop, candParams)
 			if err != nil {
 				continue
 			}
@@ -982,11 +988,7 @@ func (p *Planner) planArrival(net *model.Network, fromStop, toStop string, arriv
 	for _, dep := range candidates {
 		var legs []model.Leg
 		var err error
-		if p.engine == "raptor" {
-			legs, err = p.raptor(net, fromStop, toStop, dep, params)
-		} else {
-			legs, err = p.csa(net, fromStop, toStop, dep, params)
-		}
+		legs, err = p.runTransit(net, fromStop, toStop, dep, params)
 		if err != nil {
 			continue
 		}
