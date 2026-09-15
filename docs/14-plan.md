@@ -890,11 +890,26 @@ at-rest не требуется (решение 2026-09-15).
   пересадок (критерий, а не пост-проверка как у csa/raptor); диспич
   трёх движков сведён в `runTransit`; паритет с csa (synth ground/flight/
   no-route/zero-transfers + intercity-фикстура) + тест выбора
-  «быстро-с-пересадкой vs медленно-прямо». Осталось: замена эвристики
-  Парето-альтернатив (N перепрогонов) нативной выдачей фронта и
-  demand-driven/TTL-ресинк — отдельными фазами (нужен дизайн фронта
-  и учёт спроса по trip_sources). Stale `incomplete_trip`: закрывается
-  существующим `ExpireStaleStagingTrips` (покрывает `incomplete_trip/
+  «быстро-с-пересадкой vs медленно-прямо». Done 2026-09-15 (шаг 2):
+  нативный фронт Парето — при `engine=mcraptor` альтернативы берутся из
+  лейблов того же отправления (`nativeAlternatives`, один доп. поиск
+  вместо до 6 сдвинутых перепрогонов; csa/raptor — прежняя эвристика
+  для missed-departure-сценариев); фронт видит trade-off, слепой для
+  эвристики (тест: медленный прямой vs быстрый с пересадкой).
+  Done 2026-09-15 (шаг 3, demand-срез): `trip_demand` (request_count,
+  last_requested_at, PK→trips); `find_route` пишет тики асинхронно
+  (fire-and-forget 5с, дедуп, неизвестные трипы пропускаются;
+  показываемые альтернативы тоже тикают); `ListStaleDemandedTrips`
+  (нет источников либо oldest observed_at старше cutoff, demand-desc) —
+  вход планировщика ресинка; контракт на обоих бэкендах. Попутно закрыты
+  два лика тестовой гигиены: `defer pool.Close()` срабатывал раньше
+  `t.Cleanup` (пул закрыт — cleanup молча не работал; пул теперь
+  закрывается через `t.Cleanup`, зарегистрированный первым) и quota-cleanup
+  не удалял `api_calls` (FK держал providers). Осталось:
+  TTL-ресинк-воркер поверх `ListStaleDemandedTrips` (per-trip refetch
+  через адаптеры + TTL источников в конфиге) — отдельной фазой.
+  Stale `incomplete_trip`: закрывается существующим
+  `ExpireStaleStagingTrips` (покрывает `incomplete_trip/
   awaiting_times/needs_review/skeleton_gap` на обоих бэкендах;
   `NULL last_attempt_at` тоже экспайрится); «98 stale» — операционные
   данные, не код.
