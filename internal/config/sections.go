@@ -88,6 +88,12 @@ type Planner struct {
 	// means up to 6 extra runs per request.
 	AltWindowMinutes int `yaml:"alt_window_minutes"`
 	AltStepMinutes   int `yaml:"alt_step_minutes"`
+	// ArrivalWindowHours/ArrivalStepMinutes — arrival-search backward
+	// window (hours) and fallback departure grid step (minutes) in
+	// planArrival: how far back from the requested arrival to look for
+	// connecting trips when no direct candidate exists.
+	ArrivalWindowHours int `yaml:"arrival_window_hours"`
+	ArrivalStepMinutes int `yaml:"arrival_step_minutes"`
 }
 
 type Deduplication struct {

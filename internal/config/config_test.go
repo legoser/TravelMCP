@@ -43,6 +43,34 @@ func TestPlannerAlternativesEnv(t *testing.T) {
 	if d.Planner.AltWindowMinutes != 360 || d.Planner.AltStepMinutes != 60 {
 		t.Fatalf("defaults = %d/%d, want 360/60", d.Planner.AltWindowMinutes, d.Planner.AltStepMinutes)
 	}
+	if d.Planner.ArrivalWindowHours != 24 || d.Planner.ArrivalStepMinutes != 30 {
+		t.Fatalf("arrival defaults = %d/%d, want 24/30", d.Planner.ArrivalWindowHours, d.Planner.ArrivalStepMinutes)
+	}
+}
+
+func TestPlannerArrivalWindowEnv(t *testing.T) {
+	t.Setenv("PLANNER_ARRIVAL_WINDOW_HOURS", "48")
+	t.Setenv("PLANNER_ARRIVAL_STEP_MINUTES", "15")
+	t.Setenv("TRAVELMCP__PLANNER__ARRIVAL_WINDOW_HOURS", "72")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Planner.ArrivalWindowHours != 72 {
+		t.Fatalf("window = %d, want 72 (TRAVELMCP__ mapping wins over legacy)", cfg.Planner.ArrivalWindowHours)
+	}
+	if cfg.Planner.ArrivalStepMinutes != 15 {
+		t.Fatalf("step = %d, want 15", cfg.Planner.ArrivalStepMinutes)
+	}
+	t.Setenv("PLANNER_ARRIVAL_WINDOW_HOURS", "0")
+	t.Setenv("TRAVELMCP__PLANNER__ARRIVAL_WINDOW_HOURS", "0")
+	cfg, err = Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Planner.ArrivalWindowHours != 24 {
+		t.Fatalf("invalid window must fall back to 24, got %d", cfg.Planner.ArrivalWindowHours)
+	}
 }
 
 func TestEnvOverride(t *testing.T) {

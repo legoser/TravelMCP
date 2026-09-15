@@ -25,7 +25,7 @@ func Defaults() *Config {
 			MirrorURL: "https://overpass.openstreetmap.fr/api/interpreter",
 		},
 		Motis:   Motis{URL: "http://192.168.57.14:8077"},
-		Planner: Planner{Engine: "csa", SemaphoreSize: runtime.NumCPU() * 2, SemaphoreEnable: true, MaxWalkMinutes: 30, MinTransferMinutes: 15, FlightCheckInMinutes: 120, AltWindowMinutes: 360, AltStepMinutes: 60},
+		Planner: Planner{Engine: "csa", SemaphoreSize: runtime.NumCPU() * 2, SemaphoreEnable: true, MaxWalkMinutes: 30, MinTransferMinutes: 15, FlightCheckInMinutes: 120, AltWindowMinutes: 360, AltStepMinutes: 60, ArrivalWindowHours: 24, ArrivalStepMinutes: 30},
 		Log:     Log{Level: "info", Format: "json", Levels: map[string]string{}, Loki: LokiLog{BatchSize: 100, BatchWait: "1s"}},
 		Verification: Verification{
 			ConfidenceThreshold: 0.6,
@@ -166,5 +166,11 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Pricing.DefaultCurrency == "" {
 		cfg.Pricing.DefaultCurrency = "RUB"
+	}
+	if cfg.Planner.ArrivalWindowHours <= 0 {
+		cfg.Planner.ArrivalWindowHours = 24
+	}
+	if cfg.Planner.ArrivalStepMinutes <= 0 {
+		cfg.Planner.ArrivalStepMinutes = 30
 	}
 }

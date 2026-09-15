@@ -92,6 +92,16 @@ func applyEnv(cfg *Config) {
 			cfg.Planner.AltStepMinutes = n
 		}
 	}
+	if v := os.Getenv("PLANNER_ARRIVAL_WINDOW_HOURS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 168 {
+			cfg.Planner.ArrivalWindowHours = n
+		}
+	}
+	if v := os.Getenv("PLANNER_ARRIVAL_STEP_MINUTES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 120 {
+			cfg.Planner.ArrivalStepMinutes = n
+		}
+	}
 	if v := os.Getenv("HTTP_RATE_LIMIT_RPS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.HTTP.RateLimit.RPS = n
@@ -355,6 +365,16 @@ func setByPath(cfg *Config, parts []string, v string) {
 		if len(parts) == 2 && parts[1] == "alt_step_minutes" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 360 {
 				cfg.Planner.AltStepMinutes = n
+			}
+		}
+		if len(parts) == 2 && parts[1] == "arrival_window_hours" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 168 {
+				cfg.Planner.ArrivalWindowHours = n
+			}
+		}
+		if len(parts) == 2 && parts[1] == "arrival_step_minutes" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 120 {
+				cfg.Planner.ArrivalStepMinutes = n
 			}
 		}
 	case "auth":

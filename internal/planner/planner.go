@@ -31,6 +31,11 @@ type Planner struct {
 	flightCheckIn int
 	altWindowMin  int
 	altStepMin    int
+	// arrivalWindowH — backward search window (hours) for arrival queries;
+	// arrivalStepMin — fallback departure grid step (minutes) when no trip
+	// candidate exists inside the window.
+	arrivalWindowH int
+	arrivalStepMin int
 }
 
 func New(metrics *telemetry.Metrics) *Planner {
@@ -78,7 +83,7 @@ func NewWithConfig(metrics *telemetry.Metrics, engine string, logger *slog.Logge
 	if semEnable {
 		sem = make(chan struct{}, semSize)
 	}
-	return &Planner{metrics: metrics, engine: engine, logger: logger, sem: sem, altWindowMin: 360, altStepMin: 60}
+	return &Planner{metrics: metrics, engine: engine, logger: logger, sem: sem, altWindowMin: 360, altStepMin: 60, arrivalWindowH: 24, arrivalStepMin: 30}
 }
 
 // WithAlternatives — Pareto-heuristic alternate-departure window and step
@@ -87,6 +92,16 @@ func (p *Planner) WithAlternatives(windowMin, stepMin int) *Planner {
 	if windowMin > 0 && stepMin > 0 && stepMin <= windowMin {
 		p.altWindowMin = windowMin
 		p.altStepMin = stepMin
+	}
+	return p
+}
+
+// WithArrivalWindow — arrival-search backward window (hours) and fallback
+// grid step (minutes). Invalid values are ignored, defaults 24/30 stay.
+func (p *Planner) WithArrivalWindow(windowH, stepMin int) *Planner {
+	if windowH > 0 && stepMin > 0 {
+		p.arrivalWindowH = windowH
+		p.arrivalStepMin = stepMin
 	}
 	return p
 }
@@ -923,7 +938,15 @@ func (p *Planner) csa(net *model.Network, fromStop, toStop string, depart time.T
 }
 
 func (p *Planner) planArrival(net *model.Network, fromStop, toStop string, arrival, latestArrivalAtStop time.Time, params model.SearchParams) ([]model.Leg, time.Time, error) {
-	windowStart := arrival.Add(-24 * time.Hour)
+	windowH := p.arrivalWindowH
+	if windowH <= 0 {
+		windowH = 24
+	}
+	stepMin := p.arrivalStepMin
+	if stepMin <= 0 {
+		stepMin = 30
+	}
+	windowStart := arrival.Add(-time.Duration(windowH) * time.Hour)
 	if windowStart.After(latestArrivalAtStop) {
 		windowStart = latestArrivalAtStop
 	}
@@ -948,9 +971,9 @@ func (p *Planner) planArrival(net *model.Network, fromStop, toStop string, arriv
 		}
 	}
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].After(candidates[j]) })
-	// fallback to 30m grid if no candidates
+	// fallback to grid if no candidates
 	if len(candidates) == 0 {
-		for d := latestArrivalAtStop; !d.Before(windowStart); d = d.Add(-30 * time.Minute) {
+		for d := latestArrivalAtStop; !d.Before(windowStart); d = d.Add(-time.Duration(stepMin) * time.Minute) {
 			candidates = append(candidates, d)
 		}
 	}

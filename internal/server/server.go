@@ -107,7 +107,7 @@ func NewWithStore(cfg *config.Config, logger *slog.Logger, metrics *telemetry.Me
 			s.logger = lf.For("http")
 		}
 	}
-	app := mcp.NewWithStore(planner.NewWithConfig(metrics, cfg.Planner.Engine, plannerLogger, cfg.Planner.SemaphoreSize, cfg.Planner.SemaphoreEnable).WithDefaultMaxWalk(cfg.Planner.MaxWalkMinutes).WithMinTransfer(cfg.Planner.MinTransferMinutes, cfg.Planner.FlightCheckInMinutes).WithAlternatives(cfg.Planner.AltWindowMinutes, cfg.Planner.AltStepMinutes), registry, st, mcpLogger)
+	app := mcp.NewWithStore(planner.NewWithConfig(metrics, cfg.Planner.Engine, plannerLogger, cfg.Planner.SemaphoreSize, cfg.Planner.SemaphoreEnable).WithDefaultMaxWalk(cfg.Planner.MaxWalkMinutes).WithMinTransfer(cfg.Planner.MinTransferMinutes, cfg.Planner.FlightCheckInMinutes).WithAlternatives(cfg.Planner.AltWindowMinutes, cfg.Planner.AltStepMinutes).WithArrivalWindow(cfg.Planner.ArrivalWindowHours, cfg.Planner.ArrivalStepMinutes), registry, st, mcpLogger)
 	mcpHandler := mcpserver.NewStreamableHTTPServer(app.Server(), mcpserver.WithStateLess(true))
 
 	mux := http.NewServeMux()

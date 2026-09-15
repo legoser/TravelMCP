@@ -34,6 +34,8 @@ planner:
   flight_check_in_minutes: 120 # буфер на авиастыковку: регистрация/посадка/дорога до аэропорта (env PLANNER_FLIGHT_CHECK_IN_MINUTES)
   alt_window_minutes: 360 # окно альтернативных отправлений Парето-эвристики, мин (env PLANNER_ALT_WINDOW_MINUTES)
   alt_step_minutes: 60 # шаг альтернативных отправлений, мин (env PLANNER_ALT_STEP_MINUTES)
+  arrival_window_hours: 24 # окно обратного поиска arrival-запросов, часы (env PLANNER_ARRIVAL_WINDOW_HOURS)
+  arrival_step_minutes: 30 # шаг fallback-сетки отправлений arrival-поиска, мин (env PLANNER_ARRIVAL_STEP_MINUTES)
 
 log:
   level: "info" # debug|info|warn|error — переключение без пересборки (LOG_LEVEL env)
