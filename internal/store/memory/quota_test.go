@@ -7,7 +7,12 @@ import (
 	"time"
 
 	"travelmcp/internal/store"
+	"travelmcp/test/common"
 )
+
+func TestQuotaContractMemory(t *testing.T) {
+	common.AssertQuotaContract(t, NewMemoryStore(), "contract_main", "contract_other")
+}
 
 func TestQuotaRace(t *testing.T) {
 	st := NewMemoryStore()
