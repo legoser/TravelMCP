@@ -53,6 +53,8 @@ func CostForLeg(net *model.Network, leg *model.Leg) model.Cost {
 		return model.Cost{Has: false}
 	}
 	if net != nil && len(net.FareAttributes) > 0 {
+		bestID := ""
+		var best *model.FareAttribute
 		for _, r := range net.FareRules {
 			if r.RouteID != "" && r.RouteID != leg.RouteID {
 				continue
@@ -67,11 +69,19 @@ func CostForLeg(net *model.Network, leg *model.Leg) model.Cost {
 					continue
 				}
 			}
-			if fa, ok := net.FareAttributes[r.FareID]; ok {
-				cur := CurrencyOrDefault(fa.Currency)
-				slog.Debug("pricing: fare hit", "route", leg.RouteID, "fare", fa.FareID, "price", fa.Price, "currency", cur)
-				return model.Cost{Has: true, Amount: fa.Price, Currency: cur, Basis: model.CostBasisFare, Method: "fare"}
+			fa, ok := net.FareAttributes[r.FareID]
+			if !ok {
+				continue
 			}
+			if best == nil || r.FareID < bestID {
+				bestID = r.FareID
+				best = fa
+			}
+		}
+		if best != nil {
+			cur := CurrencyOrDefault(best.Currency)
+			slog.Debug("pricing: fare hit", "route", leg.RouteID, "fare", best.FareID, "price", best.Price, "currency", cur)
+			return model.Cost{Has: true, Amount: best.Price, Currency: cur, Basis: model.CostBasisFare, Method: "fare"}
 		}
 	}
 	fromS := net.Stops[leg.From.StopID]
@@ -129,14 +139,8 @@ func TotalPrice(j *model.Journey) (float64, string, bool) {
 			return total, cur, true
 		}
 	}
-	slog.Warn("pricing: TotalPrice called on mixed-currency journey, returning last currency", "totals", totals)
-	var lastCur string
-	var lastTotal float64
-	for cur, total := range totals {
-		lastCur = cur
-		lastTotal = total
-	}
-	return lastTotal, lastCur, true
+	slog.Warn("pricing: TotalPrice called on mixed-currency journey, no single total", "totals", totals)
+	return 0, "", false
 }
 
 func TotalPriceByCurrency(j *model.Journey) map[string]float64 {

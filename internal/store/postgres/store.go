@@ -840,7 +840,7 @@ func (p *PostgresStore) LoadNetwork(ctx context.Context, providers []string, day
 		return nil, fmt.Errorf("load zones: %w", err)
 	}
 	routeIDToFare := map[int64]string{}
-	frRows, err := p.pool.Query(ctx, `SELECT fare_id, route_id, origin_zone, destination_zone FROM fare_rules`)
+	frRows, err := p.pool.Query(ctx, `SELECT fare_id, route_id, origin_zone, destination_zone FROM fare_rules ORDER BY fare_id`)
 	if err != nil {
 		return nil, err
 	}

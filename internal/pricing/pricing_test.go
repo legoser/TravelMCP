@@ -138,6 +138,48 @@ func TestMixedCurrencyJourney(t *testing.T) {
 	if len(totals) != 2 {
 		t.Fatalf("expected 2 currencies")
 	}
+	for i := 0; i < 20; i++ {
+		if _, _, has := TotalPrice(j); has {
+			t.Fatal("mixed-currency journey must have no single total (deterministic)")
+		}
+	}
+}
+
+func TestFareRulePrecedenceDeterministic(t *testing.T) {
+	net := model.NewNetwork()
+	net.FareAttributes["f2"] = &model.FareAttribute{FareID: "f2", Price: 200, Currency: "RUB", Basis: "fare"}
+	net.FareAttributes["f1"] = &model.FareAttribute{FareID: "f1", Price: 100, Currency: "RUB", Basis: "fare"}
+	net.Stops["s1"] = &model.Stop{ID: "s1", Lat: 55, Lon: 37}
+	net.Stops["s2"] = &model.Stop{ID: "s2", Lat: 55.5, Lon: 37}
+	leg := &model.Leg{Mode: model.ModeBus, RouteID: "r1", From: model.LegPoint{StopID: "s1"}, To: model.LegPoint{StopID: "s2"}}
+	for _, order := range [][]string{{"f1", "f2"}, {"f2", "f1"}} {
+		net.FareRules = nil
+		for _, id := range order {
+			net.FareRules = append(net.FareRules, model.FareRule{FareID: id, RouteID: "r1"})
+		}
+		c := CostForLeg(net, leg)
+		if !c.Has || c.Amount != 100 {
+			t.Fatalf("order %v: want deterministic fare f1=100, got %+v", order, c)
+		}
+	}
+}
+
+func TestConfigureKeepsPreviousOnInvalid(t *testing.T) {
+	orig := DefaultCurrencyVar
+	defer func() { DefaultCurrencyVar = orig }()
+	Configure("USD")
+	Configure("XXX")
+	if DefaultCurrency() != CurrencyUSD {
+		t.Fatalf("invalid currency must keep previous USD, got %s", DefaultCurrency())
+	}
+	Configure("")
+	if DefaultCurrency() != CurrencyUSD {
+		t.Fatalf("empty currency must keep previous USD, got %s", DefaultCurrency())
+	}
+	Configure("eur")
+	if DefaultCurrency() != CurrencyEUR {
+		t.Fatalf("lowercase must normalize to EUR, got %s", DefaultCurrency())
+	}
 }
 
 func TestDefaultCurrencyFallback(t *testing.T) {
