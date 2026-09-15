@@ -117,6 +117,7 @@ func (w *Worker) withQuota(ctx context.Context, job *store.JobRow, h Handler) er
 		_ = w.store.RecordApiCall(ctx, p, string(job.Type), 1)
 		if err := h(ctx, *job); err != nil {
 			lastErr = err
+			w.refundQuota(ctx, p)
 			if isRateLimited(err) {
 				continue
 			}
@@ -128,6 +129,22 @@ func (w *Worker) withQuota(ctx context.Context, job *store.JobRow, h Handler) er
 		return lastErr
 	}
 	return fmt.Errorf("429 all quotas exhausted")
+}
+
+// refundQuota — returns the quota reservation when the handler fails: the
+// budget (api_quotas.used) counts successful calls only, attempts stay in
+// the api_calls log. A store without RefundQuota silently skips the refund
+// (consumer-focused interface, no fat-interface growth).
+func (w *Worker) refundQuota(ctx context.Context, provider string) {
+	rq, ok := w.store.(interface {
+		RefundQuota(ctx context.Context, provider string) error
+	})
+	if !ok {
+		return
+	}
+	if err := rq.RefundQuota(ctx, provider); err != nil {
+		w.logger.Warn("quota refund failed", "provider", provider, "err", err)
+	}
 }
 
 func (w *Worker) providersForJob(job *store.JobRow) []string {

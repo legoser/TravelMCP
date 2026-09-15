@@ -1211,6 +1211,17 @@ func (p *PostgresStore) TryConsumeQuota(ctx context.Context, provider string, li
 	return true, used, nil
 }
 
+// RefundQuota — returns a TryConsumeQuota reservation when the handler
+// fails: used decreases with a 0 floor; the 'quota_consume' api_calls row
+// stays as an attempts log. The budget (used) counts successful calls only.
+func (p *PostgresStore) RefundQuota(ctx context.Context, provider string) error {
+	if p.pool == nil {
+		return nil
+	}
+	_, err := p.pool.Exec(ctx, `UPDATE api_quotas SET used = GREATEST(used - 1, 0) WHERE provider = $1 AND day = CURRENT_DATE`, provider)
+	return err
+}
+
 func (p *PostgresStore) GetQuota(ctx context.Context, provider string, day time.Time) (store.QuotaRow, bool) {
 	if p.pool == nil {
 		return store.QuotaRow{}, false
@@ -1906,6 +1917,11 @@ func (t *pgTxStore) TryConsumeQuota(ctx context.Context, provider string, limit 
 	}
 	_, _ = t.tx.Exec(ctx, `INSERT INTO api_calls(provider, endpoint, at, cost) VALUES($1,'quota_consume', now(), 1)`, provider)
 	return true, used, nil
+}
+
+func (t *pgTxStore) RefundQuota(ctx context.Context, provider string) error {
+	_, err := t.tx.Exec(ctx, `UPDATE api_quotas SET used = GREATEST(used - 1, 0) WHERE provider = $1 AND day = CURRENT_DATE`, provider)
+	return err
 }
 
 func (t *pgTxStore) GetQuota(ctx context.Context, provider string, day time.Time) (store.QuotaRow, bool) {

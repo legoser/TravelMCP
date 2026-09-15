@@ -319,6 +319,18 @@ func (m *MemoryStore) TryConsumeQuota(ctx context.Context, provider string, limi
 	return true, q.Used, nil
 }
 
+func (m *MemoryStore) RefundQuota(ctx context.Context, provider string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	day := time.Now().Format("2006-01-02")
+	key := provider + ":" + day
+	if q, ok := m.quotas[key]; ok && q.Used > 0 {
+		q.Used--
+		m.quotas[key] = q
+	}
+	return nil
+}
+
 func (m *MemoryStore) GetQuota(ctx context.Context, provider string, day time.Time) (store.QuotaRow, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
