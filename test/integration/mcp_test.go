@@ -169,6 +169,7 @@ func TestFindRouteNoRoute(t *testing.T) {
 func TestFindRouteValidation(t *testing.T) {
 	_, client := newApp(t)
 	common.AssertBadArgs(t, client)
+	common.AssertBadArgsTable(t, client)
 }
 
 func TestFindRouteDebugLogging(t *testing.T) {

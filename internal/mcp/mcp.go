@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -207,8 +208,8 @@ func (a *App) handleFindRoute(ctx context.Context, req mcp.CallToolRequest) (*mc
 		if !ok {
 			return mcp.NewToolResultError(fmt.Sprintf("max_walk_minutes: ожидается число 0..180, получено %v (%T)", req.GetArguments()["max_walk_minutes"], req.GetArguments()["max_walk_minutes"])), nil
 		}
-		if v < 0 || v > 180 {
-			return mcp.NewToolResultError(fmt.Sprintf("max_walk_minutes: ожидается 0..180, получено %.0f", v)), nil
+		if v < 0 || v > 180 || v != math.Trunc(v) {
+			return mcp.NewToolResultError(fmt.Sprintf("max_walk_minutes: ожидается целое 0..180, получено %v", req.GetArguments()["max_walk_minutes"])), nil
 		}
 		params.MaxWalkMinutes = int(v)
 	}
@@ -217,8 +218,8 @@ func (a *App) handleFindRoute(ctx context.Context, req mcp.CallToolRequest) (*mc
 		if !ok {
 			return mcp.NewToolResultError(fmt.Sprintf("max_transfers: ожидается число -1..20, получено %v (%T)", req.GetArguments()["max_transfers"], req.GetArguments()["max_transfers"])), nil
 		}
-		if v < -1 || v > 20 {
-			return mcp.NewToolResultError(fmt.Sprintf("max_transfers: ожидается -1..20, получено %.0f", v)), nil
+		if v < -1 || v > 20 || v != math.Trunc(v) {
+			return mcp.NewToolResultError(fmt.Sprintf("max_transfers: ожидается целое -1..20, получено %v", req.GetArguments()["max_transfers"])), nil
 		}
 		params.MaxTransfers = int(v)
 	}
@@ -229,7 +230,22 @@ func (a *App) handleFindRoute(ctx context.Context, req mcp.CallToolRequest) (*mc
 		}
 		s = strings.TrimSpace(s)
 		if s != "" {
-			modes := model.ParseTransitModes(s)
+			var modes []model.Mode
+			seen := map[model.Mode]bool{}
+			for _, p := range strings.Split(s, ",") {
+				p = strings.TrimSpace(p)
+				if p == "" {
+					continue
+				}
+				m, ok := model.ParseTransitMode(p)
+				if !ok {
+					return mcp.NewToolResultError(fmt.Sprintf("transit_modes: неизвестный режим %q (допустимо BUS,COACH,RAIL,SUBWAY,TRAM,FLIGHT,TAXI,CAR,BICYCLE,SCOOTER)", p)), nil
+				}
+				if !seen[m] {
+					seen[m] = true
+					modes = append(modes, m)
+				}
+			}
 			if len(modes) == 0 {
 				return mcp.NewToolResultError(fmt.Sprintf("transit_modes: неизвестные режимы %q (допустимо BUS,COACH,RAIL,SUBWAY,TRAM,FLIGHT,TAXI,CAR,BICYCLE,SCOOTER)", s)), nil
 			}
@@ -683,31 +699,37 @@ func argFloatStrict(args map[string]any, key string) (float64, bool) {
 	if !ok {
 		return 0, false
 	}
+	var f float64
 	switch n := v.(type) {
 	case float64:
-		return n, true
+		f = n
 	case float32:
-		return float64(n), true
+		f = float64(n)
 	case int:
-		return float64(n), true
+		f = float64(n)
 	case int64:
-		return float64(n), true
+		f = float64(n)
 	case json.Number:
-		f, err := n.Float64()
+		var err error
+		f, err = n.Float64()
 		if err != nil {
 			return 0, false
 		}
-		return f, true
 	case string:
 		s := strings.TrimSpace(n)
 		if s == "" {
 			return 0, false
 		}
-		f, err := strconv.ParseFloat(s, 64)
-		if err == nil {
-			return f, true
+		var err error
+		f, err = strconv.ParseFloat(s, 64)
+		if err != nil {
+			return 0, false
 		}
+	default:
 		return 0, false
 	}
-	return 0, false
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, false
+	}
+	return f, true
 }

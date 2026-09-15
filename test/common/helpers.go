@@ -508,3 +508,53 @@ func AssertBadArgs(t *testing.T, c *MCPClient) {
 		t.Fatalf("expected validation error, got %s", text)
 	}
 }
+
+// AssertBadArgsTable — таблица невалидных аргументов: каждый кейс обязан
+// вернуть ошибку с узнаваемым фрагментом (NaN/Inf, дроби, мусор в режимах,
+// диапазоны координат, конфликт place+coords, битые времена).
+func AssertBadArgsTable(t *testing.T, c *MCPClient) {
+	t.Helper()
+	base := map[string]any{
+		"from_lat": 55.34, "from_lon": 86.06,
+		"to_lat": 56.49, "to_lon": 84.95,
+	}
+	cases := []struct {
+		name string
+		args map[string]any
+		want string
+	}{
+		{"nan walk", mergeArgs(base, "max_walk_minutes", "NaN"), "max_walk_minutes"},
+		{"inf walk", mergeArgs(base, "max_walk_minutes", "Inf"), "max_walk_minutes"},
+		{"fractional walk", mergeArgs(base, "max_walk_minutes", 30.5), "max_walk_minutes"},
+		{"negative walk", mergeArgs(base, "max_walk_minutes", -1), "max_walk_minutes"},
+		{"fractional transfers", mergeArgs(base, "max_transfers", 2.5), "max_transfers"},
+		{"transfers below range", mergeArgs(base, "max_transfers", -2), "max_transfers"},
+		{"mixed modes", mergeArgs(base, "transit_modes", "BUS,FLY"), `"FLY"`},
+		{"unknown modes", mergeArgs(base, "transit_modes", "FLY"), "transit_modes"},
+		{"lat out of range", mergeArgs(base, "from_lat", 100), "вне диапазона"},
+		{"place+coords conflict", mergeArgs(base, "from_place", "Кемерово"), "либо"},
+		{"bad departure", mergeArgs(base, "departure", "завтра"), "departure"},
+		{"bad preference", mergeArgs(base, "preference", "scenic"), "preference"},
+		{"bad allow_gap", mergeArgs(base, "allow_gap", "maybe"), "allow_gap"},
+		{"missing from", map[string]any{"to_lat": 56.84, "to_lon": 60.607}, "from_place"},
+	}
+	for _, tc := range cases {
+		text, isErr := c.CallTool(t, "find_route", tc.args)
+		if !isErr {
+			t.Errorf("%s: expected validation error, got success %s", tc.name, text)
+			continue
+		}
+		if !strings.Contains(text, tc.want) {
+			t.Errorf("%s: error %q must mention %q", tc.name, text, tc.want)
+		}
+	}
+}
+
+func mergeArgs(base map[string]any, k string, v any) map[string]any {
+	out := make(map[string]any, len(base)+1)
+	for key, val := range base {
+		out[key] = val
+	}
+	out[k] = v
+	return out
+}
