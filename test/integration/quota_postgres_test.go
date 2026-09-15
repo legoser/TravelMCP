@@ -36,7 +36,9 @@ func TestQuotaContractPostgres(t *testing.T) {
 	if err != nil {
 		t.Skipf("postgres unavailable: %v", err)
 	}
-	defer pool.Close()
+	// Pool closes via t.Cleanup registered FIRST (LIFO: runs last), so the
+	// data cleanup below still sees an open pool.
+	t.Cleanup(func() { pool.Close() })
 	suffix := time.Now().UnixNano()
 	prov := fmt.Sprintf("qcontract_%d", suffix)
 	other := fmt.Sprintf("qcontract_o_%d", suffix)
@@ -46,8 +48,18 @@ func TestQuotaContractPostgres(t *testing.T) {
 		}
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM api_quotas WHERE provider=$1 OR provider=$2`, prov, other)
-		_, _ = pool.Exec(context.Background(), `DELETE FROM providers WHERE code=$1 OR code=$2`, prov, other)
+		// api_calls holds an FK to providers: delete history first.
+		// Errors are logged, not swallowed: silent cleanup failures leak
+		// rows that break later runs on the shared scratch DB.
+		for _, q := range []string{
+			`DELETE FROM api_calls WHERE provider=$1 OR provider=$2`,
+			`DELETE FROM api_quotas WHERE provider=$1 OR provider=$2`,
+			`DELETE FROM providers WHERE code=$1 OR code=$2`,
+		} {
+			if _, err := pool.Exec(context.Background(), q, prov, other); err != nil {
+				t.Logf("cleanup %s: %v", q, err)
+			}
+		}
 	})
 	common.AssertQuotaContract(t, ps, prov, other)
 }

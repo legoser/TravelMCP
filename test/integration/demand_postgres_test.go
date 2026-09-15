@@ -35,11 +35,20 @@ func (s *pgDemandSeeder) SeedDemandTrip(t *testing.T, tag string) (int64, string
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_, _ = s.pool.Exec(context.Background(), `DELETE FROM trip_demand WHERE trip_id=$1`, tripID)
-		_, _ = s.pool.Exec(context.Background(), `DELETE FROM trip_sources WHERE trip_id=$1`, tripID)
-		_, _ = s.pool.Exec(context.Background(), `DELETE FROM trips WHERE id=$1`, tripID)
-		_, _ = s.pool.Exec(context.Background(), `DELETE FROM routes WHERE id=$1`, routeID)
-		_, _ = s.pool.Exec(context.Background(), `DELETE FROM providers WHERE code=$1`, prov)
+		for _, q := range []struct {
+			sql string
+			arg any
+		}{
+			{`DELETE FROM trip_demand WHERE trip_id=$1`, tripID},
+			{`DELETE FROM trip_sources WHERE trip_id=$1`, tripID},
+			{`DELETE FROM trips WHERE id=$1`, tripID},
+			{`DELETE FROM routes WHERE id=$1`, routeID},
+			{`DELETE FROM providers WHERE code=$1`, prov},
+		} {
+			if _, err := s.pool.Exec(context.Background(), q.sql, q.arg); err != nil {
+				t.Logf("cleanup %s: %v", q.sql, err)
+			}
+		}
 	})
 	return tripID, prov, routeCode, extCode
 }
@@ -65,6 +74,9 @@ func TestDemandContractPostgres(t *testing.T) {
 	if err != nil {
 		t.Skipf("postgres unavailable: %v", err)
 	}
-	defer pool.Close()
+	// Pool closes via t.Cleanup registered FIRST (LIFO: runs last), so data
+	// cleanups registered later still see an open pool. A bare
+	// `defer pool.Close()` would close it before cleanups run.
+	t.Cleanup(func() { pool.Close() })
 	common.AssertDemandContract(t, ps, &pgDemandSeeder{pool: pool})
 }
