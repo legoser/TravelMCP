@@ -188,9 +188,13 @@ doc-lint + integration на postgis + tools-модуль); контракт ли
 (секундное разрешение скорости), импортов (overnight-развёртка реестра,
 single-time pairing, frequency-only, контракт датасета, `SkippedStopTimes`);
 минимальные краевые `httpx/timeutil/classifier/jobs.Backoff/nominatim/osm`.
-Частично 7.4: `yandex.rasp_quota_limit` и `planner.alt_window/step_minutes`
-читаются из конфига. Трек Г: stale закрывается expiry (incl. `NULL
-last_attempt_at`); McRAPTOR и demand-driven — backlog отдельными фазами.
-Осталось: декомпозиция `server.go`/`sync`/`config`, полный `BehavioralParams`,
-сценарии `test/common` для smoke-паритета; комментарии — только английские
-в файлах, тронутых текущей задачей.
+Done 7.4: `yandex.rasp_quota_limit`, `planner.alt_window/step_minutes`,
+`planner.arrival_window_hours/arrival_step_minutes` (24ч/30м),
+`sync.jobs_poll_interval` ("5s") — всё через `default → YAML → env`.
+Done 7.1: `config.go` → `sections/defaults/env`; server/sync уже были
+пофайлово разделены (субпакеты отвергнуты, см. 14-plan §11).
+Done smoke-паритет: `AssertBadArgsTable` в `TestSmokeMCPFlow`.
+Трек Г: stale закрывается expiry (incl. `NULL last_attempt_at`); McRAPTOR
+и demand-driven — backlog отдельными фазами; `RunHygieneSweep` без
+прод-вызовов — туда же. Комментарии — только английские в файлах,
+тронутых текущей задачей.

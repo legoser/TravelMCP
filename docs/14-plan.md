@@ -829,11 +829,17 @@ god-объекты, тестовые дыры, audit, единый конфиг 
 комментарии. API-токены внешних сервисов — read-only доступ, шифрование
 at-rest не требуется (решение 2026-09-15).
 
-- **7.1 Декомпозиция.** Разбить `internal/server/server.go`
-  (router/auth/admin/collect/browser/metrics) на субпакеты; разнести
-  `internal/sync` (41 файл) и `internal/config/config.go` по предметным
-  областям. Обновить Stable Structure в `AGENTS.md`. Готовность:
-  `make check-layers` чист, поведение unchanged (integration+smoke зелёные).
+- **7.1 Декомпозиция (done 2026-09-15).** `internal/server` уже был
+  пофайлово разделён (`server.go` — только router 190 строк; `admin.go`,
+  `admin_browser.go`, `api.go`, `auth.go`, `collect.go`, `review.go`,
+  `users.go`); `internal/sync` — 41 файл по предметным областям;
+  `internal/config/config.go` (971 строка) разбит на `sections.go`
+  (типы секций) / `defaults.go` (Defaults+applyDefaults) / `env.go`
+  (applyEnv+prefixed/setByPath) / `config.go` (Load+helpers).
+  Субпакеты для server отвергнуты: churn импортов без выигрыша поведения;
+  удаление god-объектов достигнуто файловым разделением.
+  `make check-layers` чист, Stable Structure в `AGENTS.md` не менялась
+  (пакеты те же).
 - **7.2 Аудит и логи (done).** Audit-таблица админ-операций уже покрывала
   import/manual-edit/external-call; убраны секретоносные логи: полные заголовки
   (`register`/`login`/`put config`/`admin page`/`request debug` → allow-list
@@ -849,12 +855,23 @@ at-rest не требуется (решение 2026-09-15).
   минимальные краевые `httpx/timeutil/classifier/jobs.Backoff/nominatim/osm`,
   контракт листинга `test/common/browser_contract.go` (memory+postgres),
   краевые `find_route`/`adminLimitOffset`/валидаторов/импортов; tools-модуль
-  в CI-gate. Осталось: сценарии `test/common` для smoke-паритета.
-- **7.4 Единый конфиг порогов (частично done).** Done 2026-09-15: лимит
-  `yandex_rasp` читается из `yandex.rasp_quota_limit` (был хардкод 500);
-  окно/шаг альтернатив планировщика — `planner.alt_window_minutes` (360) /
-  `alt_step_minutes` (60) через `default → YAML → env`. Осталось: свести
-  веса ScorePair/TTL/лимиты в один `BehavioralParams`.
+  в CI-gate. Done 2026-09-15 (третья волна): `AssertBadArgsTable` (25 кейсов)
+  гоняется и в `TestSmokeMCPFlow` против реального бинарника — паритет
+  integration/smoke по валидации.
+- **7.4 Единый конфиг порогов (done 2026-09-15).** Лимит `yandex_rasp` —
+  `yandex.rasp_quota_limit` (был хардкод 500); окно/шаг альтернатив —
+  `planner.alt_window/step_minutes` (360/60); окно/шаг arrival-поиска —
+  `planner.arrival_window_hours/arrival_step_minutes` (24ч/30м, календарная
+  арифметика ±24ч day-roll не тронута); интервал jobs-воркера —
+  `sync.jobs_poll_interval` ("5s", был хардкод в `main.go`).
+  Веса ScorePair уже были в `verification.*`, TTL геокодера — в
+  `geocoder.*`, лимиты sync — в `sync.*`. Отдельный `BehavioralParams`
+  отвергнут: дублировал бы существующие секции; инвариант «один
+  авторитетный источник на параметр» выполнен посекционно. Сознательно
+  локальны (с комментарием в коде): `jobs.maxAttempts=5`,
+  `TripsRunConfig.PollInterval` (дефолт 5с в `trips_run.go`).
+  Находка: `RunHygieneSweep` не вызывается из продакшн-пути (только тесты) —
+  планирование freshness-sweep относится к demand-driven-фазе трека Г.
 - **Трек Г (backlog, решение 2026-09-15).** McRAPTOR вместо эвристики
   Парето-альтернатив и demand-driven/TTL-ресинк расписаний — отдельными
   фазами, не в этом коммите (требуют дизайна фронта Парето и учёта спроса
