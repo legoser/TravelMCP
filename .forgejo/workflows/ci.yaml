@@ -1,0 +1,58 @@
+name: ci
+
+on: [push, pull_request]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l cmd internal test tools)"
+      - name: vet
+        run: go vet ./...
+      - name: check-layers
+        run: make check-layers
+      - name: check-deprecated
+        run: make check-deprecated
+      - name: doc-lint
+        run: bash scripts/doc-lint.sh
+
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: unit (race)
+        run: make unit
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: travelmcp
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d travelmcp"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      TRAVELMCP_TEST_DSN: postgres://postgres:postgres@localhost:5432/travelmcp?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: integration
+        run: go test ./test/integration/ -count=1

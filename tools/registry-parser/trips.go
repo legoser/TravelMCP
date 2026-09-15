@@ -174,11 +174,11 @@ func blockOf(st reestrSchedStop, period string) *reestrBlock {
 func untimedFlatStop(s reestrSchedStop, stops map[string]reestrStop, source string) FlatStop {
 	st := stops[s.Stop]
 	fs := FlatStop{
-		StopID: s.Stop,
-		Name:   st.Name,
-		Region: s.Region,
-		Lat:    st.Lat,
-		Lon:    st.Lon,
+		StopID:  s.Stop,
+		Name:    st.Name,
+		Region:  s.Region,
+		Lat:     st.Lat,
+		Lon:     st.Lon,
 		IsFuzzy: true,
 	}
 	if st.OpReg != "" {
