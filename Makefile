@@ -60,10 +60,10 @@ check-layers:
 	@echo "OK (просмотреть список выше вручную — не все совпадения являются нарушением)"
 
 ## check-deprecated: поиск устаревшего кода после закрытия пункта плана
-## (см. docs/15-dev-status.md §6 за объяснением каждого паттерна)
+## (см. docs/15-dev-status.md §7 за объяснением каждого паттерна)
 check-deprecated:
 	@echo "==> явно помеченный устаревший код"
 	@grep -rn "Deprecated\|TODO.*phase" --include="*.go" . || true
 	@echo "==> файлы, привязанные к legacy JSON/sqlite-пути"
 	@grep -rln "seed_pilot\|places_sqlite\|import_intercity" --include="*.go" . || true
-	@echo "==> напоминание: сверить найденное со статусом перехода в docs/15-dev-status.md §2"
+	@echo "==> напоминание: сверить найденное со статусом рантайма в docs/15-dev-status.md §2"

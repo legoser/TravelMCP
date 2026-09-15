@@ -1021,3 +1021,29 @@ block → score → assign → threshold → persist). Архитектура п
   подтверждёнными соседями); McRAPTOR вместо эвристики Парето-альтернатив
   (`paretoAlternatives` — сэмплинг, не полный фронт). Зафиксировано, не
   блокер текущей фазы.
+
+## 11. Фаза 7. Качество, тесты, наблюдаемость (backlog, по итогам ревью 2026-09-15)
+
+Не меняет канон и конвейер. Цель — закрыть структурные замечания ревью:
+god-объекты, тестовые дыры, audit, единый конфиг порогов, английские
+комментарии. API-токены внешних сервисов — read-only доступ, шифрование
+at-rest не требуется (решение 2026-09-15).
+
+- **7.1 Декомпозиция.** Разбить `internal/server/server.go`
+  (router/auth/admin/collect/browser/metrics) на субпакеты; разнести
+  `internal/sync` (41 файл) и `internal/config/config.go` по предметным
+  областям. Обновить Stable Structure в `AGENTS.md`. Готовность:
+  `make check-layers` чист, поведение unchanged (integration+smoke зелёные).
+- **7.2 Аудит и логи.** Audit-таблица админ-операций
+  (import/manual-edit/external-call: кто, когда, что); убрать секретоносные
+  логи (`server.go` auth path/remote, email+длина пароля); `httpx` redact
+  по allow-list вместо эвристики `apikey/key/token`.
+- **7.3 Тесты.** Race-тесты `TryConsumeQuota`, `queue`, `jobs/worker`,
+  `cachedGeocoder` singleflight; минимальные тесты `adapters/store/server/
+  middleware`; расшарить сценарии через `test/common`.
+  Готовность: `go test -race ./...` зелёный.
+- **7.4 Единый конфиг порогов.** Один `BehavioralParams`
+  (пороги/веса/TTL/лимиты, `default → YAML → env`); убрать scatter по
+  `planner/verification/sync/geocoder`.
+- **7.5 Гигиена.** Комментарии в коде — только английские (русские
+  переводить при касании файлов); `make check-layers` в CI-gate.

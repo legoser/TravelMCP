@@ -174,6 +174,11 @@ make check-deprecated
 
 Do not claim validation was performed unless it was actually run.
 
+Changes limited to documentation, prose, or code comments (no program code
+touched: `docs/`, `*.md`, comment-only edits) do not require `gofmt`,
+`go vet`, or test runs. State that code validation was skipped as not
+applicable.
+
 ## Stable Project Structure
 
 ```text
