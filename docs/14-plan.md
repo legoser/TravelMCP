@@ -829,14 +829,19 @@ at-rest не требуется (решение 2026-09-15).
   `internal/sync` (41 файл) и `internal/config/config.go` по предметным
   областям. Обновить Stable Structure в `AGENTS.md`. Готовность:
   `make check-layers` чист, поведение unchanged (integration+smoke зелёные).
-- **7.2 Аудит и логи.** Audit-таблица админ-операций
-  (import/manual-edit/external-call: кто, когда, что); убрать секретоносные
-  логи (`server.go` auth path/remote, email+длина пароля); `httpx` redact
-  по allow-list вместо эвристики `apikey/key/token`.
-- **7.3 Тесты.** Race-тесты `TryConsumeQuota`, `queue`, `jobs/worker`,
-  `cachedGeocoder` singleflight; минимальные тесты `adapters/store/server/
-  middleware`; расшарить сценарии через `test/common`.
-  Готовность: `go test -race ./...` зелёный.
+- **7.2 Аудит и логи (done).** Audit-таблица админ-операций уже покрывала
+  import/manual-edit/external-call; убраны секретоносные логи: полные заголовки
+  (`register`/`login`/`put config`/`admin page`/`request debug` → allow-list
+  `redactedHeaders`), значения query (`redactedQuery`, ключи сохранены),
+  значения config-payload (только ключи), email+длина пароля; auth admin-token —
+  с Info на Debug; `httpx.redactURL` — allow-list безопасных параметров вместо
+  эвристики (`logredact_test.go`).
+- **7.3 Тесты (частично done).** Done: race-тесты `TryConsumeQuota`
+  (уже был `TestQuotaRace`), воркера (`TestWorkerConcurrentClaimOnce`:
+  8 горутин × 20 задач — каждая ровно 1 раз), singleflight геокодера
+  (`TestCachedConcurrentSingleflight`: 16 горутин — 1 вызов API);
+  `make unit` — с `-race`, полностью зелёный. Осталось: минимальные тесты
+  `adapters/store/server/middleware`; расшарить сценарии через `test/common`.
 - **7.4 Единый конфиг порогов.** Один `BehavioralParams`
   (пороги/веса/TTL/лимиты, `default → YAML → env`); убрать scatter по
   `planner/verification/sync/geocoder`.

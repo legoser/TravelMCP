@@ -3,6 +3,8 @@ package geocoder
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -87,6 +89,52 @@ func TestSeedNeverFinalizes(t *testing.T) {
 	e, ok := cache.Get(entries[0].QueryNorm, "nominatim")
 	if !ok || e.Origin != "seed" {
 		t.Fatalf("seed-запись обязана нести origin='seed', не голос за finalize: %+v", e)
+	}
+}
+
+type blockingGeocoder struct {
+	calls   atomic.Int32
+	release chan struct{}
+	res     *Result
+}
+
+func (s *blockingGeocoder) Geocode(ctx context.Context, q string) (*Result, error) {
+	s.calls.Add(1)
+	select {
+	case <-s.release:
+		return s.res, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (s *blockingGeocoder) Reverse(ctx context.Context, lat, lon float64) (string, error) {
+	return "", errors.New("not implemented")
+}
+
+func TestCachedConcurrentSingleflight(t *testing.T) {
+	inner := &blockingGeocoder{release: make(chan struct{}), res: &Result{Lat: 1, Lon: 2, Name: "X"}}
+	c := NewCachedGeocoder(inner, "nominatim", NewMapCacheStore(), nil, 1000, testTTLVerified, testTTLDisputed)
+	const n = 16
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, errs[i] = c.Geocode(context.Background(), "Кемерово")
+		}(i)
+	}
+	time.Sleep(100 * time.Millisecond)
+	close(inner.release)
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("goroutine %d: %v", i, err)
+		}
+	}
+	if got := inner.calls.Load(); got != 1 {
+		t.Fatalf("16 параллельных запросов обязаны дать 1 вызов API, получено %d", got)
 	}
 }
 

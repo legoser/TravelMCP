@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"travelmcp/internal/store"
@@ -114,6 +116,51 @@ func TestWorkerNormalRetry(t *testing.T) {
 	for _, r := range j {
 		if r.Type == "sync_collect_region" && r.State != "retry" {
 			t.Fatalf("state=%q, want retry", r.State)
+		}
+	}
+}
+
+func TestWorkerConcurrentClaimOnce(t *testing.T) {
+	ms := memory.NewMemoryStore()
+	ctx := context.Background()
+	w := NewWorker(ms, quietLogger())
+	var handled atomic.Int32
+	var mu sync.Mutex
+	seen := map[int64]int{}
+	w.Register("t", func(ctx context.Context, job store.JobRow) error {
+		handled.Add(1)
+		mu.Lock()
+		seen[job.ID]++
+		mu.Unlock()
+		return nil
+	})
+	const n = 20
+	for i := 0; i < n; i++ {
+		if _, err := ms.EnqueueJob(ctx, store.JobRow{Type: "t", Payload: "{}"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				if err := w.RunOnce(ctx); err != nil {
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if got := handled.Load(); got != n {
+		t.Fatalf("каждая задача обязана обработаться ровно 1 раз: handled=%d want %d", got, n)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for id, c := range seen {
+		if c != 1 {
+			t.Fatalf("job %d обработан %d раз", id, c)
 		}
 	}
 }

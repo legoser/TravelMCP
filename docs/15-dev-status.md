@@ -174,11 +174,12 @@ Backlog (не Фаза 7): D-6 sequence-context tie-break; McRAPTOR вместо
 Актуальные grep-паттерны — в `Makefile`, этот раздел только поясняет
 зачем; напоминание о сверке со §2 — в цели `make`.
 
-## 8. Фаза 7 (backlog, ревью 2026-09-15)
+## 8. Фаза 7 (частично выполнена)
 
-Зафиксирована в `14-plan.md` §11. Не начата. Объём: декомпозиция
-`server.go`/`sync`/`config`, audit-таблица + чистка секретных логов
-(`server.go:230` auth-path/remote, `:1474` email+длина пароля;
-`httpx` redact по allow-list), race-тесты квот/очередей/геокодера,
-единый `BehavioralParams`, английские комментарии (только в файлах,
-тронутых текущей задачей), `check-layers` в CI.
+Зафиксирована в `14-plan.md` §11. Done: 7.2 (санитизация секретных логов,
+allow-list redact), 7.3 частично (race-тесты квоты/воркера/singleflight,
+`make unit` с `-race` зелёный). Осталось: декомпозиция
+`server.go`/`sync`/`config`, минимальные тесты
+`adapters/store/server/middleware`, `test/common`, единый
+`BehavioralParams`, `check-layers` в CI; комментарии — только английские
+в файлах, тронутых текущей задачей.

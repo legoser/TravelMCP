@@ -10,9 +10,9 @@ build:
 test:
 	go test ./... -count=1
 
-## unit — только модульные тесты внутренних пакетов
+## unit — только модульные тесты внутренних пакетов (с детектором гонок: квоты, воркер, singleflight геокодера)
 unit:
-	go test ./internal/... -count=1
+	go test -race ./internal/... -count=1
 
 ## integration — HTTP+MCP-обвязка in-process (без запуска процесса)
 integration:
