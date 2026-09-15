@@ -75,5 +75,6 @@ func TestSmokeMCPFlow(t *testing.T) {
 	common.AssertFlightJourney(t, client)
 	common.AssertNoRoute(t, client)
 	common.AssertBadArgs(t, client)
+	common.AssertBadArgsTable(t, client)
 	common.AssertUnknownPlace(t, client)
 }
