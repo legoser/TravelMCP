@@ -814,7 +814,12 @@ availability-метриках здоровья коннектора.
 - D-4: `stop_times.match_score/match_method` — трассируемость attach→персист
   (вход FP-аудита §8).
 - D-5: единая формула `scorePairBody` (`Join()` жив для `legacy_match`).
-- D-6 (backlog): sequence-context tie-break; McRAPTOR вместо эвристики
+- D-6 (done): sequence-context tie-break (`sequenceTieBreak` в
+  `trips_attach.go`): при `duplicate_ambiguous` выбирается кандидат, ближайший
+  к предыдущему подтверждённому терминалу; разрыв обязан быть ≥2x, геометрия
+  обеих сторон — финализированная независимая (borrowed исключены), победитель
+  верифицируется в одиночку, иначе — воздержание (staging + review, дамба не
+  делает вынужденный выбор). Backlog остался: McRAPTOR вместо эвристики
   Парето-альтернатив.
 
 ## 11. Фаза 7. Качество, тесты, наблюдаемость (backlog, по итогам ревью 2026-09-15)

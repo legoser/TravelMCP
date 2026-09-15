@@ -510,3 +510,81 @@ func TestAttachBorrowedCoordsNoSelfVerify(t *testing.T) {
 		t.Fatalf("стоп с borrowed-геометрией обязан уйти в mid_gap (не в зигзаг): mid_gaps=%d", rep.MidGaps)
 	}
 }
+
+// D-6 sequence-context tie-break: два полных тёзки с идентичным скором
+// (duplicate_ambiguous) разрешаются направлением рейса — побеждает
+// ближайший к предыдущему подтверждённому терминалу. Дамба цела:
+// победитель верифицируется в одиночку, иначе остался бы ambiguous.
+func TestSequenceTieBreakResolvesTwins(t *testing.T) {
+	latP, lonP := 55.08, 86.03
+	latS, lonS := 55.1, 86.1
+	latA, lonA := 55.1, 86.05
+	latB, lonB := 55.1, 86.15
+	terms := []AttachTerminal{
+		{ID: 1, Name: "Старт", Lat: &latP, Lon: &lonP, Settlement: "старт", Transport: "bus", Source: "osm", GeomFinalized: true},
+		{ID: 2, Name: "Дубровка", Lat: &latA, Lon: &lonA, Settlement: "дубровка", Transport: "bus", Source: "osm", GeomFinalized: true},
+		{ID: 3, Name: "Дубровка", Lat: &latB, Lon: &lonB, Settlement: "дубровка", Transport: "bus", Source: "osm", GeomFinalized: true},
+	}
+	trips := []model.FlatTrip{{
+		RouteReg: "42.10.200", Direction: "forward", ServiceID: 1, Period: "winter",
+		Stops: []model.FlatStop{
+			{StopID: "a", Name: "Старт", Region: "42", Lat: &latP, Lon: &lonP, ArrMin: intPtr(600), DepMin: intPtr(600)},
+			{StopID: "b", Name: "Дубровка, ост.", Region: "42", Lat: &latS, Lon: &lonS, ArrMin: intPtr(660), DepMin: intPtr(660)},
+		},
+	}}
+	in := baseInput(trips, terms)
+	in.ClassForRegion = func(string) model.DensityClass { return model.DensityRural }
+	rep, err := AttachTrips(context.Background(), in)
+	if err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	if len(rep.Promoted) != 1 {
+		t.Fatalf("оба стопа обязаны верифицироваться (второй — через tie-break): promoted=%d staged=%+v", len(rep.Promoted), rep.Staged)
+	}
+	got := rep.Promoted[0].StopTimes
+	if len(got) != 2 || got[1].TerminalID != 2 {
+		t.Fatalf("tie-break обязан выбрать ближнего тёзку (id=2): %+v", got)
+	}
+	for _, r := range rep.Reviews {
+		if r.Reason == "duplicate_ambiguous" {
+			t.Fatalf("снятая tie-break неоднозначность не должна уходить в review: %+v", r)
+		}
+	}
+}
+
+// Tie-break воздерживается, когда направление не различает тёзок
+// (равноудалены от предыдущего терминала): дамба не делает вынужденный
+// выбор — стоп остаётся unmatched, трип уходит в staging с review.
+func TestSequenceTieBreakAbstainsWhenEquidistant(t *testing.T) {
+	latP, lonP := 55.1, 86.1
+	latS, lonS := 55.1, 86.1
+	latA, lonA := 55.1, 86.05
+	latB, lonB := 55.1, 86.15
+	terms := []AttachTerminal{
+		{ID: 1, Name: "Старт", Lat: &latP, Lon: &lonP, Settlement: "старт", Transport: "bus", Source: "osm", GeomFinalized: true},
+		{ID: 2, Name: "Дубровка", Lat: &latA, Lon: &lonA, Settlement: "дубровка", Transport: "bus", Source: "osm", GeomFinalized: true},
+		{ID: 3, Name: "Дубровка", Lat: &latB, Lon: &lonB, Settlement: "дубровка", Transport: "bus", Source: "osm", GeomFinalized: true},
+	}
+	trips := []model.FlatTrip{{
+		RouteReg: "42.10.201", Direction: "forward", ServiceID: 1, Period: "winter",
+		Stops: []model.FlatStop{
+			{StopID: "a", Name: "Старт", Region: "42", Lat: &latP, Lon: &lonP, ArrMin: intPtr(600), DepMin: intPtr(600)},
+			{StopID: "b", Name: "Дубровка, ост.", Region: "42", Lat: &latS, Lon: &lonS, ArrMin: intPtr(660), DepMin: intPtr(660)},
+		},
+	}}
+	in := baseInput(trips, terms)
+	in.ClassForRegion = func(string) model.DensityClass { return model.DensityRural }
+	rep, err := AttachTrips(context.Background(), in)
+	if err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	if len(rep.Promoted) != 0 || len(rep.Staged) != 1 {
+		t.Fatalf("без решения tie-break трип обязан уйти в staging: promoted=%d staged=%+v", len(rep.Promoted), rep.Staged)
+	}
+	for _, r := range rep.Reviews {
+		if r.Reason == "duplicate_ambiguous" {
+			return
+		}
+	}
+	t.Fatalf("неснятая неоднозначность обязана оставить review: %+v", rep.Reviews)
+}

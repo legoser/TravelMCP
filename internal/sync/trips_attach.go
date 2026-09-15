@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -379,6 +380,48 @@ func PairItemFromStop(name string, lat, lon *float64, settlement, source string,
 	}
 }
 
+// sequenceTieBreakRatio — во сколько раз ближайший к предыдущему
+// подтверждённому терминалу кандидат обязан быть ближе второго,
+// чтобы снять duplicate_ambiguous направлением рейса (D-6).
+const sequenceTieBreakRatio = 2.0
+
+// sequenceTieBreak разрешает duplicate_ambiguous непрерывностью маршрута:
+// из кандидатов выбирается ближайший к предыдущему подтверждённому
+// терминалу. Дамба сохраняется: рассматриваются только кандидаты с
+// финализированной независимой геометрией, разрыв обязан быть кратным,
+// а победитель обязан верифицироваться в одиночку (иначе — без решения).
+func sequenceTieBreak(stop verification.PairItem, class model.DensityClass, params verification.Params, prev AttachTerminal, cands []verification.PairItem, poolIdx []int, terms []AttachTerminal) (verification.PairScore, int, bool) {
+	if prev.ID == 0 || prev.Lat == nil || prev.Lon == nil {
+		return verification.PairScore{}, -1, false
+	}
+	best, bestD := -1, 0.0
+	secondD := math.Inf(1)
+	for i, c := range cands {
+		t := terms[poolIdx[i]]
+		if !t.GeomFinalized || t.Lat == nil || t.Lon == nil || c.CoordsBorrowed {
+			continue
+		}
+		d := geo.HaversineM(*prev.Lat, *prev.Lon, *t.Lat, *t.Lon)
+		switch {
+		case best < 0 || d < bestD:
+			if best >= 0 {
+				secondD = bestD
+			}
+			best, bestD = i, d
+		case d < secondD:
+			secondD = d
+		}
+	}
+	if best < 0 || math.IsInf(secondD, 1) || bestD == 0 || secondD < sequenceTieBreakRatio*bestD {
+		return verification.PairScore{}, -1, false
+	}
+	_, d, score := verification.MatchStopToTerminal(stop, []verification.PairItem{cands[best]}, class, params)
+	if d != verification.DecisionVerified {
+		return verification.PairScore{}, -1, false
+	}
+	return score, best, true
+}
+
 func matchStops(ft model.FlatTrip, idx *matchIndex, source string, classFor func(string) model.DensityClass, paramsFor func(model.DensityClass) verification.Params, logger *slog.Logger) ([]MatchedStopTime, string, float64, []string) {
 	terms := idx.terms
 	var matched []MatchedStopTime
@@ -387,6 +430,7 @@ func matchStops(ft model.FlatTrip, idx *matchIndex, source string, classFor func
 	worstScore := 0.0
 	used := map[int64]bool{}
 	firstTerminal := int64(0)
+	var prevTerminal AttachTerminal
 	lastStop := len(ft.Stops) - 1
 	for seq, s := range ft.Stops {
 		pairCodes := s.Codes
@@ -408,6 +452,14 @@ func matchStops(ft model.FlatTrip, idx *matchIndex, source string, classFor func
 			poolIdx = append(poolIdx, ti)
 		}
 		idxBest, d, score := verification.MatchStopToTerminal(stop, cands, class, params)
+		if d == verification.DecisionDuplicateAmbiguous {
+			if tscore, i, ok := sequenceTieBreak(stop, class, params, prevTerminal, cands, poolIdx, terms); ok {
+				logger.Debug("stop match: sequence tie-break",
+					"stop_id", s.StopID, "stop_name", s.Name,
+					"terminal_id", terms[poolIdx[i]].ID, "score", tscore.Value)
+				idxBest, d, score = i, verification.DecisionVerified, tscore
+			}
+		}
 		if d != verification.DecisionVerified {
 			unmatched = append(unmatched, s.StopID)
 			reason := string(d)
@@ -446,6 +498,7 @@ func matchStops(ft model.FlatTrip, idx *matchIndex, source string, classFor func
 			arr = dep
 		}
 		t := terms[poolIdx[idxBest]]
+		prevTerminal = t
 		method := "scorepair"
 		if score.CodeMatch {
 			method = "code"
