@@ -198,6 +198,8 @@ func (p *PostgresStore) UpsertRouteRegion(ctx context.Context, routeID int64, re
 	if p.pool == nil {
 		return nil
 	}
+	// Имена регионов — сид миграции; сюда попадают только неизвестные коды
+	// (name=code — маркер для оператора, сид не перезаписывается).
 	_, _ = p.pool.Exec(ctx, `INSERT INTO regions(code, name_ru) VALUES($1,$1) ON CONFLICT DO NOTHING`, region)
 	_, err := p.pool.Exec(ctx, `INSERT INTO route_regions(route_id, region_code) VALUES($1,$2) ON CONFLICT DO NOTHING`, routeID, region)
 	return err
@@ -1499,6 +1501,7 @@ func (t *pgTxStore) UpsertRoute(ctx context.Context, r RouteRow) (int64, error) 
 	return id, err
 }
 func (t *pgTxStore) UpsertRouteRegion(ctx context.Context, routeID int64, region string) error {
+	// См. комментарий в pool-варианте: сид имён — в миграции.
 	_, _ = t.tx.Exec(ctx, `INSERT INTO regions(code, name_ru) VALUES($1,$1) ON CONFLICT DO NOTHING`, region)
 	_, err := t.tx.Exec(ctx, `INSERT INTO route_regions(route_id, region_code) VALUES($1,$2) ON CONFLICT DO NOTHING`, routeID, region)
 	return err
