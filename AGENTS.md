@@ -66,6 +66,11 @@ in `docs/` and must not be duplicated here.
 * Database migrations are additive by default. Do not use destructive `ALTER`
   operations that discard populated data unless the current phase explicitly
   approves them.
+* Reference data lives in the database (seeded by migrations: regions, places,
+  providers, identifier schemes, transport modes). Source snapshots and derived
+  caches (Yandex dump, OSM extracts, Rasp cache, flat_trips) stay in files that
+  survive a database wipe. Runtime code must not depend on JSON data files;
+  JSON fixtures are allowed only in tests (`testdata/`, `*_test.go`).
 * Polymorphic references must have compensating integrity controls; do not rely
   on an unprotected `(entity_type, entity_id)` pair.
 * Keep identity confidence and geometry/time confidence as separate concepts.
