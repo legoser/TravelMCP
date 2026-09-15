@@ -24,6 +24,27 @@ func TestLoadExample(t *testing.T) {
 	}
 }
 
+func TestPlannerAlternativesEnv(t *testing.T) {
+	t.Setenv("PLANNER_ALT_WINDOW_MINUTES", "120")
+	t.Setenv("PLANNER_ALT_STEP_MINUTES", "30")
+	t.Setenv("TRAVELMCP__PLANNER__ALT_WINDOW_MINUTES", "180")
+	t.Setenv("TRAVELMCP__PLANNER__ALT_STEP_MINUTES", "45")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Planner.AltWindowMinutes != 180 {
+		t.Fatalf("window = %d, want 180 (TRAVELMCP__ mapping wins over legacy)", cfg.Planner.AltWindowMinutes)
+	}
+	if cfg.Planner.AltStepMinutes != 45 {
+		t.Fatalf("step = %d, want 45", cfg.Planner.AltStepMinutes)
+	}
+	d := Defaults()
+	if d.Planner.AltWindowMinutes != 360 || d.Planner.AltStepMinutes != 60 {
+		t.Fatalf("defaults = %d/%d, want 360/60", d.Planner.AltWindowMinutes, d.Planner.AltStepMinutes)
+	}
+}
+
 func TestEnvOverride(t *testing.T) {
 	t.Setenv("HTTP_ADDR", ":9999")
 	t.Setenv("PROVIDERS_ENABLED", "synth, gtfs")

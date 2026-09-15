@@ -95,6 +95,11 @@ type Planner struct {
 	// FlightCheckInMinutes — стыковка с авиарейсом (issue #12):
 	// регистрация/посадка/дорога до аэропорта.
 	FlightCheckInMinutes int `yaml:"flight_check_in_minutes"`
+	// AltWindowMinutes/AltStepMinutes — окно и шаг альтернативных
+	// отправлений Парето-эвристики планировщика (до McRAPTOR): окно 360
+	// шагом 60 = до 6 доп. прогонов на запрос.
+	AltWindowMinutes int `yaml:"alt_window_minutes"`
+	AltStepMinutes   int `yaml:"alt_step_minutes"`
 }
 
 type Deduplication struct {
@@ -202,7 +207,7 @@ func Defaults() *Config {
 			MirrorURL: "https://overpass.openstreetmap.fr/api/interpreter",
 		},
 		Motis:   Motis{URL: "http://192.168.57.14:8077"},
-		Planner: Planner{Engine: "csa", SemaphoreSize: runtime.NumCPU() * 2, SemaphoreEnable: true, MaxWalkMinutes: 30, MinTransferMinutes: 15, FlightCheckInMinutes: 120},
+		Planner: Planner{Engine: "csa", SemaphoreSize: runtime.NumCPU() * 2, SemaphoreEnable: true, MaxWalkMinutes: 30, MinTransferMinutes: 15, FlightCheckInMinutes: 120, AltWindowMinutes: 360, AltStepMinutes: 60},
 		Log:     Log{Level: "info", Format: "json", Levels: map[string]string{}, Loki: LokiLog{BatchSize: 100, BatchWait: "1s"}},
 		Verification: Verification{
 			ConfidenceThreshold: 0.6,
@@ -478,6 +483,16 @@ func applyEnv(cfg *Config) {
 			cfg.Planner.FlightCheckInMinutes = n
 		}
 	}
+	if v := os.Getenv("PLANNER_ALT_WINDOW_MINUTES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 1440 {
+			cfg.Planner.AltWindowMinutes = n
+		}
+	}
+	if v := os.Getenv("PLANNER_ALT_STEP_MINUTES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 360 {
+			cfg.Planner.AltStepMinutes = n
+		}
+	}
 	if v := os.Getenv("HTTP_RATE_LIMIT_RPS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.HTTP.RateLimit.RPS = n
@@ -731,6 +746,16 @@ func setByPath(cfg *Config, parts []string, v string) {
 		if len(parts) == 2 && parts[1] == "max_walk_minutes" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 180 {
 				cfg.Planner.MaxWalkMinutes = n
+			}
+		}
+		if len(parts) == 2 && parts[1] == "alt_window_minutes" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 1440 {
+				cfg.Planner.AltWindowMinutes = n
+			}
+		}
+		if len(parts) == 2 && parts[1] == "alt_step_minutes" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 360 {
+				cfg.Planner.AltStepMinutes = n
 			}
 		}
 	case "auth":

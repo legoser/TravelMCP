@@ -88,7 +88,7 @@ func (s *Server) handleGTFS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if net == nil {
-		app := mcp.NewWithStore(planner.NewWithConfig(s.metrics, s.cfg.Planner.Engine, s.logger, s.cfg.Planner.SemaphoreSize, s.cfg.Planner.SemaphoreEnable).WithDefaultMaxWalk(s.cfg.Planner.MaxWalkMinutes).WithMinTransfer(s.cfg.Planner.MinTransferMinutes, s.cfg.Planner.FlightCheckInMinutes), s.registry, s.store, s.logger)
+		app := mcp.NewWithStore(planner.NewWithConfig(s.metrics, s.cfg.Planner.Engine, s.logger, s.cfg.Planner.SemaphoreSize, s.cfg.Planner.SemaphoreEnable).WithDefaultMaxWalk(s.cfg.Planner.MaxWalkMinutes).WithMinTransfer(s.cfg.Planner.MinTransferMinutes, s.cfg.Planner.FlightCheckInMinutes).WithAlternatives(s.cfg.Planner.AltWindowMinutes, s.cfg.Planner.AltStepMinutes), s.registry, s.store, s.logger)
 		_ = app
 		muxNet := model.NewNetwork()
 		for _, p := range s.registry.List() {

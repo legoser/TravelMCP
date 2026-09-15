@@ -459,7 +459,7 @@ func (p *PostgresStore) ExpireStagingTripsOlderThan(ctx context.Context, cutoff 
 	if p.pool == nil {
 		return 0, errNotImplemented
 	}
-	tag, err := p.pool.Exec(ctx, `UPDATE staging_trips SET state='expired' WHERE state IN ('incomplete_trip','awaiting_times','needs_review','skeleton_gap') AND last_attempt_at < $1`, cutoff)
+	tag, err := p.pool.Exec(ctx, `UPDATE staging_trips SET state='expired' WHERE state IN ('incomplete_trip','awaiting_times','needs_review','skeleton_gap') AND (last_attempt_at IS NULL OR last_attempt_at < $1)`, cutoff)
 	if err != nil {
 		return 0, err
 	}

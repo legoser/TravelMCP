@@ -29,6 +29,8 @@ type Planner struct {
 	// после транзитного прибытия, не к продолжению того же рейса.
 	minTransfer   int
 	flightCheckIn int
+	altWindowMin  int
+	altStepMin    int
 }
 
 func New(metrics *telemetry.Metrics) *Planner {
@@ -76,7 +78,17 @@ func NewWithConfig(metrics *telemetry.Metrics, engine string, logger *slog.Logge
 	if semEnable {
 		sem = make(chan struct{}, semSize)
 	}
-	return &Planner{metrics: metrics, engine: engine, logger: logger, sem: sem}
+	return &Planner{metrics: metrics, engine: engine, logger: logger, sem: sem, altWindowMin: 360, altStepMin: 60}
+}
+
+// WithAlternatives — окно и шаг альтернативных отправлений Парето-эвристики
+// (мин). Невалидные значения игнорируются, остаются дефолты 360/60.
+func (p *Planner) WithAlternatives(windowMin, stepMin int) *Planner {
+	if windowMin > 0 && stepMin > 0 && stepMin <= windowMin {
+		p.altWindowMin = windowMin
+		p.altStepMin = stepMin
+	}
+	return p
 }
 
 func (p *Planner) acquire(ctx context.Context) error {
@@ -451,12 +463,12 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 
 func (p *Planner) paretoAlternatives(net *model.Network, from, to model.Coords, params model.SearchParams, fromStop, toStop *model.Stop, best *model.Journey) []model.Journey {
 	candidates := []*model.Journey{best}
-	// Альтернативные отправления в окне 6ч шагом 1ч: поздние рейсы
+	// Альтернативные отправления в окне шагом: поздние рейсы
 	// для «не успел»-сценариев агента.
-	const (
-		altWindowMin = 360
-		altStepMin   = 60
-	)
+	altWindowMin, altStepMin := p.altWindowMin, p.altStepMin
+	if altWindowMin <= 0 || altStepMin <= 0 || altStepMin > altWindowMin {
+		altWindowMin, altStepMin = 360, 60
+	}
 	for offset := altStepMin; offset <= altWindowMin; offset += altStepMin {
 		var candParams model.SearchParams = params
 		if params.Arrival != nil {

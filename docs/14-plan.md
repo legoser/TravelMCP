@@ -845,10 +845,22 @@ at-rest не требуется (решение 2026-09-15).
   (уже был `TestQuotaRace`), воркера (`TestWorkerConcurrentClaimOnce`:
   8 горутин × 20 задач — каждая ровно 1 раз), singleflight геокодера
   (`TestCachedConcurrentSingleflight`: 16 горутин — 1 вызов API);
-  `make unit` — с `-race`, полностью зелёный. Осталось: минимальные тесты
-  `adapters/store/server/middleware`; расшарить сценарии через `test/common`.
-- **7.4 Единый конфиг порогов.** Один `BehavioralParams`
-  (пороги/веса/TTL/лимиты, `default → YAML → env`); убрать scatter по
-  `planner/verification/sync/geocoder`.
+  `make unit` — с `-race`, полностью зелёный. Done 2026-09-15 (вторая волна):
+  минимальные краевые `httpx/timeutil/classifier/jobs.Backoff/nominatim/osm`,
+  контракт листинга `test/common/browser_contract.go` (memory+postgres),
+  краевые `find_route`/`adminLimitOffset`/валидаторов/импортов; tools-модуль
+  в CI-gate. Осталось: сценарии `test/common` для smoke-паритета.
+- **7.4 Единый конфиг порогов (частично done).** Done 2026-09-15: лимит
+  `yandex_rasp` читается из `yandex.rasp_quota_limit` (был хардкод 500);
+  окно/шаг альтернатив планировщика — `planner.alt_window_minutes` (360) /
+  `alt_step_minutes` (60) через `default → YAML → env`. Осталось: свести
+  веса ScorePair/TTL/лимиты в один `BehavioralParams`.
+- **Трек Г (backlog, решение 2026-09-15).** McRAPTOR вместо эвристики
+  Парето-альтернатив и demand-driven/TTL-ресинк расписаний — отдельными
+  фазами, не в этом коммите (требуют дизайна фронта Парето и учёта спроса
+  по trip_sources). Stale `incomplete_trip`: закрывается существующим
+  `ExpireStaleStagingTrips` (покрывает `incomplete_trip/awaiting_times/
+  needs_review/skeleton_gap` на обоих бэкендах; `NULL last_attempt_at`
+  тоже экспайрится); «98 stale» — операционные данные, не код.
 - **7.5 Гигиена.** Комментарии в коде — только английские (русские
   переводить при касании файлов); `make check-layers` в CI-gate.

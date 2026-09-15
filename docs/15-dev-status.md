@@ -102,6 +102,7 @@ GEOCODER_TTL_VERIFIED GEOCODER_TTL_DISPUTED`.
 | `LOG_LEVEL` / `LOG_FORMAT` / `LOG_ADD_SOURCE` / `LOG_LOKI_*` | уровень/формат slog, Loki-бэкенд |
 | `HTTP_RATE_LIMIT_RPS` / `HTTP_RATE_LIMIT_BURST` | in-process лимит HTTP (не квота API — квоты только через БД) |
 | `PLANNER_MAX_WALK_MINUTES` / `PLANNER_MIN_TRANSFER_MINUTES` / `PLANNER_FLIGHT_CHECK_IN_MINUTES` | дефолт пешей доступности (30), буфер стыковок (15), регистрация на рейс (120) |
+| `PLANNER_ALT_WINDOW_MINUTES` / `PLANNER_ALT_STEP_MINUTES` | окно (360) и шаг (60) альтернативных отправлений Парето-эвристики |
 | `PLANNER_ENGINE` / `PLANNER_SEMAPHORE_*` | движок планировщика, параллелизм |
 | `PRICING_DEFAULT_CURRENCY` / `DEFAULT_CURRENCY` | валюта цен по умолчанию |
 | `GTFS_TMP_DIR` | временные файлы сборки GTFS |
