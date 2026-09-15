@@ -21,7 +21,7 @@ func (p *PostgresStore) terminalState(ctx context.Context, q interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }, id int64) (terminalState, error) {
 	var st terminalState
-	err := q.QueryRow(ctx, `SELECT is_locked, valid_to IS NOT NULL FROM terminals WHERE id=$1`, id).Scan(&st.exists, &st.dead)
+	err := q.QueryRow(ctx, `SELECT is_locked, valid_to IS NOT NULL FROM terminals WHERE id=$1`, id).Scan(&st.locked, &st.dead)
 	if err == pgx.ErrNoRows {
 		return st, nil
 	}
@@ -33,9 +33,6 @@ func (p *PostgresStore) terminalState(ctx context.Context, q interface {
 	if err == nil {
 		st.merged = true
 	} else if err != pgx.ErrNoRows {
-		return st, err
-	}
-	if err := q.QueryRow(ctx, `SELECT is_locked FROM terminals WHERE id=$1`, id).Scan(&st.locked); err != nil {
 		return st, err
 	}
 	return st, nil

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,6 +95,44 @@ func adminGet(t *testing.T, url string) map[string]any {
 		t.Fatal(err)
 	}
 	return out
+}
+
+func adminDo(t *testing.T, method, url, key, body string) (int, string) {
+	t.Helper()
+	var rd io.Reader
+	if body != "" {
+		rd = strings.NewReader(body)
+	}
+	req, err := http.NewRequest(method, url, rd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-API-Key", key)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(b)
+}
+
+// Деструктивные ручки на сторе без поддержки (memory): честный 501, а не
+// молчаливый успех; битый JSON — 4xx, а не паника.
+func TestDestructiveEndpointsUnsupported(t *testing.T) {
+	ts, _ := newBrowserApp(t)
+	if code, _ := adminDo(t, "POST", ts.URL+"/api/v1/admin/terminals/merge", "secret", `{"old_id":1,"new_id":2}`); code != http.StatusNotImplemented {
+		t.Fatalf("merge on memory: http %d, want 501", code)
+	}
+	if code, _ := adminDo(t, "DELETE", ts.URL+"/api/v1/admin/terminals/1", "secret", ""); code != http.StatusNotImplemented {
+		t.Fatalf("delete on memory: http %d, want 501", code)
+	}
+	if code, _ := adminDo(t, "POST", ts.URL+"/api/v1/admin/canon/reset", "secret", `{"confirm":"RESET"}`); code != http.StatusNotImplemented {
+		t.Fatalf("reset on memory: http %d, want 501", code)
+	}
+	if code, _ := adminDo(t, "POST", ts.URL+"/api/v1/admin/terminals/merge", "secret", `{broken`); code != http.StatusNotImplemented {
+		t.Fatalf("merge broken JSON on memory: http %d, want 501 (capability first)", code)
+	}
 }
 
 func TestAdminDataBrowser(t *testing.T) {
