@@ -629,26 +629,26 @@ func terminalByID(terms []AttachTerminal, id int64) *AttachTerminal {
 	return nil
 }
 
-func legSpeedKmH(a, b *AttachTerminal, durMin int) (float64, bool) {
+func legSpeedKmH(a, b *AttachTerminal, durS int) (float64, bool) {
 	if a == nil || b == nil || a.Lat == nil || a.Lon == nil || b.Lat == nil || b.Lon == nil {
 		return 0, false
 	}
 	distKm := geo.Haversine(model.Coords{Lat: *a.Lat, Lon: *a.Lon}, model.Coords{Lat: *b.Lat, Lon: *b.Lon})
-	if durMin <= 0 {
+	if durS <= 0 {
 		if distKm < 0.05 {
 			return 0, false
 		}
 		return 1e9, true
 	}
-	return distKm / (float64(durMin) / 60), true
+	return distKm / (float64(durS) / 3600), true
 }
 
 func checkSpeeds(matched []MatchedStopTime, terms []AttachTerminal, maxSpeed float64) *DeadTrip {
 	for i := 1; i < len(matched); i++ {
 		a := terminalByID(terms, matched[i-1].TerminalID)
 		b := terminalByID(terms, matched[i].TerminalID)
-		durMin := (matched[i].ArrivalS - matched[i-1].DepartureS) / 60
-		speed, ok := legSpeedKmH(a, b, durMin)
+		durS := matched[i].ArrivalS - matched[i-1].DepartureS
+		speed, ok := legSpeedKmH(a, b, durS)
 		if !ok {
 			continue
 		}
@@ -666,8 +666,8 @@ func softSpeeds(matched []MatchedStopTime, terms []AttachTerminal, maxSpeed floa
 	for i := 1; i < len(matched); i++ {
 		a := terminalByID(terms, matched[i-1].TerminalID)
 		b := terminalByID(terms, matched[i].TerminalID)
-		durMin := (matched[i].ArrivalS - matched[i-1].DepartureS) / 60
-		speed, ok := legSpeedKmH(a, b, durMin)
+		durS := matched[i].ArrivalS - matched[i-1].DepartureS
+		speed, ok := legSpeedKmH(a, b, durS)
 		if !ok {
 			continue
 		}
