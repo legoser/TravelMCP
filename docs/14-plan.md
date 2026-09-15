@@ -2,9 +2,12 @@
 
 > Ревизия: консолидированный редизайн импорта/синхронизации **терминалы-первыми**
 > (терминал — первичная сущность, Минтранс — только источник рейсов).
-> Заменяет предыдущую редакцию плана (удалена на диске вместе с кодом legacy-импорта).
 > Миссия — `docs/13-mission.md`; термины и исходники верификации — `docs/02-glossary.md`;
 > снимок состояния — `docs/15-dev-status.md`.
+>
+> Соглашение этого документа: нормы и правила — полностью; выполненные
+> работы — итогом одной строкой с файлами-точками входа (хроника прогонов
+> не ведётся). Нумерация `§` стабильна — на неё ссылаются глоссарий и код.
 
 ## 0. Приоритеты (не размениваются)
 
@@ -50,15 +53,14 @@
 ### 1.1 Диагноз (что не так со старым путём)
 
 - Мастером терминалов был реестр Минтранса: имена вида `ОП «ЛПК»` без топонима,
-  координат часто нет, названия не совпадают с картами (`missing_stops.json`,
-  ставший сейчас review-сигналом). Геокодирование по имени = угадывание точки по
-  нетопонимичной строке.
+  координат часто нет, названия не совпадают с картами. Геокодирование по имени =
+  угадывание точки по нетопонимичной строке.
 - `terminal_names` — максимум 2 строки (PK по языку): вариантам имён негде жить.
   Адреса нет; `transport_type` не привязан к терминалу.
-- `MemoryCache` не использовался в импорте; живой кэш геокодинга — `map` без TTL
-  + скриптовые `data/reestr/{yandex,nominatim}_geo.json` (без имени/даты).
-- Quota БД не вызывалась на пути геокодинга; `VerifyTerminal` импортером не
-  использовался (проверялись только `provenance`+`review_queue`).
+- Живой кэш геокодинга отсутствовал (`map` без TTL + скриптовые
+  `data/reestr/{yandex,nominatim}_geo.json` без имени/даты).
+- Квота БД не вызывалась на пути геокодинга; верификация терминалов импортером
+  не использовалась.
 
 ### 1.2 Скелет терминалов
 
@@ -78,13 +80,15 @@
   платформы/выходы в него не порождают отдельных терминалов (иначе — волна ложных
   `possible_merge` в начале работы).
 - Правило существования: терминал найден **только в Yandex** (нет OSM-пары) →
-  `review_queue{skeleton_unverified}`, в канон не попадает. Совпадение источников —
-  через `ScorePair`. Только OSM → канон с `enrichment_status='identity_only'`.
+  `review_queue{skeleton_unverified}`, в канон не попадает (смягчение: Yandex-only
+  **с координатами** — в канон с confidence 0.4, `IdentityOnly`, §10 O-10).
+  Совпадение источников — через `ScorePair`. Только OSM → канон с
+  `enrichment_status='identity_only'`.
 - Интерфейс `SkeletonSource` с реализациями `osm` (мастер) и `yandex` (офлайн).
   Юридический статус дампа Yandex как мастер-источника — go/no-go, поэтому
   канонический набор всегда пересобираем без этого файла.
 
-### 1.3 Конвейер `internal/sync` (новый, стадии)
+### 1.3 Конвейер `internal/sync` (стадии)
 
 1. `terminals skeleton` — OSM + Yandex-обогащение (только локальные файлы, **0 API**).
 2. `terminals verify` — единственная стадия с внешними запросами: спорные точки
@@ -100,13 +104,13 @@
 5. `freshness sweep` — `attribute_state`, финализация/GC, tombstone исчезнувших
    routes/трипов (diff источник vs канон, §5.3), аудит `possible_merge`, KPI.
 
-Старый importer (`internal/adapters/mintrans/importer.go`), `GeoResolver`,
-`internal/import/pipeline.go` — `Deprecated`, удаление по §6 после паритета.
+Старый importer, `GeoResolver`, `internal/import/pipeline.go` — удалены (§6).
 
 ## 2. Фазы и вехи
 
 Верификация каждой фазы: `gofmt` + `go vet ./...` + `make test` (обязательно),
 операционные фазы — на Postgres (правило §4.1), сверка `v_stale_attributes`/KPI.
+Статус всех фаз — done, кроме Фазы 7 (backlog, §11).
 
 | Фаза | Содержание | Выход/готовность |
 |---|---|---|
@@ -115,8 +119,9 @@
 | **2. Кэш геокодера** | `cachedGeocoder` (lookup `geocode_cache`, TTL-политика §3.11: 90д подтверждённые / 7д спорные — класс TTL проставляет верификатор после confirmed-матча, `stale-while-revalidate`), seed `origin='seed'` из `{yandex,nominatim}_geo.json`; квота БД + глобальный windowed-токен в `api_quotas` (Nominatim 1 rps); лимит квоты — `geocoder.max_calls`. | «2 фабричных голоса» из одного кривого запроса не финализируют гео; банов нет |
 | **3. Skeleton + миграция старых терминалов** | `SkeletonSource{osm,yandex}`; иерархия OSM на экстракции (§1.2); join OSM через staging-таблицы и `ST_DWithin/GiST`; прогон Фазы 0; генерация кандидатов позиций интерполяцией (§5.4). | Скелет в каноне, старые записи сматчены/в review, coverage измерен по регионам |
 | **4. Trips** | Минтранс → только рейсы; **запуск только после coverage-gate** по регионам трасс — метод измерения: доля стопов реестра с кандидатом выше мягкого порога `ScorePair` (§5.4); рекалибровка порогов `ScorePair` на новых регионах до массового attach; **предусловие NK:** bootstrap-сравнение двух срезов реестра на стабильность `external_route_code` до доверия ключу, при нестабильности — синтезированный ключ (регион + номер + конечные + carrier, пометка `synthetic`) + churn-мониторинг (§3.4); матчинг стопов на скелет (`ScorePair`, ось `stop_terminal`); единица работы — **трип/маршрут**, барьер межрегиональности с таймаутом (§4.2); **промоушен-транзакция = трип** (job=route — батчинг); политика времён §3.13 (winner-источник, запрет фабрикации); staging + автопромоушн по `outbox`; cached yandex-расписания как доп. источник; tombstone/GC исчезнувших рейсов; row-reconciliation per stage; churn-alert (>N% изменений за прогон → стоп). | Полные рейсы в каноне, `% полных рейсов` в дашборде, фантомов нет |
-| **5. Freshness** | `finalize`/GC `attribute_state` (retention 90д, victories в `provenance_history`), `v_stale_attributes`, аудит `possible_merge`, ночной recompute `transport_types`, золотой набор `testdata/golden_terminals.json` + `golden_trips.json` → precision/recall в CI, возраст расписаний и TTL-ресинк (§3.4); demand-driven ресинк расписаний по приоритету (трипы реальных запросов планировщика + истекающие TTL, остальное лениво). **Реализовано (2026-09-09): freshness-sweep `RunHygieneSweep`** (internal/sync/attribute_hygiene.go) в `jobs{cleanup}`: finalize/GC attribute_state (retention, ручные правки не трогаются, несходимость fail-loud), stale-счётчики 30д (`stale_attributes_30d` в dashboard KPI §8), аудит possible_merge (300м + пересечение типов → review, fingerprint=merge:a:b, идемпотентно), recompute transport_types (**union stored∪fact** — факт добавляет типы, скелетные rail/flight не срезаются временным отсутствием рейсов); FP-выборка `SampleMarginalMatches` (match_score ∈ [lo,hi), acceptance sampling §8 — вход для ручного FP-рейта); golden_terminals.json в CI (precision/recall 1.0). **Реализовано (2026-09-10): early-dedup форма recompute SELECT** (attribute_hygiene.go): агрегация `(stop_id, mode)` до join со стопами (3.5M → ~25k строк, parallel HashAggregate) вместо CROSS JOIN LATERAL с 64k переполнениями подзапроса; live-БД 12.3s → 0.6s (~20x), EXCEPT-проверка идентичности 0/0; новые индексы не нужны (покрыты существующими: `stop_id` — префикс `idx_stop_times_stop_departure`). Не реализовано: demand-driven ресинк расписаний (§3.4) и TTL-ресинк — backlog. | | Устаревание видно, объём `attribute_state` ограничен, рекалибровка измерима |
-| **6. Депрекация/масштаб** | Удаление legacy-пути по §6; при прод-деплое — заморозка `001_initial.sql`, далее аддитивные `002_*.sql`. РФ целиком — после паритета на полном `regions.json`. **Производственный GTFS:** проверка полноты provenance (`source/channel`, §3.3) как hard-gate CI (скан provenance zip) + GTFS Validator (MobilityData). `plan_id`: переход с `sha(binary)` на ручной logic version (бамп при семантических изменениях), иначе каждый деплой = full-resync чанков. **Реализовано (2026-09-10): паритет + вырезание legacy.** Паритет-скрипт `scripts/parity-check.py` (срез реестра vs канон; маршрутом считается трасса со стопом в регионе пилота, staging — честная промежуточная станция конвейера): пилот-42 routes 96.7% / timed 99.2% (порог 95% пройден; 42.22.016/2 — код с суффиксом, вычислен отдельным вопросом). Вырезано: `internal/providers/intercity` (JSON-провайдер), `Registry.WithDedupKm`/intercityPath, `providers.intercity`-секция конфига + env `INTERCITY_REESTR_PATH`, `internal/adapters/mintrans/importer.go` (типы контракта → contract.go, helpers → trips.go), `internal/import/pipeline.go`; planner-тесты перешли на `mintrans.FlattenTrips`-билдер сети из testdata. Канон transport-типов расширен (subway + car/bicycle/scooter/taxi, §3.1). `make check-deprecated` чисто (остались intentional-пометки MemoryStore). **Реализовано (2026-09-10): GTFS hard-gate + channel.** `provenance.channel` (+history, триггер, CHECK по канону §3.3: local_file/local_motis/transitous_prod/transitous_staging) — модель `model.Provenance.Channel` + `ValidProvenanceChannel`, все писатели (postgres pool/tx, memory) падают на пустом/неканоническом значении; записи проставлены во всех путях записи (skeleton_promote/legacy_match/server/external-call); персист трипов 4.3 пишет provenance route+trip в промоушен-транзакции (слои, исторически писавшиеся без него). Gate: `ProvenanceCompletenessChecker.CheckProvenanceCompleteness` (живые routes/trips без пары source/channel → список; postgres одним UNION-запросом, memory-зеркало) вызывается из `Compiler.writeFromStore` **до** сборки zip — неполный канон = ошибка, не zip; фолбэк `gtfsCompile(net)` при падении gate в `/api/v1/export` убран (тихий обход). Раннер `cmd/gtfs-validate` + `make gtfs-validate` (GTFS_VALIDATOR_BIN): fixture-zip через тот же gate + локальный MobilityData-валидатор. **Реализовано (2026-09-10): `plan_id` → logic version.** `internal/sync/logicversion.go` — единый `LogicVersion` + `LogicVersionID()`; все раннеры (`skeleton-sync`, `trips-sync`, `gtfs-import`) считают plan_id от него вместо разрозненных `appVersion`-констант и sha(binary): деплой без изменения логики не инвалидирует чанки, бамп версии — полный resync там, где нужен (правило бампа — там же, тест `TestPlanIDLogicVersion`). **Реализовано (2026-09-10): реестр как плагин (ревизия по внешнему ревью).** Специфика формата Минтранса вынесена из приложения в standalone-модуль `tools/registry-parser` (stdlib-only): контракт, дни недели, bootstrap NK, synthetic-ключи, `--trust-nk`; выход — универсальный `flat_trips.json` (`model.FlatPayload`: meta.source=gov-registry + stats + trips), `cmd/trips-sync` читает только его (`sync.flat_trips_path`), конвейер про источник не знает; `RouteNK` — из коннектора, коды стопов — `FlatStop.Codes` (ветка `StopCodes` на source устранена), `source` fail-loud во всех точках конвейера. `internal/adapters/mintrans` удалён; planner-тесты на `testdata/flat_trips.json`. Идентификаторы стали данными: `identifier_schemes` (code PK, system FK→providers, display_name, priority, is_resolvable, is_merge_key, 13 сидов) — единый справочник для `terminal_identifiers`/`carrier_identifiers` (CHECK→FK), editable через админку (`GET/PUT/DELETE /api/v1/admin/identifier-schemes`, FK-защита удаления); primary-ранг терминала — `identifier_schemes.priority` из БД, не хардкод; провайдер `gov-registry` (замена `mintrans`), `sync_mintrans` вырезан из jobs-CHECK, `POST /api/v1/import/mintrans` удалён; `LogicVersion="3"`. Backlog: trust-матрица источников как данные (`provider_trust_pairs`), интерактивный сбор (`sync_collect_region`). **Не закрыто (дальше):** РФ-целиком после полного среза. | `make check-deprecated` чисто |
+| **5. Freshness** | `finalize`/GC `attribute_state` (retention 90д, victories в `provenance_history`), `v_stale_attributes`, аудит `possible_merge`, ночной recompute `transport_types`, золотой набор `testdata/golden_terminals.json` + `golden_trips.json` → precision/recall в CI, возраст расписаний и TTL-ресинк (§3.4); demand-driven ресинк расписаний по приоритету (трипы реальных запросов планировщика + истекающие TTL, остальное лениво). Статус: done — `RunHygieneSweep` + staging-expiry в `jobs{cleanup}`, recompute early-dedup (~20x). Backlog: demand-driven и TTL-ресинк расписаний. | Устаревание видно, объём `attribute_state` ограничен, рекалибровка измерима |
+| **6. Депрекация/масштаб** | Удаление legacy-пути по §6; при прод-деплое — заморозка `001_initial.sql`, далее аддитивные `002_*.sql`. РФ целиком — после паритета на полном срезе реестра. **Производственный GTFS:** проверка полноты provenance (`source/channel`, §3.3) как hard-gate CI + GTFS Validator (MobilityData). `plan_id`: ручной logic version (бамп при семантических изменениях), иначе каждый деплой = full-resync чанков. Статус: done — паритет 96.7%/99.2%, legacy вырезан; `provenance.channel` + gate + `gtfs-validate`; `LogicVersion`; Overpass route-relations; реестр как плагин (`tools/registry-parser`, `LogicVersion="3"`). | Депрекация выполнена, GTFS проходит provenance-фильтр и Validator |
+| **7. Качество/безопасность** | Backlog, см. §11. | — |
 
 **Зависимости фаз (DAG).** Фаза 1 — корень для всех остальных (DDL-сущности
 используются Фазами 2–5). Фаза 2 ⊂ Фаза 3 (verify-стадия). Фаза 0 — не точка
@@ -133,19 +138,17 @@
 текущий победитель конкурса источников; **значение конкурента живёт в самом
 `attribute_state`**, а не только в history.
 
-**Канон transport-типов (enum, справочник `transport_modes`):** расширен
-(2026-09-10, Фаза 6) — `bus, coach, tram, subway, rail, flight, taxi, car,
-bicycle, scooter`. `subway` (не «metro») — единообразно с OSM-тегом
-`station=subway`/`subway=yes` и GTFS `route_type=1`. Новые personal-mobility
-типы (`taxi, car, bicycle, scooter`) — полноценные режимы (модель `model.Mode`,
-скорости в справочнике), на момент ввода источников нет: до появления
-провайдеров данные типы в каноне не встречаются, enum расширен заранее под
-будущие источники (каршеринг/такси-межгород/велопрокат/КИНГ-самокаты).
+**Канон transport-типов (enum, справочник `transport_modes`):**
+`bus, coach, tram, subway, rail, flight, taxi, car, bicycle, scooter`.
+`subway` (не «metro») — единообразно с OSM-тегом `station=subway`/`subway=yes`
+и GTFS `route_type=1`. Personal-mobility типы (`taxi, car, bicycle, scooter`) —
+полноценные режимы (модель `model.Mode`, скорости в справочнике); до появления
+провайдеров в каноне не встречаются, enum расширен заранее.
 **Правило расхождения GTFS-route_type vs OSM-скелет** (если фид считает метро
 rail): OSM-скелет (`station=subway` → терминал subway) — канонический гео-факт,
-GTFS route_type — claim маршрута; конфликт не взаимоисключающий — recompute
-`transport_types` объединяет (union stored ∪ fact, Фаза 5), subway-терминал с
-rail-маршрутом честно носит `rail+subway`.
+GTFS route_type — claim маршрута; recompute `transport_types` объединяет (union
+stored ∪ fact, Фаза 5), subway-терминал с rail-маршрутом честно носит
+`rail+subway`.
 
 ```
 terminals (дополнения):
@@ -197,7 +200,7 @@ terminal_merges(old_id bigint UNIQUE, new_id, reason, at, actor_id)
 город `4` → район города `5`. Топоним терминала — `place_id → places` с запросом
 города `JOIN ... WHERE p.level=4` (как в словаре); fallback
 `terminal_tags['settlement']` (display-форма). Коды регионов —
-собственная нумерация Минтранса (мап в `internal/geo/resolve.go`, 81 код).
+собственная нумерация Минтранса (мап в `internal/geo`, 81 код).
 Шкала уже зашита в коде (`internal/model/places.go: LevelCity`, запросы
 `p.level=4` в `internal/store/postgres`) — расхождений с ней не допускается.
 
@@ -270,35 +273,31 @@ CI-gate сканирует provenance собранного zip на полнот
 ### 3.7 Квоты и ротация провайдеров
 
 Все обращения к квотируемым API — через атомарный счётчик БД
-(`api_quotas`/`TryConsumeQuota`, уже реализован), не через локальное состояние
-процесса. In-process счётчик `GeoResolver.maxCalls` — deprecated (замена: квота
-БД + TTL `geocode_cache`). **Против бана жёстких rate-limiter'ов** (у Nominatim —
+(`api_quotas`/`TryConsumeQuota`), не через локальное состояние
+процесса. **Против бана жёстких rate-limiter'ов** (у Nominatim —
 1 rps) — глобальный windowed-токен в той же `api_quotas` (атомарно, как
 `TryConsumeQuota`); verify-стадия остаётся синхронной. Отдельный geocode
-  writer-job — опционально, только если понадобится очередь (тогда singleflight
-  становится тривиальным); вшивать оба сразу не требуется. При масштабе —
-  локальный Nominatim/Photon. Приоритет геокодинга — nominatim → yandex
-  (`fallback`): полный разбор в `02-glossary.md:G`.
+writer-job — опционально, только если понадобится очередь (тогда singleflight
+становится тривиальным); вшивать оба сразу не требуется. При масштабе —
+локальный Nominatim/Photon. Приоритет геокодинга — nominatim → yandex
+(`fallback`): полный разбор в `02-glossary.md:G`.
 - **Overpass идёт тем же путём `cache+quota`, нового пути нет** (§10):
   пространство ключей `geocode_cache` с префиксом `overpass:`, квота
-  `api_quotas` на коде `osm` (данных OSM; отдельных кодов под Overpass в
+  `api_quotas` на коде `osm` (отдельных кодов под Overpass в
   `providers` нет и не нужно — FK целы, миграций ноль), пейсер ≥1.2с между
   запросами, лимит точек на прогон `--overpass-max` (дефолт **200**).
   Инстансы: основной `https://overpass-api.de/api/interpreter`, зеркало —
-  `https://overpass.openstreetmap.fr/api/interpreter` (kumi.systems исключён —
-  проблемы с доступом; остальные зеркала — только строками конфига
-  `overpass.url`). Живой сети в CI нет — только фикстуры `testdata/overpass/`
+  `https://overpass.openstreetmap.fr/api/interpreter` (kumi.systems исключён;
+  остальные зеркала — только строками конфига `overpass.url`).
+  Живой сети в CI нет — только фикстуры `testdata/overpass/`
   и ручной скраппинг скриптом.
 - **Ключ квоты ≠ источник данных (решение issue #10)**: у Яндекса два
   независимых API с отдельными ключами и суточными лимитами — Rasp
   (расписания; ключ квоты `yandex_rasp`, лимит `yandex.rasp_quota_limit`,
   дефолт адаптера 500) и Geocoder (геокодинг; ключ квоты `yandex_geocode`,
-  лимит `geocoder.max_calls`, дефолт 1000). Оба кода засеяны в `providers`
-  (миграция 002); код `yandex` остаётся каноническим `system` для
-  `identifier_schemes`/`provenance` — источник данных не меняется, новые
-  коды существуют только в `api_quotas`. Раньше оба API писали в одну
-  строку `api_quotas('yandex')` с разными лимитами (500/1000 — кому
-  первому), исчерпание одного блокировало другой.
+  лимит `geocoder.max_calls`, дефолт 1000). Код `yandex` остаётся каноническим
+  `system` для `identifier_schemes`/`provenance` — источник данных не меняется,
+  новые коды существуют только в `api_quotas`.
 
 ### 3.8 Верификация — единый `ScorePair`
 
@@ -337,13 +336,16 @@ score = Σ f ( feature_weight[task][class][f] · feature_match(f,a,b) · trust(p
   один источник A (не прибавляет уверенности парой OSM↔MOTIS). В оси
   `stop_terminal` матч по паре «оба из Минтранса» не достигает verified без
   дополнительной геометрии/соседей.
+- **Заимствованная геометрия не проходит dist-guard** (`FlatStop.CoordsBorrowed`,
+  `PairItem.CoordsBorrowed`): координаты, назначенные георезолвом от
+  терминала-кандидата, дают `dist=0` с донором — это тавтология, а не независимое
+  доказательство. Verified для такого стопа — только через код-матч или
+  settlement-ветку.
 - Веса/пороги/`margin` — per `density_class` (rural/suburban/urban/metro) из
   конфига `density_thresholds` + `trust[pair]` (путь — в env-таблице
   `15-dev-status` как конфиг-файл, не env), не хардкод; калибровка на данных
-  Кузбасса. Старые веса A/B/C (0.2/0.4/0.4) и simul+0.2 — **только приоры**
-  для начальной калибровки; вытесняются trust-матрицей и калибровкой, в формулу
-  отдельным слотом не входят; `geom`-weight для skeleton-источников структурно
-  повышен (§0 Фаза 0).
+  Кузбасса (дефолт verified 0.6, верх робастности 0.7); `geom`-weight для
+  skeleton-источников структурно повышен (§0 Фаза 0).
 - **Рекалибровка на новом регионе — gate Фазы 4**, с поправкой golden-набора
   по региону; перенос порогов пилота на РФ — не «позже в Фазе 6», а перед
   масштабным attach (см. §2 Фаза 4).
@@ -367,10 +369,10 @@ SCD2 `valid_from/valid_to` на `places/terminals/routes` — как спрое�
 - `import_logs`/`outbox`/`jobs` — как спроектировано: `outbox` получает publisher
   «terminal.created/updated» (Фаза 1) и подписчика автопромоушна staging (Фаза 4).
   Массовый skeleton → outbox-flood `terminal.created`: подписчик коалесируется
-  (region-level sweep, debounce), не шторм перепроверок.   Job-типы:
+  (region-level sweep, debounce), не шторм перепроверок. Job-типы:
   `sync_stations`, `sync_refresh`, `sync_terminals_chunk`,
   `sync_trips_attach` (per-trip, §4.2); `sync_rail` — семантика
-  «только рейсы» (`sync_mintrans` вырезан 2026-09-10 вместе с legacy-путём).
+  «только рейсы».
 - `review_queue` — единый «бакет неудовлетворительного». **Enum-канон причин**
   (единственный источник; CHECK Фазы 1 и вставки §3.8 сверяются с ним):
   `legacy_unmatched, skeleton_unverified, incomplete_trip, possible_merge,
@@ -557,8 +559,8 @@ dead). Прогресс в админке: «прогон R: 42/57 chunks гот
 - скорость выше физического предела по mode (автобус × 200 км/h — мусор).
 
 **Guard интерполированной геометрии:** hard-проверка скорости применяется
-только если `geom` обоих концов финализирован (правило §3.10: ≥2
-`origin='live'`/manual, не `seed`/интерполяция). Иначе тот же сигнал уходит
+только если `geom` обоих концов финализирован (≥2 `origin='live'`/manual,
+не `seed`/интерполяция). Иначе тот же сигнал уходит
 в soft — `review_queue{low_confidence}` с указанием leg и источника
 координаты, а не в `dead`.
 
@@ -600,48 +602,40 @@ availability-метриках здоровья коннектора.
   `valid_to` (SCD2) → авто-tombstone зависимых канонических трипов + review.
 - **Churn-alert**: если за прогон исчезло/изменилось >N% трипов — стоп прогона и
   ручная проверка (вероятно, реестр перенумеровал коды или сломал выгрузку), не
-  тихая перезапись всего диапазона.
-- Протухшие `staging_trips` (старше порога) — dead-letter + alert (expiry job).
-  **Реализовано (2026-09-09):** `internal/sync/staging_expiry.go` —
-  `ExpireStaleStagingTrips` (незавершённые состояния старше порога →
-  `state='expired'`, данные остаются для оператора; идемпотентно),
-  `HandleCleanupJob` для `jobs{type=cleanup}` (порог — payload
-  `staging_expiry_days` или конфиг `sync.staging_expiry_days`, env
-  `SYNC_STAGING_EXPIRY_DAYS`, дефолт 14). Store-методы:
-  `ExpireStagingTripsOlderThan`/`CountStagingByState` (postgres + memory).
-  Смежная гигиена review: `SaveReviewQueue`-апсерт бампает
-  `observed_at`/`count` (пере-детекция = живое наблюдение, expiry видит
-  актуальный возраст); промоушен трипа закрывает его открытые review
-  (`ResolveTripReviewsByFingerprint` по fingerprint NK —
-  `persistPromotedTrip`, счётчик `reviews_resolved` в сводке).
+  тихая перезапись всего диапазона. Чистый рост канона при `disappearance=0`
+  алерта не даёт (первый полный прогон после частичного наследия легитимен);
+  исчезновения — hard-алерт без исключений.
+- Протухшие `staging_trips` (старше порога) — dead-letter + alert (expiry job:
+  `ExpireStaleStagingTrips`, `jobs{type=cleanup}`, порог
+  `sync.staging_expiry_days`/`SYNC_STAGING_EXPIRY_DAYS`, дефолт 14).
+  Смежная гигиена: `SaveReviewQueue`-апсерт бампает `observed_at`/`count`
+  (пере-детекция = живое наблюдение); промоушен трипа закрывает его открытые
+  review (`ResolveTripReviewsByFingerprint`, счётчик `reviews_resolved`).
 
 ### 5.4 Coverage-gate скелета и операторский флоу новых терминалов
 
-- **Coverage-gate между Фазами 3 и 4:** измеряется % стопов Минтранса,
+- **Coverage-gate между Фазами 3 и 4:** измеряется % стопов реестра,
   матчащихся на скелет, по регионам. Метод измерения: доля стопов реестра
-  с кандидатом выше мягкого порога `ScorePair` (калибруемо, не «на глаз»).
-  При <N% в регионе трассы — attach по этому региону не стартует; расширяется
-  скелет (добор OSM/дамп), а не «подгружаются» рейсы поверх пустоты. Значение N —
-  конфиг `sync.coverage_gate`, стартовый N по результатам Фазы 3 на Кузбассе.
+  с кандидатом выше мягкого порога `ScorePair` (**soft-rate** — есть ли кандидат
+  вообще, сигнал расширять скелет; attach-движок при этом требует **verified**,
+  двухуровневая дамба, §10 S-4). При <N% в регионе трассы — attach по этому
+  региону не стартует; расширяется скелет (добор OSM/дамп), а не «подгружаются»
+  рейсы поверх пустоты. Значение N — конфиг `sync.coverage_gate`.
 - **Операторский путь для несопоставленных стопов:**
   `review_queue{incomplete_trip}` → кандидат позиции (интерполяция, ниже) →
   оператор подтверждает/создаёт терминал (`actor_id` уже фиксируется в
   `attribute_state` — дамба не нарушена) → `outbox` → автопромоушн трипа.
-- **Автодобавление конечных терминалов из дампа Яндекса (issue #16,
-  реализовано 2026-09-12):** до attach конвейер трипов закрывает конечные
-  стопы (first/last нитки), не сматчивающиеся к канону, станцией из дампа
-  Яндекса по **точному коду** (`yandex_code` стопа). Станция с координатами
-  становится каноническим терминалом по правилу O-10 (score 0.4,
-  `IdentityOnly`, provenance yandex/local-file, settlement-тег) и publish'ит
-  `terminal.created` в outbox (§4.2). Дубликаты исключены: (1) матчинг только
-  по коду — name-guessing не применяется, тёзки не рождаются; (2) дедуп
-  по коду против канона (`ListTerminalIDByCode`) и пула прогона; (3) станции
-  без координат и городские `bus_stop` (не входящие в `StationClasses`)
-  не создаются. Куда не закрылось — прежний операторский путь. Расширение
-  мотивировано межрегиональными рейсами: станции соседних регионов
-  отсутствуют в скелете пилота, а дамп несёт их полностью валидными
-  (код + координаты + посадение); без этого весь рейс падал бы в
-  `skeleton_gap`, теряя загруженное расписание.
+- **Автодобавление конечных терминалов из дампа Яндекса (issue #16):** до attach
+  конвейер закрывает конечные стопы (first/last нитки), не сматчивающиеся к канону,
+  станцией из дампа по **точному коду** (`yandex_code`). Станция с координатами →
+  канон по правилу O-10 (score 0.4, `IdentityOnly`, provenance yandex/local-file)
+  + `terminal.created` в outbox. Name-guessing запрещён (только код — тёзки не
+  рождаются); станции без координат и городские `bus_stop` не создаются.
+- **Безымянные стопы — только полные тёзки** (`internal/sync/trips_georesolve.go`):
+  стоп, у которого поселение не извлеклось, не выходит в глобальный name-скоринг
+  (Levenshtein-порог ловит тёзок чужих регионов на коротких топонимах) — только
+  совпадение по `namesim.Core` при единственном кандидате, иначе без координат
+  (skeleton_gap, не зигзаг).
 - **Интерполяция позиции вдоль маршрута** (стандартный приём для recall):
   unmatched стоп между двумя сматченными соседями по `seq` получает оценку
   координаты из геометрии линии (доля пути по `duration_s`/`distance_m` между
@@ -651,61 +645,40 @@ availability-метриках здоровья коннектора.
   Терминал, созданный из такой оценки, несёт низкую достоверность `geom`
   (`origin='seed'` + низкий `confidence` в `attribute_state`) до независимого
   подтверждения; см. guard интерполированной геометрии в §5.1.
-
-- **Ручной режим сбора (single-source, реализовано 2026-09-11):** в дополнение
-  к автоматическому конвейеру (join+gate) оператор может наполнить регион из
-  одного источника — дамп Яндекс-станций фильтруется регионом/транспортом/
-  терминальными классами (`bus_station,station,train_station,airport`;
-  городские остановки — отдельным решением оператора через
-  `station_types` в payload) → записи промоутятся как unverified-терминал
-  score 0.4 IdentityOnly, не залочены. Дальше оператор в UI: валидация
-  каждого терминала через внешние API (overpass/nominatim/yandex) и/или
-  ручная правка + approve (`is_locked`, provenance manual, audit) —
-  автопереверификация залоченное не трогает. Сбор рейсов — job
-  `sync_collect_region{kind=trips}`: расписания/нитки Rasp cache-first
-  (кэш = валидные данные; miss → API через общий счётчик квот, ответ
-  сохраняется в кэш), стоп-коды ниток идут `FlatStop.Codes` и матчатся
-  на скелет code-match'ем. Записи, подтверждённые человеком, автоматикой
-  не перезаписываются (инвариант §0 сохранён).
+- **Ручной режим сбора (single-source):** оператор наполняет регион из одного
+  источника — дамп Яндекс-станций фильтруется регионом/транспортом/
+  терминальными классами (`bus_station,station,train_station,airport`) →
+  unverified-терминалы score 0.4 IdentityOnly, не залочены. Дальше оператор в UI:
+  валидация через внешние API + ручная правка + approve (`is_locked`,
+  provenance manual) — автопереверификация залоченное не трогает. Сбор рейсов —
+  job `sync_collect_region{kind=trips}` (Rasp cache-first, стоп-коды ниток →
+  code-match на скелет). Человеческие подтверждения автоматикой не
+  перезаписываются (инвариант §0).
 - **GTFS-конвенция «минимум одно время» в attach:** стоп с единственным
   временем (последний — arrival, первый — departure) получает парное
-  (`arr=dep`); валидатор монотонности не должен ронять честные нитки без
-  departure на конечной (замечено на пилоте: 179 ложных dead).
-- **Churn-алерт при чистом росте канона** (первый полный прогон после
-  частичного наследия): suppression операторской эскалацией
-  (`AllowChurnGrowth` из force-флага job'а) — только при
-  `disappearance=0`; исчезновения остаются hard-алертом без исключений.
-- **Allow-list провайдеров в `networkForDay`:** канон в сеть планировщика
-  грузится по списку `gov-registry` + registry + источник сбора `yandex` —
-  рейсы прикреплённые не-registry источником обязаны попадать в сеть,
-   иначе LOAD фильтрует их молча (trips=0 при живом каноне).
-- **Отображение транзита в `Leg` (issue #5):** `model.Leg` дополнен
-  `IsTransit bool` и `Stops []LegPoint`. `IsTransit=true`, если пассажир
-  сел/вышел не на конечных станциях трипа (`leg.From` ≠ первый `StopTime`
-  или `leg.To` ≠ последний `StopTime`). `Stops` — все остановки пассажира
-  в рамках лега (первая = `From`, последняя = `To`), собираются в
-  `buildLegs` из `Trip.StopTimes`; для пеших лег — пусто (`omitempty`).
-  Поля backward-compatible (omitempty); MCP отдаёт их как есть, Web UI
-  (`app.js` `rtLegRow`) рендерит бейдж `транзит` + цепочку остановок.
-  Полный маршрут рейса (`FlatTrip.RouteFrom/RouteTo`) пока не
-  пробрасывается в `Leg` — добавится, если понадобится «откуда рейс».
+  (`arr=dep`); валидатор монотонности не роняет честные нитки без departure
+  на конечной.
+- **Allow-list провайдеров в `networkForDay`:** канон грузится по списку
+  `gov-registry` + registry + источник сбора `yandex` — иначе LOAD фильтрует
+  чужие рейсы молча (trips=0 при живом каноне).
+- **Транзит в `Leg` (issue #5):** `model.Leg` дополнен `IsTransit bool` и
+  `Stops []LegPoint` (пассажир сел/вышел не на конечных трипа). Для пеших лег —
+  пусто (`omitempty`); fuzzy-леги несут `TimeHint` + контакты перевозчика
+  (`carriers.phone/info_url/address`).
 
 ## 6. Реестр депрекации (по мере реализации)
 
 | Элемент | Статус | Триггер удаления |
 |---|---|---|
-| `internal/adapters/mintrans/importer.go` (`ImportIntercity*`) | **Вырезан (2026-09-10, Фаза 6):** паритет подтверждён parity-check; JSON-типы контракта перенесены в `contract.go`, helpers FlattenTrips — в `trips.go`; реестр читает `cmd/trips-sync` через `ParseDataset`+`FlattenTrips` | закрыто |
-| `internal/adapters/mintrans` (весь пакет) | **Вырезан (2026-09-10, ревизия «реестр как плагин»):** парсер формата перенесён в standalone-модуль `tools/registry-parser` (stdlib-only, по лекалу `tools/osm-extract`); `cmd/trips-sync` читает универсальный `flat_trips.json`, конвейер про источник не знает; planner/sync-тесты — на flat-фикстуре | закрыто |
-| `internal/import/pipeline.go` | **Вырезан (2026-09-10, Фаза 6):** стадии давно живут в `internal/sync` | закрыто |
-| `internal/geo/regions.go` (таблица кодов регионов; `GeoResolver` удалён) | Удалён; таблица регионов + тест сохранены | — |
-| `internal/verification/verify.go` `VerifyTerminal` | Удалён; `haversineMeters` переехал в `scorepair.go` | — |
-| `scripts/extract-minstran.py`: генер. `*_geo.json` | прекращается | после seed |
-| `data/reestr/missing_stops.json` | датасет → review-сигнал | после миграции Фазы 0 |
-| `data/reestr/{yandex,nominatim}_geo.json` | seed → архив | после seed |
-| `geocoder.max_calls` (`GEOCODER_MAX_CALLS`) | Живой knob: лимит квоты `api_quotas` для геокодеров (не deprecated — in-process счётчик заменён квотой БД ещё в Фазе 2, поле переиспользуется как значение лимита) | — |
-| `internal/geo/places.json` | без изменений, но **ревизуется** при переключении планировщика на Store(Postgres) | отдельный пункт Фазы 6 |
-| `internal/providers/intercity` (JSON-legacy) | **Вырезан (2026-09-10, Фаза 6):** паритет на срезе пилота-42 подтверждён `scripts/parity-check.py` (routes 96.7% / timed 99.2%, порог 95%); planner-тесты — на mintrans-билдере testdata; вместе с ним вырезаны `Registry.WithDedupKm`, `providers.intercity`-конфиг, `INTERCITY_REESTR_PATH`, `mintrans/importer.go` (реестр типов контракта → contract.go), `internal/import/pipeline.go` | закрыто |
-| `scripts/extract-minstran.py`: генер. `*_geo.json` | прекращается | после seed |
+| `internal/adapters/mintrans/*`, `internal/import/pipeline.go`, `internal/providers/intercity` (+`Registry.WithDedupKm`, `providers.intercity`-конфиг, `INTERCITY_REESTR_PATH`) | Вырезаны (Фаза 6, паритет 96.7%/99.2%) | закрыто |
+| `internal/verification/verify.go` (`VerifyTerminal`) | Удалён; единый скоринг — `ScorePair` | закрыто |
+| `internal/geo/regions.go`, `GeoResolver` | Удалены; таблица регионов живёт в `internal/geo` | закрыто |
+| `scripts/extract-minstran.py`: генерация `*_geo.json` | Прекращена (seed Фазы 2 выполнен) | закрыто |
+| `data/reestr/missing_stops.json` | Переведён в review-сигнал (Фаза 0) | закрыто |
+| `data/reestr/{yandex,nominatim}_geo.json` | Seed загружен (Фаза 2) → архив | закрыто |
+| `geocoder.max_calls` (`GEOCODER_MAX_CALLS`) | Живой knob: лимит квоты `api_quotas` для геокодеров (не deprecated) | — |
+| `internal/geo/places.json` | Static-fallback Gazetteer; канон из БД его перекрывает (upsert) | ревизия при полном переезде `places` в БД |
+| `internal/store/sqlite/*` | Удалён вместе с миграцией 002 — см. `15-dev-status.md` §1 | при прод-деплое |
 
 Правило: после каждого пункта — `make check-deprecated`; срок жизни Deprecated
 ограничен фазой паритета.
@@ -758,7 +731,7 @@ availability-метриках здоровья коннектора.
 - F0–F3: канон терминалов строится из OSM+Yandex без внешних запросов в базовом
   пути; старые записи сматчены/в review; `missing_stops`-сигнал сходится в review
   с кандидатами, а не в `(0,0)`; покрытие скелета измерено по регионам.
-- F4: полные рейсы Минтранса в каноне (вход — coverage-gate с измеренным методом),
+- F4: полные рейсы реестра в каноне (вход — coverage-gate с измеренным методом),
   частичные — в staging с видимой метрикой; пороги рекалиброваны на регионах
   трасс; `trips` ресинк идемпотентен (natural key), цены/длительности с источником
   и `method`; фантомов нет (two-tier validators + tombstone); zero-diff harness
@@ -767,260 +740,82 @@ availability-метриках здоровья коннектора.
   `task`'ам (terminals + trips), FP-рейт по аудиту в норме.
 - F6: `make check-deprecated` чисто; депрекация по §6 выполнена; GTFS-продукт
   проходит provenance-фильтр и GTFS Validator.
+- F7: `go test -race ./...` зелёный; audit покрывает админ-операции; секретоносных
+  логов нет; пороги — в одном `BehavioralParams`.
 
-## 10. Overpass + settlement-backfill + two-tier (мини-блоки, текущий фокус)
+## 10. Overpass + settlement-backfill + two-tier (мини-блоки, done)
 
 Решения, зафиксированные здесь (источник истины, не чат): Overpass — сборщик
-маршрутов в паре с Яндекс Расписанием (§1.2); коннектор реализует
-`geocoder.MultiGeocoder` и висит на том же `cache+quota`, что Nominatim/Yandex
-(§3.7); `--overpass-max` по умолчанию **200**; зеркала — main + openstreetmap.fr,
-kumi исключён. **Лицензионный waiver:** данные OSM/Overpass потребляются только
+маршрутов в паре с Яндекс Расписанием (§1.2); коннектор висит на том же
+`cache+quota`, что Nominatim/Yandex (§3.7); `--overpass-max` по умолчанию
+**200**; зеркала — main + openstreetmap.fr, kumi исключён.
+**Лицензионный waiver:** данные OSM/Overpass потребляются только
 внутри сервиса (планировщик), распространение датасетов не предусматривается —
-строка риска не ведётся, решение зафиксировано этим абзацем. Порядок: сначала
-O-блоки (коннектор), затем S-блоки (settlement), затем C-блоки (two-tier);
-каждый блок — независимо проверяемый дифф (`gofmt` + `go vet` + `make test`).
+строка риска не ведётся, решение зафиксировано этим абзацем.
 
-### O. Коннектор Overpass (по лекалу `adapters/yandex`, переиспользование)
+### O. Коннектор Overpass (done)
 
-- **O-1. Каркас пакета.** `internal/adapters/overpass/overpass.go`: структура
-  `{cfg, client, baseURLs}`, `New(cfg, httpx)`, конфиг `overpass.url`, QL-билдер
-  bbox-запроса. Готово: компилируется, юнит на текст QL. Без сети.
-- **O-2. Регистрация в `geocoder`.** `init()` → `geocoder.Register("overpass")`;
-  `GeocodeCandidates` (поиск остановок по имени в bbox), `Geocode` = top1
-  кандидатов, `Reverse` — явная ошибка «не поддерживается» (reverse остаётся за
-  Nominatim). Готово: юнит через `httptest`-сервер.
-- **O-3. Парсер ответа.** Overpass JSON (`elements`: node/way/relation, теги,
-  `members` с ролями) → `model.AdaptedRecord` (Kind=terminal, идентификаторы
-  `{osm, osm_id}`, `Extra`: settlement/transport_type, `Source: "osm"`).
-  Фикстуры `testdata/overpass/stations.json` + пустой ответ. Готово: юнит без сети.
-- **O-4. `StationsAround` + путь `cache+quota`.** Точечный добор
-  `node(around:R,lat,lon)`; ключи кэша `overpass:`, квота `api_quotas` на `osm`,
-  пейсер ≥1.2с (переиспользование `cached.go`/пейсера, не новьё). Готово: юнит с
-  фейк-кэшем/квотой, повторный вызов — hit без квоты.
-- **O-5. `FetchRouteRelations`.** QL `relation["route"~"bus|trolleybus"]["ref"~...]`
-  + рекурсия `>>` за членами; парсер строит скелет `AdaptedTrip`: упорядоченный
-  список стопов с OSM-ID + `ref`/`operator` как identity-доказательство. Фикстура
-  relation в `testdata/overpass/`. Готово: юнит, порядок членов сохранён.
-  **Реализовано (2026-09-10):** `Adapter.FetchRouteRelations` (execQL main→mirror)
-  + мост `FetchRoutes` для пути cache+quota — `geocoder.CachedRoutesProvider`
-  (`cached_routes.go`, по лекалу O-4: ключи `overpass:route:<ref>[:bbox]`, квота
-  `api_quotas` на `osm`, общий пейсер ≥1.2с; нового пути вызова нет, §3.7).
-  Тесты: `TestFetchRouteRelationsHTTP/Empty` (фикстура, порядок членов),
-  `TestCachedRoutesProviderCacheQuota/QuotaExhausted` (hit без квоты, вежливый
-  отказ). Живая пачка O-6 парсится офлайн-скретч-тестом (skip в CI без сырья).
-  **Завершено (2026-09-12, issue #11):** парсер route-ответа больше не
-  выбрасывает node/way элементы: `routeIndex` по всем элементам ответа,
-  `AdaptedTripStop` наполняется координатами (`node` — своя точка;
-  `way`/`relation`-platform — центроид) и именем из тегов; порядок членов
-  relation сохраняется (семантика маршрута). `AdaptedTripData.Geometry`
-  (`[[lat,lon],...]`) — полилиния из way-членов с ролями `""`/`forward`/
-  `backward`: склейка напрямую или с разворотом, при разрыве — конкатенация
-  сегментов; ноды без координат пропускаются, сохраняя связность.
-  `FetchRoute(relationID)` — точечный запрос `relation(<id>); out body; >;
-  out qt;` (точнее ref-поиска: нет амбигуитета бортовых номеров); мост
-  `RouteQueryParams.RelationID` — ключ `overpass:route:relation/<id>` в том же
-  пути cache+quota (пейсер/квота не дублируются). Фикстура
-  `testdata/overpass/route_full.json` (relation + way-platform + прямая/реверс/
-  разрывная геометрия); тесты `TestParseRouteResponseFull`,
-  `TestFetchRouteByIDHTTP/Invalid`, `TestBuildGeometryChained/Reversed/Broken/
-  SkipsUnknownNodes`, `TestCachedRoutesProviderRelationID`; живая пачка O-6
-  наполняет координаты и геометрию (скретч-тест, skip в CI). Времена —
-  по-прежнему монополия Яндекса (§1.2); связка stop_osm_id ↔ yandex_code —
-  через ScorePair (D-1), без изменений.
-- **O-6. Ручной скраппинг.** `scripts/overpass-collect.sh` по образцу
-  `yandex-collect.sh`: вход — unmatched-список attach, сырьё —
-  `data/overpass/raw/` (не коммитится), сводный офлайн-дамп
-  `data/overpass/stations.json`. Готово: одна пачка собрана руками.
-  **Реализовано (2026-09-10):** скрипт жив (пейсер 1.2с, fallback
-  main→openstreetmap.fr, resume по уже собранным слагам); дефолтные точки —
-  реальные автовокзалы OSM (Кемерово 55.341592,86.061353; Красноярск МКАВ;
-  Барнаул; Томск; Кемеровская обл.) + route-relations O-5 (bbox СФО). Живая
-  пачка: 157КБ route_101 (Томск №101 Поросино↔Ленина, 161 member — порядок
-  сохранён), сводный дамп 1349 elements; сырьё в gitignored `data/`.
-- **O-9. Overpass как источник терминалов и маршрутов (issue #12,
-  2026-09-12).** Регио-сбор из OSM без расписания — полный путь:
-  `POST /api/v1/collect/routes` → job `kind=routes` → терминальные станции
-  bbox региона (`StationsInBBox` через `CachedStationsProvider` — тот же
-  cache+quota+pacer, ключ `overpass:bbox:<...>`) → чанковый промоут
-  unverified-терминалов (`RunCollectOverpassSkeleton`, IdentityOnly 0.4)
-  → маршрутные relation'ы bbox (`FetchAllRouteRelations`, QL без ref-
-  фильтра) → `FlattenOverpassRoute` → flat-рейсы без времён → attach:
-  полностью безвременные рейсы матчатся к терминалам и уходят в staging
-  `awaiting_times` («рейс без расписания (только топология)») — маршрут
-  привязан к канону, времена добирает Яндекс позже. Решения: (1)
-  `sync.region_bboxes` — карта регион→bbox (дефолт СФО, env
-  `SYNC_REGION_BBOX` точечно): overpass-сбор региона берёт его bbox, а не
-  молчаливый глобальный bbox пилота (инцидент: «Республика Алтай» со
-  статическим bbox Кузбасса); fallback без карты — Warn в лог. (2)
-  `Adapter.StationsInBBox` — float-контракт `OverpassBBoxProvider`, без
-  привязки geocoder к типам адаптера. (3) Времена — по-прежнему монополия
-  Яндекса (§1.2): OSM даёт топологию+геометрию+identity, staging
-  awaiting_times — место встречи двух источников. (4) Терминология квот
-  не менялась: bbox-запрос жжёт ту же квоту `osm`. (5) Инцидент job 53
-  (2026-09-12, «context deadline exceeded» без следов сети): вызовы шли с
-  `quotaLimit=0` — INSERT `quota_limit=0` ломает `api_quotas_quota_limit_check`
-  (квота >0), а любая ошибка/отказ квоты маскировалась голым
-  `context.DeadlineExceeded`. Фикс: провайдеры collect-путей строятся с
-  `store.DefaultQuotaLimit`; ошибки квоты явные (`429 quota exhausted … /
-  quota: …`, обёрнутая причина), воркер логирует `job failed/dead`.
-  Регио-маршруты идут через `CachedRoutesProvider.FetchAllRouteRelations`
-  (cache+quota), сырой адаптер из sync убран. (6) Инцидент job 53,
-  попытка 7 (SQLSTATE 22021 «invalid byte sequence UTF8 0xd0»): регион
-  трипа вычислялся `routeReg[:2]` — слайс по байтам; для кириллических
-  ref OSM («1к», «3к») это рвёт UTF-8, для остальных годами писал мусор
-  в `staging_trips.region`/`route_regions` (первые буквы имён яндекс-
-  маршрутов «К»/«Б», номера маршрутов «10»/«13»). Удалён; регион трипа
-  (`StagedTrip.Region`/`PromotableTrip.Region`) теперь первый непустой
-  `FlatStop.Region` источника (настоящее название, «Республика Алтай»).
-  Тесты:
-  `TestCachedStationsProviderBBox*` (кэш-хит без квоты, вежливый отказ,
-  no-inner), `TestRunCollectOverpassSkeletonPromotes`,
-  `TestFlattenOverpassRoute/TooFewStops`, `TestAttachUntimedTripAwaitsTimes`
-  (безвременный трип: matched-стопы + awaiting_times, не dead),
-  `TestRegionBBox/EnvOverride`, integration `TestCollectEndpoints` (+routes),
-  `TestCachedStationsProviderQuotaErrorExplicit` (ошибка квоты не
-  маскируется под deadline; фиксы инцидента job 53),
-  `TestCachedRoutesProviderBBoxQuota` (регио-маршруты через cache+quota,
-  без ref-фильтра, кэш-хит не жжёт квоту),
-  `TestStagedTripRegionFromStops` (кириллический ref «1к»: регион из
-  стопов, персист не падает на битом UTF-8).
-  UI: кнопка «Overpass: терминалы + маршруты (без расписания)», подсказка
-  при overpass+offline, `stations=overpass` в collect/trips берёт bbox
-  региона.
-- **O-7. Gap-fill в `skeleton-sync`.** После join: непарные Yandex + unmatched
-  стопы реестра → `StationsAround` по их координатам → кандидаты в пул
-  верификации `ScorePair` (первый verified побеждает). Флаги `--overpass-max`
-  (дефолт 200) и `--no-overpass`. Готово: dry-run показывает число добора.
-- **O-8. Hub-цепочка.** Fallback привязки: локально → Yandex-дамп → Nominatim →
-  Overpass (структурный поиск `highway=bus_station` + имя); разовая проверка
-  Кемерово/Новокузнецк/Томск/Толмачёво с сохранением в объекте (OVERRIDES
-  заменяются цепочкой); bbox на запад ~82.0 (конфиг `sync.bbox`). Готово: хабы
-  привязаны, цепочка задокументирована.
-- **O-9. Вторая пара глаз.** Кандидат из Overpass — в пул `duplicate_ambiguous`
-  вместо третьего перебора тех же дампов. `Join` теперь детектор `duplicate_ambiguous`
-  (`gap < Ambiguity=0.05` и `score >= threshold - margin` с 2+ кандидатами):
-  сомнительный match уходит в `DuplicateAmbiguous` (а не в `Canon`), второй
-  кандидат — в `Unverified`. Golden `TestJoinDuplicateAmbiguous`: два Яндекс-кандидата
-  с nameSim 1.0 и 0.9 на одинаковом расстоянии → gap 0.045 < 0.05 → ambiguous.
-- **O-10. Yandex-only с координатами — в канон.** Правило существования §1.2
-  смягчается: Yandex-only с координатами принимается с `confidence=0.4` + provenance
-  (`provenanceSources` через `IdentityOnly` → только yandex-system), вместо review.
-  Без координат — всё ещё `review_queue{skeleton_unverified}`. Реализация:
-  `PromoteSkeletonChunk` роутит `Unverified` с координатами → `promoteJoined` с
-  `Score=0.4, Enrichment=IdentityOnly`; без координат — `reviewUnverified`.
-  `TestPromoteSkeletonChunkYandexOnlyWithCoords`: 2 unverified (с/без координат) →
-  1 written + 1 review.
+- O-1–O-4: каркас пакета, регистрация в `geocoder` (`GeocodeCandidates`;
+  `Reverse` — явная ошибка, reverse за Nominatim), парсер ответа →
+  `model.AdaptedRecord`, `StationsAround` через cache+quota
+  (`overpass:around:*`, квота `osm`, пейсер ≥1.2с).
+- O-5: `FetchRouteRelations` (QL route + рекурсия `>>`) + мост `FetchRoutes`
+  через `CachedRoutesProvider` (`overpass:route:<ref>[:bbox]`); точечный
+  `FetchRoute(relationID)` точнее ref-поиска. Парсер сохраняет порядок членов,
+  наполняет координаты (`node` — точка, `way`/platform — центроид), строит
+  `Geometry`-полилинию (склейка/разворот/конкатенация разрывов).
+  Времена — монополия Яндекса; связка stop_osm_id ↔ yandex_code — через ScorePair.
+- O-6: `scripts/overpass-collect.sh` (пейсер 1.2с, fallback на зеркало, resume);
+  сырьё — в gitignored `data/overpass/`.
+- O-7: gap-fill в `skeleton-sync` — непарные Yandex + unmatched стопы →
+  `StationsAround` → пул `ScorePair` (флаги `--overpass-max`/`--no-overpass`).
+- O-8: hub-цепочка привязки локально → Yandex-дамп → Nominatim → Overpass.
+- O-9: Overpass как источник терминалов и маршрутов (issue #12):
+  `POST /api/v1/collect/routes` → job `kind=routes` → станции bbox региона
+  (`StationsInBBox`, ключ `overpass:bbox:<...>`) → чанковый промоут
+  unverified-терминалов (IdentityOnly 0.4) → route-relations bbox →
+  flat-рейсы без времён → attach → staging `awaiting_times` (топология ждёт
+  времена Яндекса). `sync.region_bboxes` — карта регион→bbox (дефолт СФО);
+  регион трипа — первый непустой `FlatStop.Region` (байт-слайсы кириллицы
+  запрещены — рвали UTF-8); ошибки квоты явные (429, не маскируются под
+  deadline); провайдеры collect-путей строятся с `store.DefaultQuotaLimit`.
+- Детектор `duplicate_ambiguous` в `Join` (`gap < Ambiguity`, 2+ кандидата).
+- O-10: Yandex-only с координатами → канон (confidence 0.4, IdentityOnly);
+  без координат → `review_queue{skeleton_unverified}`.
 
-### S. Settlement-backfill (Yandex-first: сначала бесплатно, потом квота)
+### S. Settlement-backfill (done)
 
-- **S-1. Офлайн-матч (0 квоты).** Сопоставление 1982 терминалов с поселениями
-  Yandex-дампа по имени → `terminal_tags['settlement']` только где пусто.
-  Готово: метрика `tags->>'settlement' <> ''`: 205 → **>1500**.
-- **S-2. Остаток — Nominatim.** `ReverseSettlement` по остатку (квота+кэш,
-  пейсинг). Готово: dry-run attach, settlement-матчи кратно выросли от базы 7.
-- **S-3. Rural-класс.** Переключатель rural-класса для минтранса только после
-  S-1–S-2 (без backfill даёт +7 стопов — замерено, вхолостую не тратить).
-  Готово: dry-run verified-rate до/после.
-- **S-4. Метод gate.** Замер выполнен CI-тестом `TestGateMethodSoftVsVerified`
-  (`CompareGateMethods` в `calibrate.go`; сценарии full/noisy-555м/empty).
-  Результаты: инвариант `verified-rate ≤ soft-rate` подтверждён на всех
-  сценариях (verified ⊂ soft — каждый verified-стоп проходит и soft-порог);
-  на зашумлённом индексе (+555м) soft держит 1.0 (гео-фича в полосе порога),
-  verified честно падает в 0.0 (hard-guard режет сдвинутую геометрию).
-  **Решение:** coverage-gate меряет **soft-rate** (есть ли кандидат вообще —
-  сигнал расширять скелет), attach-движок продолжает требовать **verified**
-  (двухуровневая дамба). Расхождение осей на регионе — стопы «кандидат есть,
-  но не верифицируется» — зона operator-флоу §5.4 (интерполяция/подтверждение),
-  а не причина блокировать или форсировать attach. `sync.coverage_gate`
-  (soft-порог) и `verification.*` (verified-порог) калибруются независимо.
+- S-1–S-3: офлайн-матч поселений Yandex-дампа (0 квоты) → остаток Nominatim
+  reverse → только после backfill включается rural-класс.
+- S-4: gate меряет **soft-rate**, attach требует **verified** (инвариант
+  `verified-rate ≤ soft-rate` в CI-тесте `TestGateMethodSoftVsVerified`).
+  `sync.coverage_gate` и `verification.*` калибруются независимо.
 
-### C. Two-tier attach (после O+S)
+### C. Two-tier attach (done)
 
-- **C-1. Флаг `is_provisional`.** `stop_times.is_provisional bool DEFAULT false`;
-  6 точек выполнены: DDL (миграция на scratch-схеме — 0 ошибок), `StopTimeRow.IsProvisional`
-  (+`MatchedStopTime.IsProvisional`, `model.StopTime.IsProvisional`), pool/tx
-  `UpsertStopTime` (INSERT + ON CONFLICT UPDATE), memory (структура целиком),
-  движок attach (`matchStops`: `IsProvisional = !terms[idx].GeomFinalized` — identity_only
-  терминал → provisional stop_time; тест `TestMatchStopsProvisionalFlag`),
-  `LoadNetwork` postgres/memory (SELECT `is_provisional` → модель) + CSA-ветка
-  (`Network.ProvisionalStops` в `BuildIndexes`; `relax` не выходит пешком из
-  provisional и не входит в provisional — посадка/высадка поездом да, пересадки нет;
-  тест `TestPlanProvisionalStopNoTransfer`). `pickup_type/drop_off_type` не тронуты
-  (чужая GTFS-семантика).
-- **C-2. Валидаторы на склейке.** Монотонность/скорость проверяются на новой
-  форме входа (порядок стопов из Overpass × времена из Яндекса) — явный тест,
-  что hard-валидаторы корректны именно на ней (писались под другую структуру).
-  `rejected`-промежуток → промоут рейса без этого стопа (решение). Готово: тест
-  склейки зелёный.
-  **Реализовано (2026-09-10):** `internal/sync/trips_glued_test.go` — форма
-  «порядок из `AdaptedTripData.Stops` (O-5) × времена winner-источника на весь
-  трип (§3.13)»: (a) убывающее время по relation-порядку → dead non-monotonic;
-  (b) overspeed на финализированной геометрии обоих концов → dead; (c) тот же
-  перегон при `GeomFinalized=false` конце → soft needs_review, не dead (guard
-  §5.1); (d) интерполированный конец + завышенная скорость → review (кейс
-  golden_trips.json на склеенной форме); полный проход `AttachTrips` —
-  Overpass-порядок сохраняется в seq, exclusivity тёзку не дублирует.
-- **C-3. Реран attach.** Полный цикл до первых promoted + конвергенция ресинка.
-  Готово: promoted > 0, ресинк без dupes.
-  **Реализовано (2026-09-10):** живой прогон на scratch-БД (миграция с 0 ошибок
-  с `provenance.channel`): скелет Кузбасса (bbox дефолт, 5755 written/26
-  review, offline) → attach `reestr42.geo.json`: **run1 179 promoted** (full_rate
-  0.46, 779 stop_times, 212 staged, provenance route+trip пишется с channel
-  `local_file`, gate-запрос руками 0 нарушителей) → **run2 167 promoted + 12
-  tombstoned** (честный дифф: персист run1 добавил `terminal_identifiers` →
-  код-кандидаты изменили greedy-exclusivity исходы, единичная эволюция после
-  накопления кодов Фазы 4.5) → **run3 = run4: 167/224/0/0, dupes 0, churn-алерт
-  молчит** — конвергенция. Scratch-БД дропнута после проверки.
+- C-1: `stop_times.is_provisional` — identity_only-терминал → provisional
+  stop_time; CSA не делает пеших пересадок через provisional
+  (посадка/высадка — да).
+- C-2: hard-валидаторы доказаны на склеенной форме «порядок Overpass × времена
+  winner-источника» (`trips_glued_test.go`): убывание → dead; overspeed на
+  финализированной геометрии → dead; на нефинализированной/интерполированной →
+  review.
+- C-3: полный цикл до promoted + конвергенция ресинка доказаны живым прогоном.
 
-### D. Entity-resolution пробелы attach-пайплайна (по итогам внешнего ревью, принято)
+### D. Entity-resolution пробелы attach (done, по внешнему ревью)
 
-Ревью сопоставило attach-пайплайн с эталонным record-linkage (normalize →
-block → score → assign → threshold → persist). Архитектура подтверждена
-(GTFS-схема, multi-feature score, три зоны confidence), вскрыты структурные
-пробелы на масштабе РФ. Причины возникновения задокументированы, порядок
-фиксации — по рычагу/дешевизне. Каждый блок — независимо проверяемый дифф
-(`gofmt` + `go vet` + `make test`).
-
-- **D-1. Blocking в `matchStops` (пробел №1 ревью) — выполнено.** `internal/sync/trips_match_index.go`
-  `matchIndex`: гео-ячейки 0.5° + соседи ±1, пул стопа = гео-окно ∪ код-совпадения ∪
-  бескординатные терминалы (код-матч проходит гео-окно — golden «тёзка за 79 км»
-  держит, голый `Nearest` отвергнут при дизайне). Индекс hoist per-run (`AttachTrips`
-  строит один раз, не per-trip). Тест `TestMatchIndexBlocking`: далёкий без кода —
-  не кандидат, далёкий с кодом — кандидат, no-coords стоп — только no-coords пул.
-- **D-2. Greedy exclusivity внутри рейса (пробел №2 ревью) — выполнено.**
-  `used` по terminalID в `matchStops`: занятый терминал недоступен следующим
-  позициям рейса; кольцевой возврат на терминал первого стопа на последней
-  позиции — легитимен (§5.1), 2-позиционные дубликаты — нет. Тесты
-  `TestMatchStopsExclusivityWithinTrip` (тёзка → unmatched, не дубль) +
-  `TestMatchStopsCircularRouteAllowed` (кольцо через другой терминал цело).
-- **D-3. Backbone-промоушен (пробел №3 ревью) — выполнено.** Трип с verified-концами
-  и дырками в середине промоутится без непроверенных стопов (доля verified ≥ 2/3,
-  минимум 2 стопа) — all-or-nothing снят; концы строгие (без них — staging целиком).
-  **Ревизия межгорода (2026-09-11):** если оба конечных стопа нитки заматчены
-  (verified первый и последний), трип промоутится с mid_gaps независимо от доли —
-  перегоны через пропуск уже валидируются на эффективных соседях; кейс «Юрга—Кемерово»
-  2/16 стопов больше не skeleton_gap.
-  Перегоны через пропуск валидируются на эффективных соседях (`checkSpeeds` на
-  collapsed — склеенный перегон считается честно, overspeed ловится; закреплено
-  `TestBackboneGapSpeedOnEffectiveNeighbors`). Счётчики `mid_gaps`/`gapped_promoted`
-  в отчёте — вход для KPI «% полных рейсов» и операторского добора середины (§5.4).
-- **D-4. Трассируемость матчинга (пробел №4 ревью) — выполнено.**
-  `stop_times.match_score real` + `match_method text CHECK IN ('code','scorepair')`
-  (аддитивно в `001_initial.sql`, миграция scratch-схемы — 0 ошибок);
-  `MatchedStopTime.MatchScore/MatchMethod` из `matchStops` (code при код-матче),
-  персист в `persistPromotedTrip` через `StopTimeRow.MatchScore(*float64)/MatchMethod`,
-  round-trip `TestPersistMatchScoreMethodRoundTrip`. Вход для §8 FP-аудита
-  (выборка маргинальных матчей) сохранён.
-- **D-5. Единая формула скоринга (дубль ревью) — выполнено.** Общее тело
-  `scorePairBody(a, b, cfg, nameSimFn)`: `PairScore` — прямой namesim,
-  `JoinPager.pairScoreCached` — мемоизированная обёртка. `Join()` не удалён —
-  живой потребитель `legacy_match.go` (вход 1×N, blocking там бессмыслен).
-  Existing-тесты зелёные без правки ожиданий.
-- **D-6 (backlog, не этой фазой).** Sequence-context как активный сигнал
-  disambiguation (направление рейса — tie-break при ambiguity с
-  подтверждёнными соседями); McRAPTOR вместо эвристики Парето-альтернатив
-  (`paretoAlternatives` — сэмплинг, не полный фронт). Зафиксировано, не
-  блокер текущей фазы.
+- D-1: blocking в `matchStops` (`trips_match_index.go`: гео-окно ∪ код-совпадения ∪
+  no-coords, hoist per-run).
+- D-2: greedy exclusivity внутри рейса (кольцевой возврат на первый терминал
+  легитимен, 2-позиционные дубли — нет).
+- D-3: backbone-промоушен — verified-концы + дырки в середине (≥2/3 verified);
+  **ревизия межгорода:** оба конечных стопа verified → промоут с mid_gaps
+  независимо от доли; скорости на эффективных соседях.
+- D-4: `stop_times.match_score/match_method` — трассируемость attach→персист
+  (вход FP-аудита §8).
+- D-5: единая формула `scorePairBody` (`Join()` жив для `legacy_match`).
+- D-6 (backlog): sequence-context tie-break; McRAPTOR вместо эвристики
+  Парето-альтернатив.
 
 ## 11. Фаза 7. Качество, тесты, наблюдаемость (backlog, по итогам ревью 2026-09-15)
 
