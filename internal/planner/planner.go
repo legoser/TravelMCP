@@ -81,8 +81,8 @@ func NewWithConfig(metrics *telemetry.Metrics, engine string, logger *slog.Logge
 	return &Planner{metrics: metrics, engine: engine, logger: logger, sem: sem, altWindowMin: 360, altStepMin: 60}
 }
 
-// WithAlternatives — окно и шаг альтернативных отправлений Парето-эвристики
-// (мин). Невалидные значения игнорируются, остаются дефолты 360/60.
+// WithAlternatives — Pareto-heuristic alternate-departure window and step
+// (minutes). Invalid values are ignored, defaults 360/60 stay.
 func (p *Planner) WithAlternatives(windowMin, stepMin int) *Planner {
 	if windowMin > 0 && stepMin > 0 && stepMin <= windowMin {
 		p.altWindowMin = windowMin

@@ -179,8 +179,18 @@ Backlog (не Фаза 7): D-6 sequence-context tie-break; McRAPTOR вместо
 
 Зафиксирована в `14-plan.md` §11. Done: 7.2 (санитизация секретных логов,
 allow-list redact), 7.3 частично (race-тесты квоты/воркера/singleflight,
-`make unit` с `-race` зелёный). Осталось: декомпозиция
-`server.go`/`sync`/`config`, минимальные тесты
-`adapters/store/server/middleware`, `test/common`, единый
-`BehavioralParams`, `check-layers` в CI; комментарии — только английские
+`make unit` с `-race` зелёный). Done 2026-09-15 (вторая волна): CI-gate
+`.forgejo/workflows/ci.yaml` (fmt/vet/unit/check-layers/check-deprecated/
+doc-lint + integration на postgis + tools-модуль); контракт листинга
+`test/common/browser_contract.go` (memory+postgres: clamp страниц, tiebreak
+имени, LIKE-escape `%`/`_`, injection-строки); краевые `find_route`
+(таблица 14→25 кейсов), `adminLimitOffset`, hard/soft-валидаторов
+(секундное разрешение скорости), импортов (overnight-развёртка реестра,
+single-time pairing, frequency-only, контракт датасета, `SkippedStopTimes`);
+минимальные краевые `httpx/timeutil/classifier/jobs.Backoff/nominatim/osm`.
+Частично 7.4: `yandex.rasp_quota_limit` и `planner.alt_window/step_minutes`
+читаются из конфига. Трек Г: stale закрывается expiry (incl. `NULL
+last_attempt_at`); McRAPTOR и demand-driven — backlog отдельными фазами.
+Осталось: декомпозиция `server.go`/`sync`/`config`, полный `BehavioralParams`,
+сценарии `test/common` для smoke-паритета; комментарии — только английские
 в файлах, тронутых текущей задачей.

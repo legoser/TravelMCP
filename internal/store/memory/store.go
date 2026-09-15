@@ -17,7 +17,7 @@ import (
 	"travelmcp/internal/support/classifier"
 )
 
-// Deprecated: MemoryStore для unit-тестов, не для продакшена. Используйте PostgresStore.
+// Deprecated: MemoryStore is for unit tests, not production. Use PostgresStore.
 
 type CityRow = store.CityRow
 type StationRow = store.StationRow

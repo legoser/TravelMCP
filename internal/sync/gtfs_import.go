@@ -48,9 +48,9 @@ type GtfsImportStats struct {
 	StopTimes   int `json:"stop_times"`
 	Frequencies int `json:"frequencies"`
 	Exceptions  int `json:"exceptions"`
-	// SkippedStopTimes — строки stop_times с висячими ссылками
-	// (неизвестный trip/stop): отброшены, не попали в канон (§5.2:
-	// баланс строк обязан сходиться без молчаливых потерь).
+	// SkippedStopTimes — stop_times rows with dangling references
+	// (unknown trip/stop): dropped, never reached the canon (§5.2:
+	// row balance must reconcile with no silent losses).
 	SkippedStopTimes int   `json:"skipped_stop_times"`
 	ElapsedMs        int64 `json:"elapsed_ms"`
 }

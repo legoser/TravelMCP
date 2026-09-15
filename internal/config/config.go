@@ -95,9 +95,9 @@ type Planner struct {
 	// FlightCheckInMinutes — стыковка с авиарейсом (issue #12):
 	// регистрация/посадка/дорога до аэропорта.
 	FlightCheckInMinutes int `yaml:"flight_check_in_minutes"`
-	// AltWindowMinutes/AltStepMinutes — окно и шаг альтернативных
-	// отправлений Парето-эвристики планировщика (до McRAPTOR): окно 360
-	// шагом 60 = до 6 доп. прогонов на запрос.
+	// AltWindowMinutes/AltStepMinutes — planner Pareto-heuristic
+	// alternate-departure window and step (pre-McRAPTOR): 360 by 60
+	// means up to 6 extra runs per request.
 	AltWindowMinutes int `yaml:"alt_window_minutes"`
 	AltStepMinutes   int `yaml:"alt_step_minutes"`
 }

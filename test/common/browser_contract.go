@@ -8,8 +8,8 @@ import (
 	store "travelmcp/internal/store"
 )
 
-// BrowserSeeder — минимальный write-поверх для сида краевых фикстур.
-// Реализуют оба бэкенда (memory/postgres): один контракт гоняется везде.
+// BrowserSeeder — minimal write surface for seeding edge fixtures.
+// Implemented by both backends (memory/postgres): one contract runs everywhere.
 type BrowserSeeder interface {
 	store.BrowserStore
 	UpsertTerminal(ctx context.Context, r store.TerminalRow, names map[string]string, identifiers []model.AdaptedIdentifier) (int64, error)
@@ -36,9 +36,9 @@ func seedBrowserEdge(t *testing.T, s BrowserSeeder) {
 	}
 }
 
-// RunBrowserEdgeContract — краевые случаи листинга, общие для memory/postgres:
-// пагинация, сортировка, injection-строки, LIKE-метасимволы. Сид изолирован
-// префиксом edgePrefix: чужие данные в БД на проверки не влияют.
+// RunBrowserEdgeContract — listing edge cases shared by memory/postgres:
+// pagination, sorting, injection strings, LIKE metacharacters. The seed is
+// isolated by the edgePrefix: foreign rows in the DB do not affect checks.
 func RunBrowserEdgeContract(t *testing.T, s BrowserSeeder) {
 	t.Helper()
 	ctx := context.Background()
