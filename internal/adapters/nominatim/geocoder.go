@@ -102,8 +102,11 @@ func (g *Geocoder) GeocodeCandidates(ctx context.Context, query string, limit in
 	}
 	var out []geocoder.Candidate
 	for _, d := range data {
-		lat, _ := strconv.ParseFloat(d.Lat, 64)
-		lon, _ := strconv.ParseFloat(d.Lon, 64)
+		lat, errLat := strconv.ParseFloat(d.Lat, 64)
+		lon, errLon := strconv.ParseFloat(d.Lon, 64)
+		if errLat != nil || errLon != nil {
+			continue
+		}
 		name := d.Name
 		if name == "" {
 			name = d.DisplayName
