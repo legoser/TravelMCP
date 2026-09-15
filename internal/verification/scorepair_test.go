@@ -138,3 +138,35 @@ func TestDecisionReviewReason(t *testing.T) {
 		t.Fatal("duplicate_ambiguous mapping broken")
 	}
 }
+
+// Заимствованная геометрия (CoordsBorrowed) скопирована георезолвом с
+// терминала-кандидата: dist=0 с донором — тавтология, а не независимое
+// доказательство. Dist-guard для неё не срабатывает; verified возможен
+// только через независимые признаки (код или settlement-ветка).
+func TestBorrowedGeomFailsDistGuard(t *testing.T) {
+	p := testParams()
+	a := PairItem{Name: "Варюхино", Lat: ptr(53.95), Lon: ptr(84.94), Source: "yandex", CoordsBorrowed: true}
+	b := PairItem{Name: "Бардино", Lat: ptr(53.95), Lon: ptr(84.94), Source: "osm"}
+	s := ScorePair(a, b, model.DensityRural, p)
+	if s.GuardOK {
+		t.Fatalf("borrowed dist=0 must not pass guard: %+v", s)
+	}
+	_, d, _ := MatchStopToTerminal(a, []PairItem{b}, model.DensityRural, p)
+	if d == DecisionVerified {
+		t.Fatalf("borrowed geom match must not verify: %v", d)
+	}
+	// code-match остаётся независимым доказательством даже при borrowed
+	ca := PairItem{Name: "Варюхино", Source: "yandex", CoordsBorrowed: true,
+		Codes: []model.AdaptedIdentifier{{System: "yandex", CodeType: "yandex_code", Code: "999"}}}
+	cb := PairItem{Name: "Варюхино-станция", Lat: ptr(53.9), Lon: ptr(84.9), Source: "osm",
+		Codes: []model.AdaptedIdentifier{{System: "yandex", CodeType: "yandex_code", Code: "999"}}}
+	if _, d, _ := MatchStopToTerminal(ca, []PairItem{cb}, model.DensityUrban, p); d != DecisionVerified {
+		t.Fatalf("code match must stay independent of borrowed geom: %v", d)
+	}
+	// независимая геометрия по-прежнему проходит guard (регресс Fix #2)
+	ia := PairItem{Name: "Кемерово автовокзал", Lat: ptr(55.34), Lon: ptr(86.06), Settlement: "кемерово", Source: "gov-registry"}
+	ib := PairItem{Name: "Кемерово автовокзал", Lat: ptr(55.34), Lon: ptr(86.06), Settlement: "кемерово", Source: "osm"}
+	if _, d, _ := MatchStopToTerminal(ia, []PairItem{ib}, model.DensityUrban, p); d != DecisionVerified {
+		t.Fatalf("independent geom must still verify: %v", d)
+	}
+}

@@ -222,7 +222,7 @@ func missingEndpoints(trips []model.FlatTrip, terms []AttachTerminal, idx *match
 			for _, ti := range pool {
 				cands = append(cands, PairItemFromTerminal(terms[ti]))
 			}
-			stop := PairItemFromStop(s.Name, s.Lat, s.Lon, "", "yandex", s.Codes)
+			stop := PairItemFromStop(s.Name, s.Lat, s.Lon, "", "yandex", s.Codes, s.CoordsBorrowed)
 			_, d, _ := verification.MatchStopToTerminal(stop, cands, classFor(""), params)
 			if d != verification.DecisionVerified {
 				out = append(out, s)

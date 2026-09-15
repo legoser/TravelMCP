@@ -14,6 +14,8 @@ type RegistryStop struct {
 	Settlement string
 	Codes      []model.AdaptedIdentifier
 	Lat, Lon   *float64
+	// CoordsBorrowed — геометрия заимствована георезолвом (см. model.FlatStop).
+	CoordsBorrowed bool
 }
 
 type RegionCoverage struct {

@@ -45,7 +45,7 @@ func bestAttachScores(
 	}
 	best := make([]float64, 0, len(stops))
 	for _, stop := range stops {
-		item := PairItemFromStop(stop.Name, stop.Lat, stop.Lon, stop.Settlement, source, stop.Codes)
+		item := PairItemFromStop(stop.Name, stop.Lat, stop.Lon, stop.Settlement, source, stop.Codes, stop.CoordsBorrowed)
 		class := classFor(stop.Region)
 		top := 0.0
 		for _, cand := range cands {
@@ -186,7 +186,7 @@ func CompareGateMethods(
 			order = append(order, stop.Region)
 		}
 		r.Total++
-		item := PairItemFromStop(stop.Name, stop.Lat, stop.Lon, stop.Settlement, source, stop.Codes)
+		item := PairItemFromStop(stop.Name, stop.Lat, stop.Lon, stop.Settlement, source, stop.Codes, stop.CoordsBorrowed)
 		class := classFor(stop.Region)
 		best := 0.0
 		for _, cand := range cands {

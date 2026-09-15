@@ -48,6 +48,10 @@ type PairItem struct {
 	Settlement string
 	Codes      []model.AdaptedIdentifier
 	Source     string
+	// CoordsBorrowed — геометрия пункта заимствована от терминала-кандидата
+	// (георезолв стопа), а не наблюдена источником независимо: dist=0 с
+	// терминалом-донором не доказывает совпадение объектов.
+	CoordsBorrowed bool
 }
 
 type Params struct {
@@ -271,9 +275,14 @@ func ScorePair(a, b PairItem, class model.DensityClass, p Params) PairScore {
 		}
 	}
 	v := t * weighted
+	geomBorrowed := a.CoordsBorrowed || b.CoordsBorrowed
 	guard := false
 	switch {
-	case hasGeom && dist <= p.GeoThresholdM:
+	case hasGeom && !geomBorrowed && dist <= p.GeoThresholdM:
+		// Заимствованная геометрия (CoordsBorrowed) не проходит
+		// dist-guard: она скопирована с терминала-кандидата при
+		// георезолве, и dist=0 — тавтология, не свидетельство.
+		// Независимая верификация — settlement-признак (ветка ниже).
 		guard = true
 	case isNonUrban(class) && nameSim >= nonUrbanNameGate && hasSettle && settle == 1 && t >= 1:
 		guard = true

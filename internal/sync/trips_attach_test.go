@@ -470,3 +470,43 @@ func TestParseTripReviewFingerprint(t *testing.T) {
 		}
 	}
 }
+
+// Зигзаг-баг Кемерово—Томск: промежуточный стоп без своих координат
+// получил геометрию тёзки-терминала чужого региона через георезолв
+// (CoordsBorrowed), затем attach «верифицировал» его dist=0 на того же
+// донора — self-fulfilling match. С Fix #2 borrowed-геометрия не
+// проходит dist-guard: промоут без зигзага, стоп — в mid_gap.
+func TestAttachBorrowedCoordsNoSelfVerify(t *testing.T) {
+	latK, lonK := 55.34, 86.06 // Кемерово
+	latT, lonT := 56.49, 84.95 // Томск
+	latB, lonB := 53.95, 84.94 // «Бардино», Алтайский край — чужой регион
+	terms := []AttachTerminal{
+		{ID: 1, Name: "Кемерово, автовокзал", Lat: &latK, Lon: &lonK, Settlement: "кемерово", Transport: "bus", Source: "osm", GeomFinalized: true},
+		{ID: 2, Name: "Томск, автовокзал", Lat: &latT, Lon: &lonT, Settlement: "томск", Transport: "bus", Source: "osm", GeomFinalized: true},
+		{ID: 3, Name: "Бардино", Lat: &latB, Lon: &lonB, Settlement: "", Transport: "bus", Source: "osm", GeomFinalized: false},
+	}
+	trips := []model.FlatTrip{{
+		RouteReg: "42.70.032", Direction: "forward", ServiceID: 1, Period: "winter",
+		Stops: []model.FlatStop{
+			{StopID: "a", Name: "Кемерово, автовокзал", Region: "42", Lat: &latK, Lon: &lonK, ArrMin: intPtr(600), DepMin: intPtr(600)},
+			// стоп с заимствованными координатами Бардино
+			{StopID: "mid", Name: "Варюхино", Region: "42", Lat: &latB, Lon: &lonB, CoordsBorrowed: true, ArrMin: intPtr(700), DepMin: intPtr(700)},
+			{StopID: "c", Name: "Томск, автовокзал", Region: "70", Lat: &latT, Lon: &lonT, ArrMin: intPtr(870), DepMin: intPtr(870)},
+		},
+	}}
+	rep, err := AttachTrips(context.Background(), baseInput(trips, terms))
+	if err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	if len(rep.Promoted) != 1 {
+		t.Fatalf("концы обязаны промоутиться (backbone): promoted=%d staged=%+v", len(rep.Promoted), rep.Staged)
+	}
+	for _, st := range rep.Promoted[0].StopTimes {
+		if st.TerminalID == 3 {
+			t.Fatalf("заимствованный стоп не должен верифицироваться на донора: %+v", rep.Promoted[0].StopTimes)
+		}
+	}
+	if rep.MidGaps != 1 {
+		t.Fatalf("стоп с borrowed-геометрией обязан уйти в mid_gap (не в зигзаг): mid_gaps=%d", rep.MidGaps)
+	}
+}

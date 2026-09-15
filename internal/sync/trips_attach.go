@@ -371,10 +371,11 @@ func PairItemFromTerminal(t AttachTerminal) verification.PairItem {
 	}
 }
 
-func PairItemFromStop(name string, lat, lon *float64, settlement, source string, codes []model.AdaptedIdentifier) verification.PairItem {
+func PairItemFromStop(name string, lat, lon *float64, settlement, source string, codes []model.AdaptedIdentifier, coordsBorrowed bool) verification.PairItem {
 	return verification.PairItem{
 		Name: name, Lat: lat, Lon: lon,
 		Settlement: settlement, Source: source, Codes: codes,
+		CoordsBorrowed: coordsBorrowed,
 	}
 }
 
@@ -389,7 +390,7 @@ func matchStops(ft model.FlatTrip, idx *matchIndex, source string, classFor func
 	lastStop := len(ft.Stops) - 1
 	for seq, s := range ft.Stops {
 		pairCodes := s.Codes
-		stop := PairItemFromStop(s.Name, s.Lat, s.Lon, namesim.ExtractSettlement(s.Name), source, pairCodes)
+		stop := PairItemFromStop(s.Name, s.Lat, s.Lon, namesim.ExtractSettlement(s.Name), source, pairCodes, s.CoordsBorrowed)
 		class := classFor(s.Region)
 		params := paramsFor(class)
 

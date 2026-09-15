@@ -146,6 +146,7 @@ func RegistryStopsFromFlatTrips(trips []model.FlatTrip) []RegistryStop {
 				Settlement: namesim.ExtractSettlement(s.Name),
 				Codes:      s.Codes,
 				Lat:        s.Lat, Lon: s.Lon,
+				CoordsBorrowed: s.CoordsBorrowed,
 			})
 		}
 	}

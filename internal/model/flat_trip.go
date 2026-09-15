@@ -13,8 +13,13 @@ type FlatStop struct {
 	Codes  []AdaptedIdentifier `json:"codes,omitempty"`
 	Lat    *float64            `json:"lat,omitempty"`
 	Lon    *float64            `json:"lon,omitempty"`
-	ArrMin *int                `json:"arr_min,omitempty"`
-	DepMin *int                `json:"dep_min,omitempty"`
+	// CoordsBorrowed — координаты назначены георезолвом от сматченного
+	// терминала скелета, а не наблюдением источника: совпадение с
+	// терминалом-донором (dist=0) не является независимым доказательством
+	// при верификации (см. verification.ScorePair).
+	CoordsBorrowed bool `json:"coords_borrowed,omitempty"`
+	ArrMin         *int `json:"arr_min,omitempty"`
+	DepMin         *int `json:"dep_min,omitempty"`
 	// IsFuzzy — время ориентировочное (нет в источнике, интерполировано
 	// по соседям при промоушене): рейс маршрутизируем, пассажиру —
 	// «время уточнять у перевозчика» (план §5.4 fallback).

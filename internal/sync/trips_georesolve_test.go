@@ -75,3 +75,64 @@ func TestResolveStopCoordsNoGuess(t *testing.T) {
 		t.Fatal("стоп без уверенного матча остаётся без координат")
 	}
 }
+
+// Безымянный стоп («Варюхино»: поселение не извлеклось) не должен
+// матчиться на глобальном пуле тёзок чужих регионов: Levenshtein-порог
+// 0.6 ловит «Бардино»/«Шпагино» из других областей (баг зигзаг-маршрутов
+// Кемерово—Томск). Только полные тёзки по Core.
+func TestResolveStopCoordsNoGlobalPoolForNamelessStop(t *testing.T) {
+	laBard, loBard := 53.95, 84.94 // «Бардино», Алтайский край
+	laVar, loVar := 55.9, 85.6     // настоящее «Варюхино» на трассе
+	terms := []AttachTerminal{
+		{ID: 1, Name: "Бардино", Lat: &laBard, Lon: &loBard, Settlement: ""},
+		{ID: 2, Name: "Варюхино", Lat: &laVar, Lon: &loVar, Settlement: ""},
+	}
+	trips := []model.FlatTrip{{
+		Stops: []model.FlatStop{
+			{StopID: "s9802572", Name: "Варюхино", Region: "42"},
+		},
+	}}
+	filled, missing := ResolveStopCoords(trips, terms, testSource)
+	if missing != 1 || filled != 1 {
+		t.Fatalf("полный тёзка обязан закрыть стоп: filled=%d missing=%d", filled, missing)
+	}
+	if trips[0].Stops[0].Lat == nil || *trips[0].Stops[0].Lat != laVar {
+		t.Fatal("координаты должны прийти от полного тёзки Варюхино, не от Бардино")
+	}
+	if !trips[0].Stops[0].CoordsBorrowed {
+		t.Fatal("заимствованная геометрия обязана помечаться CoordsBorrowed")
+	}
+	// теперь без полного тёзки в пуле: короткий топоним не должен
+	// ловиться Levenshtein-сходством на чужом регионе
+	termsNoTwin := []AttachTerminal{
+		{ID: 1, Name: "Бардино", Lat: &laBard, Lon: &loBard, Settlement: ""},
+		{ID: 2, Name: "Шпагино", Lat: &laBard, Lon: &loBard, Settlement: ""},
+	}
+	trips[0].Stops[0] = model.FlatStop{StopID: "s9802572", Name: "Варюхино", Region: "42"}
+	filled, missing = ResolveStopCoords(trips, termsNoTwin, testSource)
+	if filled != 0 || missing != 1 {
+		t.Fatalf("тёзка чужого региона не должен получать координаты: filled=%d missing=%d", filled, missing)
+	}
+	if trips[0].Stops[0].Lat != nil {
+		t.Fatal("стоп без полного тёзки остаётся без координат (skeleton_gap, не зигзаг)")
+	}
+}
+
+// Два полных тёзки без поселения — неоднозначность, координаты не выдаются.
+func TestResolveStopCoordsAmbiguousTwinsNoCoords(t *testing.T) {
+	la1, lo1 := 55.0, 85.0
+	la2, lo2 := 56.0, 86.0
+	terms := []AttachTerminal{
+		{ID: 1, Name: "Октябрьский", Lat: &la1, Lon: &lo1, Settlement: ""},
+		{ID: 2, Name: "Октябрьский", Lat: &la2, Lon: &lo2, Settlement: ""},
+	}
+	trips := []model.FlatTrip{{
+		Stops: []model.FlatStop{
+			{StopID: "s9802639", Name: "Октябрьский", Region: "42"},
+		},
+	}}
+	filled, _ := ResolveStopCoords(trips, terms, testSource)
+	if filled != 0 || trips[0].Stops[0].Lat != nil {
+		t.Fatal("два одноимённых терминала без поселения — неоднозначность, без координат")
+	}
+}

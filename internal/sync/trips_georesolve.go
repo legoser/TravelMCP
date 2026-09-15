@@ -14,10 +14,16 @@ import (
 // верифицированные координаты OSM×Yandex — это внутренний источник,
 // внешних вызовов нет, поэтому без квот. Стоп остаётся без координат,
 // если уверенного матча нет: угаданных точек не фабрикуем (§5.4).
+// Заимствованная геометрия помечается CoordsBorrowed: при верификации
+// совпадение с терминалом-донором не считается независимым доказательством.
 //
-// Матчинг консервативный: требует и имя (Sim ≥ 0.6), и совпадение
-// поселения; координаты берутся у лучшего кандидата при margin над
-// вторым ≥ 0.15 (одинокий кандидат проходит без margin).
+// Матчинг консервативный: именованный стоп требует и имя (Sim ≥ 0.6),
+// и совпадение поселения; координаты берутся у лучшего кандидата при
+// margin над вторым ≥ 0.15. Безымянный стоп (поселение не извлеклось)
+// матчится только на полных тёзок (Core) из пула без поселения —
+// глобальный name-скоринг для него запрещён: на межрегиональном
+// скелете короткие топонимы-тёзки («Варюхино»/«Бардино») ловятся
+// Levenshtein-порогом в чужих регионах.
 func ResolveStopCoords(trips []model.FlatTrip, terms []AttachTerminal, source string) (filled int, stops int) {
 	if len(terms) == 0 {
 		return 0, 0
@@ -44,6 +50,7 @@ func ResolveStopCoords(trips []model.FlatTrip, terms []AttachTerminal, source st
 				continue
 			}
 			s.Lat, s.Lon = &la, &lo
+			s.CoordsBorrowed = true
 			filled++
 		}
 	}
@@ -65,6 +72,36 @@ func resolveOne(s model.FlatStop, terms []AttachTerminal, bySettlement map[strin
 	}
 	if len(pool) == 0 {
 		return 0, 0, false
+	}
+	if settle == "" {
+		// Безымянный стоп (ExtractSettlement="") не может выйти в
+		// скоринг на глобальном пуле: на межрегиональном скелете это
+		// даёт ложный матч топонима-тёзки из чужого региона
+		// («Варюхино» ↔ «Бардино», «Опарино» ↔ «Шпагино», Sim ≥ 0.6
+		// у коротких топонимов). Только полные тёзки по Core и только
+		// при единственном кандидате — угаданных точек не фабрикуем (§5.4).
+		core := namesim.Core(s.Name)
+		if core == "" {
+			return 0, 0, false
+		}
+		best := -1
+		for _, ti := range pool {
+			if namesim.Core(terms[ti].Name) != core {
+				continue
+			}
+			if best >= 0 && terms[best].ID != terms[ti].ID {
+				return 0, 0, false
+			}
+			best = ti
+		}
+		if best < 0 || terms[best].Lat == nil || terms[best].Lon == nil {
+			return 0, 0, false
+		}
+		t := terms[best]
+		slog.Debug("trips georesolve: стоп получил координаты терминала-тёзки",
+			"stop", s.Name, "terminal", t.Name)
+		_ = source
+		return *t.Lat, *t.Lon, true
 	}
 	stopType := model.InferStopType(s.Name)
 	best := -1
