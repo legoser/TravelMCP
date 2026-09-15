@@ -87,6 +87,38 @@ func TestJobsPollIntervalEnv(t *testing.T) {
 	}
 }
 
+func TestCleanupKnobsEnv(t *testing.T) {
+	t.Setenv("SYNC_CLEANUP_INTERVAL", "12h")
+	t.Setenv("SYNC_HYGIENE_RETENTION_DAYS", "30")
+	t.Setenv("SYNC_QUOTA_HISTORY_KEEP_DAYS", "3")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Sync.CleanupInterval != "12h" {
+		t.Fatalf("cleanup_interval = %q, want 12h", cfg.Sync.CleanupInterval)
+	}
+	if cfg.Sync.HygieneRetentionDays != 30 {
+		t.Fatalf("retention = %d, want 30", cfg.Sync.HygieneRetentionDays)
+	}
+	if cfg.Sync.QuotaHistoryKeepDays != 3 {
+		t.Fatalf("keep = %d, want 3", cfg.Sync.QuotaHistoryKeepDays)
+	}
+	t.Setenv("SYNC_HYGIENE_RETENTION_DAYS", "0")
+	t.Setenv("SYNC_QUOTA_HISTORY_KEEP_DAYS", "-1")
+	cfg, err = Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Sync.HygieneRetentionDays != 90 || cfg.Sync.QuotaHistoryKeepDays != 7 {
+		t.Fatalf("invalid values must fall back to 90/7, got %d/%d",
+			cfg.Sync.HygieneRetentionDays, cfg.Sync.QuotaHistoryKeepDays)
+	}
+	if d := Defaults(); d.Sync.CleanupInterval != "24h" {
+		t.Fatalf("default cleanup_interval = %q, want 24h", d.Sync.CleanupInterval)
+	}
+}
+
 func TestEnvOverride(t *testing.T) {
 	t.Setenv("HTTP_ADDR", ":9999")
 	t.Setenv("PROVIDERS_ENABLED", "synth, gtfs")

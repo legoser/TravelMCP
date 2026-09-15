@@ -130,6 +130,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if st != nil {
+		go scheduleCleanupJobs(ctx, st, cfg, factory.For("jobs"))
+	}
+
 	errCh := make(chan error, 1)
 	go func() {
 		logger.Info("mcp-server started", "addr", cfg.HTTP.Addr, "providers", cfg.Providers.Enabled)
@@ -270,6 +274,9 @@ func newJobsWorker(st store.Store, cfg *config.Config, l *slog.Logger) *jobs.Wor
 		if cfg != nil && cfg.Sync.StagingExpiryDays > 0 {
 			days = cfg.Sync.StagingExpiryDays
 		}
+		if cfg != nil && cfg.Sync.HygieneRetentionDays > 0 {
+			retentionDays = cfg.Sync.HygieneRetentionDays
+		}
 		ex, ok := st.(syncpkg.StagingExpirer)
 		if !ok {
 			return errors.New("cleanup: стор не поддерживает staging expiry")
@@ -293,13 +300,79 @@ func newJobsWorker(st store.Store, cfg *config.Config, l *slog.Logger) *jobs.Wor
 		if cu, ok := st.(interface {
 			CleanupQuotaHistory(ctx context.Context, keepDays int) (int, error)
 		}); ok {
-			if removed, err := cu.CleanupQuotaHistory(ctx, 7); err != nil {
+			keepDays := 7
+			if cfg != nil && cfg.Sync.QuotaHistoryKeepDays > 0 {
+				keepDays = cfg.Sync.QuotaHistoryKeepDays
+			}
+			if removed, err := cu.CleanupQuotaHistory(ctx, keepDays); err != nil {
 				l.Warn("cleanup: quota history retention failed", "err", err)
 			} else if removed > 0 {
-				l.Info("cleanup: quota history retention", "removed", removed, "keep_days", 7)
+				l.Info("cleanup: quota history retention", "removed", removed, "keep_days", keepDays)
 			}
 		}
 		return nil
 	})
 	return w
+}
+
+// scheduleCleanupJobs — periodic "cleanup" job enqueue: staging expiry +
+// freshness sweep would otherwise run only on a manual admin
+// POST /api/v1/jobs. Dedup: no new job while an unfinished cleanup hangs
+// (pending/running/retry among the 50 freshest). Interval comes from
+// sync.cleanup_interval; unparseable/non-positive = manual mode only.
+func scheduleCleanupJobs(ctx context.Context, st store.Store, cfg *config.Config, l *slog.Logger) {
+	raw := "24h"
+	if cfg != nil && cfg.Sync.CleanupInterval != "" {
+		raw = cfg.Sync.CleanupInterval
+	}
+	interval, err := time.ParseDuration(raw)
+	if err != nil || interval <= 0 {
+		l.Info("cleanup scheduler disabled (manual jobs only)", "cleanup_interval", raw)
+		return
+	}
+	js, ok := st.(store.JobStore)
+	if !ok {
+		return
+	}
+	enqueue := func() {
+		jobs, err := js.ListJobs(ctx, 50)
+		if err != nil {
+			l.Warn("cleanup scheduler: list jobs failed", "err", err)
+			return
+		}
+		if cleanupPending(jobs) {
+			return
+		}
+		if _, err := js.EnqueueJob(ctx, store.JobRow{Type: "cleanup", Payload: "{}"}); err != nil {
+			l.Warn("cleanup scheduler: enqueue failed", "err", err)
+			return
+		}
+		l.Info("cleanup scheduler: cleanup job enqueued")
+	}
+	enqueue()
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			enqueue()
+		}
+	}
+}
+
+// cleanupPending — unfinished cleanup among fresh jobs: no second one
+// needed, the worker picks the hanging job up.
+func cleanupPending(jobs []store.JobRow) bool {
+	for _, j := range jobs {
+		if j.Type != "cleanup" {
+			continue
+		}
+		switch j.State {
+		case "pending", "running", "retry":
+			return true
+		}
+	}
+	return false
 }

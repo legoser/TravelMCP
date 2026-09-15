@@ -162,6 +162,15 @@ type Sync struct {
 	// JobsPollInterval — jobs-worker queue poll interval ("5s", "1m"...).
 	// Empty = 5s fallback at the call site (same convention as AttachWait).
 	JobsPollInterval string `yaml:"jobs_poll_interval"`
+	// CleanupInterval — auto-enqueue period for the "cleanup" job (staging
+	// expiry + hygiene sweep + quota retention), e.g. "24h". Unparseable or
+	// non-positive = auto-schedule disabled (admin-triggered jobs only).
+	CleanupInterval string `yaml:"cleanup_interval"`
+	// HygieneRetentionDays — attribute_state finalize/GC retention for the
+	// freshness sweep (manual edits are never touched).
+	HygieneRetentionDays int `yaml:"hygiene_retention_days"`
+	// QuotaHistoryKeepDays — api_quota history retention for cleanup.
+	QuotaHistoryKeepDays int `yaml:"quota_history_keep_days"`
 }
 
 type Config struct {

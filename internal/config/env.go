@@ -261,6 +261,19 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SYNC_JOBS_POLL_INTERVAL"); v != "" {
 		cfg.Sync.JobsPollInterval = v
 	}
+	if v := os.Getenv("SYNC_CLEANUP_INTERVAL"); v != "" {
+		cfg.Sync.CleanupInterval = v
+	}
+	if v := os.Getenv("SYNC_HYGIENE_RETENTION_DAYS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.Sync.HygieneRetentionDays = n
+		}
+	}
+	if v := os.Getenv("SYNC_QUOTA_HISTORY_KEEP_DAYS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.Sync.QuotaHistoryKeepDays = n
+		}
+	}
 	if v := os.Getenv("SYNC_SKELETON_CHUNK_SIZE"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			cfg.Sync.SkeletonChunkSize = n
@@ -471,6 +484,19 @@ func setByPath(cfg *Config, parts []string, v string) {
 		if len(parts) == 2 && parts[1] == "staging_expiry_days" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
 				cfg.Sync.StagingExpiryDays = n
+			}
+		}
+		if len(parts) == 2 && parts[1] == "cleanup_interval" {
+			cfg.Sync.CleanupInterval = v
+		}
+		if len(parts) == 2 && parts[1] == "hygiene_retention_days" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				cfg.Sync.HygieneRetentionDays = n
+			}
+		}
+		if len(parts) == 2 && parts[1] == "quota_history_keep_days" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				cfg.Sync.QuotaHistoryKeepDays = n
 			}
 		}
 		if len(parts) == 2 && parts[1] == "jobs_poll_interval" {
