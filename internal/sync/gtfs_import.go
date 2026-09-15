@@ -41,14 +41,18 @@ type GtfsImportStore interface {
 const GtfsServiceOffset = int64(10_000_000_000)
 
 type GtfsImportStats struct {
-	Stops       int   `json:"stops"`
-	Routes      int   `json:"routes"`
-	Services    int   `json:"services"`
-	Trips       int   `json:"trips"`
-	StopTimes   int   `json:"stop_times"`
-	Frequencies int   `json:"frequencies"`
-	Exceptions  int   `json:"exceptions"`
-	ElapsedMs   int64 `json:"elapsed_ms"`
+	Stops       int `json:"stops"`
+	Routes      int `json:"routes"`
+	Services    int `json:"services"`
+	Trips       int `json:"trips"`
+	StopTimes   int `json:"stop_times"`
+	Frequencies int `json:"frequencies"`
+	Exceptions  int `json:"exceptions"`
+	// SkippedStopTimes — строки stop_times с висячими ссылками
+	// (неизвестный trip/stop): отброшены, не попали в канон (§5.2:
+	// баланс строк обязан сходиться без молчаливых потерь).
+	SkippedStopTimes int   `json:"skipped_stop_times"`
+	ElapsedMs        int64 `json:"elapsed_ms"`
 }
 
 // ImportGtfsFeed — конвейер импорта: stops → services(+days/exceptions) →
@@ -427,10 +431,12 @@ func importGtfsStopTimes(ctx context.Context, st GtfsImportStore, files map[stri
 		sid := strings.TrimSpace(gtfsCol(row, idx, "stop_id"))
 		dbTrip, ok := tripIDs[tid]
 		if !ok {
+			stats.SkippedStopTimes++
 			continue
 		}
 		stopID, ok := stopIDs[sid]
 		if !ok {
+			stats.SkippedStopTimes++
 			continue
 		}
 		batch = append(batch, store.StopTimeRow{

@@ -30,6 +30,9 @@ jobs:
           go-version-file: go.mod
       - name: unit (race)
         run: make unit
+      - name: tools modules
+        run: |
+          cd tools/registry-parser && go vet ./... && go test ./... -count=1
 
   integration:
     runs-on: ubuntu-latest
