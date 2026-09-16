@@ -12,7 +12,7 @@ import (
 
 func quotaUsed(t *testing.T, ms *memory.MemoryStore, provider string) int {
 	t.Helper()
-	q, found := ms.GetQuota(context.Background(), provider, time.Now())
+	q, found := ms.GetQuota(context.Background(), provider, time.Now().UTC())
 	if !found {
 		return 0
 	}
@@ -93,10 +93,26 @@ func TestQuotaExhaustedSkipsHandler(t *testing.T) {
 func TestRefundFloor(t *testing.T) {
 	ctx := context.Background()
 	ms := memory.NewMemoryStore()
-	if err := ms.RefundQuota(ctx, "ghost"); err != nil {
+	if err := ms.RefundQuota(ctx, "ghost", time.Now().UTC()); err != nil {
 		t.Fatalf("refund without row: %v", err)
 	}
 	if got := quotaUsed(t, ms, "ghost"); got != 0 {
 		t.Fatalf("used=%d, want 0 floor", got)
+	}
+}
+
+func TestRefundSameDay(t *testing.T) {
+	ctx := context.Background()
+	ms := memory.NewMemoryStore()
+	day := time.Now().UTC()
+	ok, _, err := ms.TryConsumeQuota(ctx, "p1", 10)
+	if err != nil || !ok {
+		t.Fatalf("consume: ok=%v err=%v", ok, err)
+	}
+	if err := ms.RefundQuota(ctx, "p1", day); err != nil {
+		t.Fatal(err)
+	}
+	if got := quotaUsed(t, ms, "p1"); got != 0 {
+		t.Fatalf("used=%d after same-day refund, want 0", got)
 	}
 }

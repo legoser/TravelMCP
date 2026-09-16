@@ -925,6 +925,7 @@ CREATE TABLE IF NOT EXISTS trip_demand (
   request_count bigint NOT NULL DEFAULT 0,
   last_requested_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS idx_trip_demand_stale ON trip_demand(request_count DESC, last_requested_at DESC);
 
 CREATE TABLE IF NOT EXISTS attribute_state (
   entity_type text NOT NULL,

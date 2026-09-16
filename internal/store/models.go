@@ -390,8 +390,16 @@ type StaleDemandRow struct {
 	RouteCode        string
 	ExternalCode     string
 	RequestCount     int64
-	LastRequestedAt  string
-	OldestObservedAt string
+	LastRequestedAt  time.Time
+	OldestObservedAt time.Time
+}
+
+// TripDemandTick — single demand tick identity: canonical trip resolved via
+// routes(source_provider, external_route_code) + trips NK.
+type TripDemandTick struct {
+	Provider         string
+	RouteCode        string
+	ExternalTripCode string
 }
 
 type OutboxEvent struct {

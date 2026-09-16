@@ -312,7 +312,7 @@ func (m *MemoryStore) TouchApiKey(ctx context.Context, key string) error {
 func (m *MemoryStore) TryConsumeQuota(ctx context.Context, provider string, limit int) (bool, int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	day := time.Now().Format("2006-01-02")
+	day := time.Now().UTC().Format("2006-01-02")
 	key := provider + ":" + day
 	q, ok := m.quotas[key]
 	if !ok {
@@ -331,14 +331,23 @@ func (m *MemoryStore) TryConsumeQuota(ctx context.Context, provider string, limi
 	return true, q.Used, nil
 }
 
-func (m *MemoryStore) RefundQuota(ctx context.Context, provider string) error {
+func (m *MemoryStore) RefundQuota(ctx context.Context, provider string, day time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	day := time.Now().Format("2006-01-02")
-	key := provider + ":" + day
+	d := day.UTC()
+	if d.IsZero() {
+		d = time.Now().UTC()
+	}
+	key := provider + ":" + d.Format("2006-01-02")
 	if q, ok := m.quotas[key]; ok && q.Used > 0 {
 		q.Used--
 		m.quotas[key] = q
+		return nil
+	}
+	prev := provider + ":" + d.Add(-24*time.Hour).Format("2006-01-02")
+	if q, ok := m.quotas[prev]; ok && q.Used > 0 {
+		q.Used--
+		m.quotas[prev] = q
 	}
 	return nil
 }
@@ -348,7 +357,7 @@ func (m *MemoryStore) GetQuota(ctx context.Context, provider string, day time.Ti
 	defer m.mu.RUnlock()
 	d := day
 	if d.IsZero() {
-		d = time.Now()
+		d = time.Now().UTC()
 	}
 	key := provider + ":" + d.Format("2006-01-02")
 	q, ok := m.quotas[key]
@@ -358,7 +367,7 @@ func (m *MemoryStore) GetQuota(ctx context.Context, provider string, day time.Ti
 func (m *MemoryStore) SetQuotaLimit(ctx context.Context, provider string, limit int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	day := time.Now().Format("2006-01-02")
+	day := time.Now().UTC().Format("2006-01-02")
 	key := provider + ":" + day
 	q := m.quotas[key]
 	q.Provider = provider

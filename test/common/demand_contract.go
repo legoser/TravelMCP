@@ -52,11 +52,14 @@ func AssertDemandContract(t *testing.T, st store.Store, seeder DemandSeeder) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(stale) != 1 || stale[0].RequestCount != 3 || stale[0].OldestObservedAt != "" {
-		t.Fatalf("fresh demand must be stale with count 3 and no observed_at: %+v", stale)
+	if len(stale) != 1 || stale[0].RequestCount != 3 || !stale[0].OldestObservedAt.IsZero() {
+		t.Fatalf("fresh demand must be stale with count 3 and zero observed_at: %+v", stale)
 	}
 	if stale[0].RouteCode != route || stale[0].ExternalCode != ext || stale[0].ProviderID != prov {
 		t.Fatalf("identity mismatch: %+v", stale[0])
+	}
+	if stale[0].LastRequestedAt.IsZero() {
+		t.Fatalf("last_requested_at must be set: %+v", stale[0])
 	}
 
 	if found, err = rec.RecordTripDemand(ctx, prov, route, ext); err != nil || !found {
@@ -80,7 +83,7 @@ func AssertDemandContract(t *testing.T, st store.Store, seeder DemandSeeder) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(stale) != 1 || stale[0].TripID != tripA || stale[0].OldestObservedAt == "" {
+	if len(stale) != 1 || stale[0].TripID != tripA || stale[0].OldestObservedAt.IsZero() {
 		t.Fatalf("aged source must resurface with observed_at: %+v", stale)
 	}
 
@@ -101,5 +104,46 @@ func AssertDemandContract(t *testing.T, st store.Store, seeder DemandSeeder) {
 	}
 	if len(stale) != 1 || stale[0].RequestCount != 4 {
 		t.Fatalf("limit must cut to top-1: %+v", stale)
+	}
+
+	// Batched ticks resolve in one call and skip unknowns.
+	if batch, ok := st.(interface {
+		RecordTripDemandBatch(ctx context.Context, ticks []store.TripDemandTick) (int, error)
+	}); ok {
+		n, err := batch.RecordTripDemandBatch(ctx, []store.TripDemandTick{
+			{Provider: prov, RouteCode: route, ExternalTripCode: ext},
+			{Provider: prov2, RouteCode: route2, ExternalTripCode: ext2},
+			{Provider: "ghost", RouteCode: "no-route", ExternalTripCode: "no-trip"},
+		})
+		if err != nil || n != 2 {
+			t.Fatalf("batch: n=%d err=%v, want 2", n, err)
+		}
+	} else {
+		t.Fatal("store must implement RecordTripDemandBatch")
+	}
+
+	// Tombstoned trips stop accumulating demand and leave the stale input.
+	if tomb, ok := st.(interface {
+		TombstoneTrip(ctx context.Context, tripID int64) error
+	}); ok {
+		tripC, provC, routeC, extC := seeder.SeedDemandTrip(t, "tomb")
+		if found, err := rec.RecordTripDemand(ctx, provC, routeC, extC); err != nil || !found {
+			t.Fatalf("pre-tombstone tick: found=%v err=%v", found, err)
+		}
+		if err := tomb.TombstoneTrip(ctx, tripC); err != nil {
+			t.Fatal(err)
+		}
+		if found, err := rec.RecordTripDemand(ctx, provC, routeC, extC); err != nil || found {
+			t.Fatalf("tombstoned tick: found=%v err=%v, want (false, nil)", found, err)
+		}
+		stale, err := rec.ListStaleDemandedTrips(ctx, time.Now().Add(time.Hour), 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range stale {
+			if r.TripID == tripC {
+				t.Fatalf("tombstoned trip must leave stale input: %+v", stale)
+			}
+		}
 	}
 }

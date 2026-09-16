@@ -307,9 +307,14 @@ func (a *App) handleFindRoute(ctx context.Context, req mcp.CallToolRequest) (*mc
 }
 
 // recordDemand — demand ticks for served canonical trips (track G slice):
-// fire-and-forget, never blocks the response. TripID carries
-// "routeCode|externalTripCode" (DB-loaded networks); anything else
-// (synth, gap walks) resolves to unknown and is skipped by the store.
+// fire-and-forget, never blocks the response. Route comes from Leg.RouteID
+// structurally (TripID is "routeCode|externalTripCode" on DB-loaded
+// networks, but route codes may contain "|", so a blind Cut on TripID
+// would mis-split); TripID prefix match is the primary path, last-"|"
+// split is the fallback for legs without RouteID. Ticks cover the best
+// journey plus shown alternatives: demand means "seen", not "boarded".
+// Stored batched in one background call with a 5s budget; a partial apply
+// under timeout skews toward the best journey (ticks keep input order).
 func (a *App) recordDemand(ctx context.Context, journey *model.Journey) {
 	if a.store == nil || journey == nil {
 		return
@@ -320,19 +325,21 @@ func (a *App) recordDemand(ctx context.Context, journey *model.Journey) {
 	if !ok {
 		return
 	}
-	type demandTick struct{ provider, route, ext string }
-	var ticks []demandTick
-	seen := map[demandTick]bool{}
+	batch, _ := a.store.(interface {
+		RecordTripDemandBatch(ctx context.Context, ticks []store.TripDemandTick) (int, error)
+	})
+	var ticks []store.TripDemandTick
+	seen := map[store.TripDemandTick]bool{}
 	addLegs := func(legs []model.Leg) {
 		for _, l := range legs {
 			if l.TripID == "" || l.ProviderID == "" {
 				continue
 			}
-			route, ext, ok := strings.Cut(l.TripID, "|")
-			if !ok || route == "" || ext == "" {
+			route, ext := splitDemandTripID(l)
+			if route == "" || ext == "" {
 				continue
 			}
-			t := demandTick{provider: l.ProviderID, route: route, ext: ext}
+			t := store.TripDemandTick{Provider: l.ProviderID, RouteCode: route, ExternalTripCode: ext}
 			if !seen[t] {
 				seen[t] = true
 				ticks = append(ticks, t)
@@ -349,12 +356,35 @@ func (a *App) recordDemand(ctx context.Context, journey *model.Journey) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
+		if batch != nil {
+			if _, err := batch.RecordTripDemandBatch(ctx, ticks); err != nil && a.logger != nil {
+				a.logger.Debug("demand batch failed", "ticks", len(ticks), "err", err)
+			}
+			return
+		}
 		for _, t := range ticks {
-			if _, err := rec.RecordTripDemand(ctx, t.provider, t.route, t.ext); err != nil && a.logger != nil {
-				a.logger.Debug("demand tick failed", "provider", t.provider, "route", t.route, "trip", t.ext, "err", err)
+			if _, err := rec.RecordTripDemand(ctx, t.Provider, t.RouteCode, t.ExternalTripCode); err != nil && a.logger != nil {
+				a.logger.Debug("demand tick failed", "provider", t.Provider, "route", t.RouteCode, "trip", t.ExternalTripCode, "err", err)
 			}
 		}
 	}()
+}
+
+// splitDemandTripID resolves (routeCode, externalTripCode) for a leg.
+// Primary: Leg.RouteID prefix match (exact even when the route code itself
+// contains "|"). Fallback: split TripID on the last "|" (external trip
+// codes never contain "|").
+func splitDemandTripID(l model.Leg) (string, string) {
+	if l.RouteID != "" {
+		if rest, ok := strings.CutPrefix(l.TripID, l.RouteID+"|"); ok && rest != "" {
+			return l.RouteID, rest
+		}
+	}
+	idx := strings.LastIndex(l.TripID, "|")
+	if idx <= 0 || idx == len(l.TripID)-1 {
+		return "", ""
+	}
+	return l.TripID[:idx], l.TripID[idx+1:]
 }
 
 // normalizeJourneyTimezones — все времена легов/джорни в единый вид

@@ -409,7 +409,15 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 
 	var transitLegs []model.Leg
 	var err error
-	transitLegs, err = p.runTransit(net, fromStop.ID, toStop.ID, departAtStop, params)
+	// McRAPTOR fast path: one bag search serves both the best journey and
+	// the native Pareto alternatives front (no second full search).
+	var mcBags map[string][]*mcLabel
+	if p.engine == "mcraptor" {
+		mcBags = p.mcraptorBags(net, fromStop.ID, departAtStop, params)
+		transitLegs, err = p.mcraptorLegsFromBags(net, mcBags, fromStop.ID, toStop.ID, departAtStop, params)
+	} else {
+		transitLegs, err = p.runTransit(net, fromStop.ID, toStop.ID, departAtStop, params)
+	}
 	if err != nil {
 		if !params.AllowGap {
 			return nil, err
@@ -449,7 +457,11 @@ func (p *Planner) planWithStops(net *model.Network, from, to model.Coords, param
 	})
 
 	journey.Arrival = journey.Legs[len(journey.Legs)-1].Arrival
-	journey.Alternatives = p.alternatives(net, from, to, params, fromStop, toStop, journey, departAtStop)
+	if mcBags != nil {
+		journey.Alternatives = p.nativeAlternativesFromBags(net, mcBags, from, to, params, fromStop, toStop, journey)
+	} else {
+		journey.Alternatives = p.alternatives(net, from, to, params, fromStop, toStop, journey, departAtStop)
+	}
 	pricing.EnrichJourney(net, journey)
 	pref := params.Preference
 	if pref == "" {
@@ -1028,19 +1040,26 @@ func (p *Planner) planArrival(net *model.Network, fromStop, toStop string, arriv
 
 func (p *Planner) reconstruct(pred map[string]*prev, fromStop, toStop string) []step {
 	var rev []step
+	seen := map[string]bool{toStop: true}
 	stop := toStop
 	for stop != fromStop {
 		pr := pred[stop]
 		if pr == nil {
 			break
 		}
+		var next string
 		if pr.conn != nil {
 			rev = append(rev, step{conn: pr.conn})
-			stop = pr.conn.From
+			next = pr.conn.From
 		} else {
 			rev = append(rev, step{footFrom: pr.footFrom, footTo: stop})
-			stop = pr.footFrom
+			next = pr.footFrom
 		}
+		if seen[next] || len(rev) > 10000 {
+			break
+		}
+		seen[next] = true
+		stop = next
 	}
 	steps := make([]step, 0, len(rev))
 	for i := len(rev) - 1; i >= 0; i-- {

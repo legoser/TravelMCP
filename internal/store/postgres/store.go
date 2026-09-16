@@ -1200,7 +1200,7 @@ func (p *PostgresStore) TryConsumeQuota(ctx context.Context, provider string, li
 		return true, 1, nil
 	}
 	var used int
-	err := p.pool.QueryRow(ctx, `INSERT INTO api_quotas(provider, day, used, quota_limit, reset_at) VALUES($1, CURRENT_DATE, 1, $2, (CURRENT_DATE + INTERVAL '1 day')::timestamptz AT TIME ZONE 'Europe/Moscow') ON CONFLICT (provider, day) DO UPDATE SET used = api_quotas.used + 1 WHERE api_quotas.used < api_quotas.quota_limit RETURNING used`, provider, limit).Scan(&used)
+	err := p.pool.QueryRow(ctx, `INSERT INTO api_quotas(provider, day, used, quota_limit, reset_at) VALUES($1, (now() AT TIME ZONE 'UTC')::date, 1, $2, ((now() AT TIME ZONE 'UTC')::date + INTERVAL '1 day')::timestamptz) ON CONFLICT (provider, day) DO UPDATE SET used = api_quotas.used + 1 WHERE api_quotas.used < api_quotas.quota_limit RETURNING used`, provider, limit).Scan(&used)
 	if err == pgx.ErrNoRows {
 		return false, 0, nil
 	}
@@ -1211,14 +1211,25 @@ func (p *PostgresStore) TryConsumeQuota(ctx context.Context, provider string, li
 	return true, used, nil
 }
 
-// RefundQuota — returns a TryConsumeQuota reservation when the handler
-// fails: used decreases with a 0 floor; the 'quota_consume' api_calls row
-// stays as an attempts log. The budget (used) counts successful calls only.
-func (p *PostgresStore) RefundQuota(ctx context.Context, provider string) error {
+// RefundQuota — returns a TryConsumeQuota reservation for day (UTC): used
+// decreases with a 0 floor; the 'quota_consume' api_calls row stays as an
+// attempts log. Falls back to the previous day when the given day has no
+// row, covering a consume-before-midnight/refund-after-midnight straddle.
+func (p *PostgresStore) RefundQuota(ctx context.Context, provider string, day time.Time) error {
 	if p.pool == nil {
 		return nil
 	}
-	_, err := p.pool.Exec(ctx, `UPDATE api_quotas SET used = GREATEST(used - 1, 0) WHERE provider = $1 AND day = CURRENT_DATE`, provider)
+	d := day.UTC()
+	if d.IsZero() {
+		d = time.Now().UTC()
+	}
+	tag, err := p.pool.Exec(ctx, `UPDATE api_quotas SET used = GREATEST(used - 1, 0) WHERE provider = $1 AND day = $2::date`, provider, d.Format("2006-01-02"))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		_, err = p.pool.Exec(ctx, `UPDATE api_quotas SET used = GREATEST(used - 1, 0) WHERE provider = $1 AND day = ($2::date - INTERVAL '1 day')::date`, provider, d.Format("2006-01-02"))
+	}
 	return err
 }
 
@@ -1228,7 +1239,7 @@ func (p *PostgresStore) GetQuota(ctx context.Context, provider string, day time.
 	}
 	d := day
 	if d.IsZero() {
-		d = time.Now()
+		d = time.Now().UTC()
 	}
 	var r store.QuotaRow
 	var resetAt *string
@@ -1244,7 +1255,7 @@ func (p *PostgresStore) SetQuotaLimit(ctx context.Context, provider string, limi
 	if p.pool == nil {
 		return nil
 	}
-	_, err := p.pool.Exec(ctx, `INSERT INTO api_quotas(provider, day, used, quota_limit, reset_at) VALUES($1, CURRENT_DATE, 0, $2, (CURRENT_DATE + INTERVAL '1 day')::timestamptz AT TIME ZONE 'Europe/Moscow') ON CONFLICT (provider, day) DO UPDATE SET quota_limit=EXCLUDED.quota_limit`, provider, limit)
+	_, err := p.pool.Exec(ctx, `INSERT INTO api_quotas(provider, day, used, quota_limit, reset_at) VALUES($1, (now() AT TIME ZONE 'UTC')::date, 0, $2, ((now() AT TIME ZONE 'UTC')::date + INTERVAL '1 day')::timestamptz) ON CONFLICT (provider, day) DO UPDATE SET quota_limit=EXCLUDED.quota_limit`, provider, limit)
 	return err
 }
 
@@ -1908,7 +1919,7 @@ func (t *pgTxStore) TouchApiKey(ctx context.Context, key string) error {
 
 func (t *pgTxStore) TryConsumeQuota(ctx context.Context, provider string, limit int) (bool, int, error) {
 	var used int
-	err := t.tx.QueryRow(ctx, `INSERT INTO api_quotas(provider, day, used, quota_limit, reset_at) VALUES($1, CURRENT_DATE, 1, $2, (CURRENT_DATE + INTERVAL '1 day')::timestamptz AT TIME ZONE 'Europe/Moscow') ON CONFLICT (provider, day) DO UPDATE SET used = api_quotas.used + 1 WHERE api_quotas.used < api_quotas.quota_limit RETURNING used`, provider, limit).Scan(&used)
+	err := t.tx.QueryRow(ctx, `INSERT INTO api_quotas(provider, day, used, quota_limit, reset_at) VALUES($1, (now() AT TIME ZONE 'UTC')::date, 1, $2, ((now() AT TIME ZONE 'UTC')::date + INTERVAL '1 day')::timestamptz) ON CONFLICT (provider, day) DO UPDATE SET used = api_quotas.used + 1 WHERE api_quotas.used < api_quotas.quota_limit RETURNING used`, provider, limit).Scan(&used)
 	if err == pgx.ErrNoRows {
 		return false, 0, nil
 	}
@@ -1919,15 +1930,25 @@ func (t *pgTxStore) TryConsumeQuota(ctx context.Context, provider string, limit 
 	return true, used, nil
 }
 
-func (t *pgTxStore) RefundQuota(ctx context.Context, provider string) error {
-	_, err := t.tx.Exec(ctx, `UPDATE api_quotas SET used = GREATEST(used - 1, 0) WHERE provider = $1 AND day = CURRENT_DATE`, provider)
+func (t *pgTxStore) RefundQuota(ctx context.Context, provider string, day time.Time) error {
+	d := day.UTC()
+	if d.IsZero() {
+		d = time.Now().UTC()
+	}
+	tag, err := t.tx.Exec(ctx, `UPDATE api_quotas SET used = GREATEST(used - 1, 0) WHERE provider = $1 AND day = $2::date`, provider, d.Format("2006-01-02"))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		_, err = t.tx.Exec(ctx, `UPDATE api_quotas SET used = GREATEST(used - 1, 0) WHERE provider = $1 AND day = ($2::date - INTERVAL '1 day')::date`, provider, d.Format("2006-01-02"))
+	}
 	return err
 }
 
 func (t *pgTxStore) GetQuota(ctx context.Context, provider string, day time.Time) (store.QuotaRow, bool) {
 	d := day
 	if d.IsZero() {
-		d = time.Now()
+		d = time.Now().UTC()
 	}
 	var r store.QuotaRow
 	var resetAt *string

@@ -98,11 +98,17 @@ func (w *Worker) jobState(ctx context.Context, id int64) string {
 	return ""
 }
 
+// withQuota reserves budget before the handler and refunds it on failure,
+// so api_quotas.used counts successful calls only (attempts stay in
+// api_calls). Handlers MUST be idempotent: a rate-limited failure moves to
+// the next provider with the same job, so the handler may run multiple
+// times for one job.
 func (w *Worker) withQuota(ctx context.Context, job *store.JobRow, h Handler) error {
 	providers := w.providersForJob(job)
 	if len(providers) == 0 {
 		return h(ctx, *job)
 	}
+	day := time.Now().UTC()
 	var lastErr error
 	for _, p := range providers {
 		limit := store.DefaultQuotaLimit
@@ -117,7 +123,7 @@ func (w *Worker) withQuota(ctx context.Context, job *store.JobRow, h Handler) er
 		_ = w.store.RecordApiCall(ctx, p, string(job.Type), 1)
 		if err := h(ctx, *job); err != nil {
 			lastErr = err
-			w.refundQuota(ctx, p)
+			w.refundQuota(ctx, p, day)
 			if isRateLimited(err) {
 				continue
 			}
@@ -131,18 +137,10 @@ func (w *Worker) withQuota(ctx context.Context, job *store.JobRow, h Handler) er
 	return fmt.Errorf("429 all quotas exhausted")
 }
 
-// refundQuota — returns the quota reservation when the handler fails: the
-// budget (api_quotas.used) counts successful calls only, attempts stay in
-// the api_calls log. A store without RefundQuota silently skips the refund
-// (consumer-focused interface, no fat-interface growth).
-func (w *Worker) refundQuota(ctx context.Context, provider string) {
-	rq, ok := w.store.(interface {
-		RefundQuota(ctx context.Context, provider string) error
-	})
-	if !ok {
-		return
-	}
-	if err := rq.RefundQuota(ctx, provider); err != nil {
+// refundQuota — returns the quota reservation for the UTC day it was taken
+// on. RefundQuota is part of store.Store, so every backend supports it.
+func (w *Worker) refundQuota(ctx context.Context, provider string, day time.Time) {
+	if err := w.store.RefundQuota(ctx, provider, day); err != nil {
 		w.logger.Warn("quota refund failed", "provider", provider, "err", err)
 	}
 }
@@ -170,7 +168,10 @@ func isRateLimited(err error) bool {
 	}
 	s := strings.ToLower(err.Error())
 	return strings.Contains(s, "429") ||
-		strings.Contains(s, "quota") ||
+		strings.Contains(s, "quota exhausted") ||
+		strings.Contains(s, "quota_exhausted") ||
+		strings.Contains(s, "quota exceeded") ||
+		strings.Contains(s, "quota limit") ||
 		strings.Contains(s, "rate limit") ||
 		strings.Contains(s, "rate_limit") ||
 		strings.Contains(s, "ratelimit") ||

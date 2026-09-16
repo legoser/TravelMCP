@@ -110,14 +110,14 @@ func (p *PostgresStore) UpsertTripSource(ctx context.Context, s store.TripSource
 
 // RecordTripDemand — demand tick for a served trip. Resolves the canonical
 // trip via routes(source_provider, external_route_code) + trips NK and bumps
-// trip_demand. Unknown route/trip → (false, nil): non-canonical providers
-// (synth in tests) carry no demand by definition.
+// trip_demand. Unknown or tombstoned route/trip → (false, nil):
+// non-canonical providers (synth in tests) carry no demand by definition.
 func (p *PostgresStore) RecordTripDemand(ctx context.Context, provider, routeCode, externalTripCode string) (bool, error) {
 	if p.pool == nil {
 		return false, errNotImplemented
 	}
 	var tripID int64
-	err := p.pool.QueryRow(ctx, `SELECT t.id FROM trips t JOIN routes r ON r.id=t.route_id WHERE r.source_provider=$1 AND r.external_route_code=$2 AND t.external_trip_code=$3 AND t.valid_to IS NULL`, provider, routeCode, externalTripCode).Scan(&tripID)
+	err := p.pool.QueryRow(ctx, `SELECT t.id FROM trips t JOIN routes r ON r.id=t.route_id WHERE r.source_provider=$1 AND r.external_route_code=$2 AND t.external_trip_code=$3 AND t.valid_to IS NULL AND r.valid_to IS NULL`, provider, routeCode, externalTripCode).Scan(&tripID)
 	if err == pgx.ErrNoRows {
 		return false, nil
 	}
@@ -131,8 +131,65 @@ func (p *PostgresStore) RecordTripDemand(ctx context.Context, provider, routeCod
 	return true, nil
 }
 
+// RecordTripDemandBatch — batched demand ticks: one resolve + one upsert for
+// the whole journey (best + alternatives). Unknown/tombstoned trips are
+// skipped. Returns the number of matched canonical trips.
+func (p *PostgresStore) RecordTripDemandBatch(ctx context.Context, ticks []store.TripDemandTick) (int, error) {
+	if p.pool == nil {
+		return 0, errNotImplemented
+	}
+	seen := map[store.TripDemandTick]bool{}
+	uniq := make([]store.TripDemandTick, 0, len(ticks))
+	for _, t := range ticks {
+		if t.Provider == "" || t.RouteCode == "" || t.ExternalTripCode == "" {
+			continue
+		}
+		if !seen[t] {
+			seen[t] = true
+			uniq = append(uniq, t)
+		}
+	}
+	if len(uniq) == 0 {
+		return 0, nil
+	}
+	provs := make([]string, len(uniq))
+	routes := make([]string, len(uniq))
+	exts := make([]string, len(uniq))
+	for i, t := range uniq {
+		provs[i] = t.Provider
+		routes[i] = t.RouteCode
+		exts[i] = t.ExternalTripCode
+	}
+	rs, err := p.pool.Query(ctx, `SELECT t.id FROM trips t JOIN routes r ON r.id=t.route_id JOIN UNNEST($1::text[], $2::text[], $3::text[]) AS inp(prov, route, ext) ON r.source_provider=inp.prov AND r.external_route_code=inp.route AND t.external_trip_code=inp.ext WHERE t.valid_to IS NULL AND r.valid_to IS NULL`, provs, routes, exts)
+	if err != nil {
+		return 0, fmt.Errorf("record demand batch resolve: %w", err)
+	}
+	var ids []int64
+	for rs.Next() {
+		var id int64
+		if err := rs.Scan(&id); err != nil {
+			rs.Close()
+			return 0, fmt.Errorf("record demand batch scan: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	rs.Close()
+	if err := rs.Err(); err != nil {
+		return 0, fmt.Errorf("record demand batch resolve: %w", err)
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	_, err = p.pool.Exec(ctx, `INSERT INTO trip_demand(trip_id, request_count, last_requested_at) SELECT unnest($1::bigint[]), 1, now() ON CONFLICT(trip_id) DO UPDATE SET request_count=trip_demand.request_count+1, last_requested_at=now()`, ids)
+	if err != nil {
+		return 0, fmt.Errorf("record demand batch upsert: %w", err)
+	}
+	return len(ids), nil
+}
+
 // ListStaleDemandedTrips — resync scheduler input: demanded trips with no
 // sources or oldest observed_at before cutoff, highest demand first.
+// Tombstoned trips/routes are excluded: resync must not refetch dead trips.
 func (p *PostgresStore) ListStaleDemandedTrips(ctx context.Context, cutoff time.Time, limit int) ([]store.StaleDemandRow, error) {
 	if p.pool == nil {
 		return nil, errNotImplemented
@@ -140,7 +197,7 @@ func (p *PostgresStore) ListStaleDemandedTrips(ctx context.Context, cutoff time.
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
-	rows, err := p.pool.Query(ctx, `SELECT t.id, t.provider_id, r.external_route_code, t.external_trip_code, d.request_count, d.last_requested_at::text, coalesce(MIN(s.observed_at)::text,'') FROM trip_demand d JOIN trips t ON t.id=d.trip_id JOIN routes r ON r.id=t.route_id LEFT JOIN trip_sources s ON s.trip_id=t.id GROUP BY t.id, t.provider_id, r.external_route_code, t.external_trip_code, d.request_count, d.last_requested_at HAVING MIN(s.observed_at) IS NULL OR MIN(s.observed_at) < $1 ORDER BY d.request_count DESC, d.last_requested_at DESC LIMIT $2`, cutoff, limit)
+	rows, err := p.pool.Query(ctx, `SELECT t.id, t.provider_id, r.external_route_code, t.external_trip_code, d.request_count, d.last_requested_at, MIN(s.observed_at) FROM trip_demand d JOIN trips t ON t.id=d.trip_id JOIN routes r ON r.id=t.route_id LEFT JOIN trip_sources s ON s.trip_id=t.id WHERE t.valid_to IS NULL AND r.valid_to IS NULL GROUP BY t.id, t.provider_id, r.external_route_code, t.external_trip_code, d.request_count, d.last_requested_at HAVING MIN(s.observed_at) IS NULL OR MIN(s.observed_at) < $1 ORDER BY d.request_count DESC, d.last_requested_at DESC LIMIT $2`, cutoff, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list stale demand: %w", err)
 	}
@@ -148,8 +205,12 @@ func (p *PostgresStore) ListStaleDemandedTrips(ctx context.Context, cutoff time.
 	var out []store.StaleDemandRow
 	for rows.Next() {
 		var r store.StaleDemandRow
-		if err := rows.Scan(&r.TripID, &r.ProviderID, &r.RouteCode, &r.ExternalCode, &r.RequestCount, &r.LastRequestedAt, &r.OldestObservedAt); err != nil {
+		var oldest *time.Time
+		if err := rows.Scan(&r.TripID, &r.ProviderID, &r.RouteCode, &r.ExternalCode, &r.RequestCount, &r.LastRequestedAt, &oldest); err != nil {
 			return nil, fmt.Errorf("list stale demand scan: %w", err)
+		}
+		if oldest != nil {
+			r.OldestObservedAt = *oldest
 		}
 		out = append(out, r)
 	}

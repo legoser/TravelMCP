@@ -111,28 +111,12 @@ func (m *MemoryStore) UpsertTripSource(ctx context.Context, s store.TripSourceRo
 	return nil
 }
 
-// RecordTripDemand — demand tick for a served trip; unknown route/trip →
-// (false, nil), same contract as postgres.
+// RecordTripDemand — demand tick for a served trip; unknown or tombstoned
+// route/trip → (false, nil), same contract as postgres.
 func (m *MemoryStore) RecordTripDemand(ctx context.Context, provider, routeCode, externalTripCode string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	routeID := int64(0)
-	for id, r := range m.routes {
-		if r.ProviderID == provider && r.ExternalRouteCode == routeCode && r.ValidTo == nil {
-			routeID = id
-			break
-		}
-	}
-	if routeID == 0 {
-		return false, nil
-	}
-	tripID := int64(0)
-	for id, t := range m.trips {
-		if t.RouteID == routeID && t.ExternalTripCode == externalTripCode {
-			tripID = id
-			break
-		}
-	}
+	tripID := m.resolveDemandTripLocked(provider, routeCode, externalTripCode)
 	if tripID == 0 {
 		return false, nil
 	}
@@ -145,12 +129,92 @@ func (m *MemoryStore) RecordTripDemand(ctx context.Context, provider, routeCode,
 		m.tripDemand[tripID] = e
 	}
 	e.count++
-	e.last = time.Now()
+	e.last = time.Now().UTC()
 	return true, nil
 }
 
+// RecordTripDemandBatch — batched demand ticks under a single lock:
+// one index pass over routes/trips, then one bump per matched trip.
+func (m *MemoryStore) RecordTripDemandBatch(ctx context.Context, ticks []store.TripDemandTick) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	seen := map[store.TripDemandTick]bool{}
+	uniq := make([]store.TripDemandTick, 0, len(ticks))
+	for _, t := range ticks {
+		if t.Provider == "" || t.RouteCode == "" || t.ExternalTripCode == "" {
+			continue
+		}
+		if !seen[t] {
+			seen[t] = true
+			uniq = append(uniq, t)
+		}
+	}
+	if len(uniq) == 0 {
+		return 0, nil
+	}
+	tripByRouteCode := map[string]map[string]int64{}
+	for id, t := range m.trips {
+		if t.ValidTo != nil {
+			continue
+		}
+		r, ok := m.routes[t.RouteID]
+		if !ok || r.ValidTo != nil {
+			continue
+		}
+		key := r.ProviderID + "\x00" + r.ExternalRouteCode
+		if tripByRouteCode[key] == nil {
+			tripByRouteCode[key] = map[string]int64{}
+		}
+		tripByRouteCode[key][t.ExternalTripCode] = id
+	}
+	if m.tripDemand == nil {
+		m.tripDemand = map[int64]*tripDemandEntry{}
+	}
+	now := time.Now().UTC()
+	matched := 0
+	for _, t := range uniq {
+		trips, ok := tripByRouteCode[t.Provider+"\x00"+t.RouteCode]
+		if !ok {
+			continue
+		}
+		tripID, ok := trips[t.ExternalTripCode]
+		if !ok {
+			continue
+		}
+		e := m.tripDemand[tripID]
+		if e == nil {
+			e = &tripDemandEntry{}
+			m.tripDemand[tripID] = e
+		}
+		e.count++
+		e.last = now
+		matched++
+	}
+	return matched, nil
+}
+
+func (m *MemoryStore) resolveDemandTripLocked(provider, routeCode, externalTripCode string) int64 {
+	routeID := int64(0)
+	for id, r := range m.routes {
+		if r.ProviderID == provider && r.ExternalRouteCode == routeCode && r.ValidTo == nil {
+			routeID = id
+			break
+		}
+	}
+	if routeID == 0 {
+		return 0
+	}
+	for id, t := range m.trips {
+		if t.RouteID == routeID && t.ExternalTripCode == externalTripCode && t.ValidTo == nil {
+			return id
+		}
+	}
+	return 0
+}
+
 // ListStaleDemandedTrips — demanded trips with no sources or oldest
-// verification before cutoff, highest demand first.
+// verification before cutoff, highest demand first. Tombstoned trips/routes
+// are excluded, mirroring postgres.
 func (m *MemoryStore) ListStaleDemandedTrips(ctx context.Context, cutoff time.Time, limit int) ([]store.StaleDemandRow, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -160,11 +224,11 @@ func (m *MemoryStore) ListStaleDemandedTrips(ctx context.Context, cutoff time.Ti
 	var out []store.StaleDemandRow
 	for tripID, e := range m.tripDemand {
 		t, ok := m.trips[tripID]
-		if !ok {
+		if !ok || t.ValidTo != nil {
 			continue
 		}
 		r, ok := m.routes[t.RouteID]
-		if !ok {
+		if !ok || r.ValidTo != nil {
 			continue
 		}
 		oldest := time.Time{}
@@ -178,22 +242,18 @@ func (m *MemoryStore) ListStaleDemandedTrips(ctx context.Context, cutoff time.Ti
 		if hasSources && !oldest.Before(cutoff) {
 			continue
 		}
-		oldestStr := ""
-		if hasSources {
-			oldestStr = oldest.UTC().Format(time.RFC3339)
-		}
 		out = append(out, store.StaleDemandRow{
 			TripID: tripID, ProviderID: t.ProviderID,
 			RouteCode: r.ExternalRouteCode, ExternalCode: t.ExternalTripCode,
-			RequestCount: e.count, LastRequestedAt: e.last.UTC().Format(time.RFC3339),
-			OldestObservedAt: oldestStr,
+			RequestCount: e.count, LastRequestedAt: e.last.UTC(),
+			OldestObservedAt: oldest.UTC(),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].RequestCount != out[j].RequestCount {
 			return out[i].RequestCount > out[j].RequestCount
 		}
-		return out[i].LastRequestedAt > out[j].LastRequestedAt
+		return out[i].LastRequestedAt.After(out[j].LastRequestedAt)
 	})
 	if len(out) > limit {
 		out = out[:limit]

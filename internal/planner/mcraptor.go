@@ -33,10 +33,16 @@ func (l *mcLabel) dominates(o *mcLabel) bool {
 
 // mergeLabel — inserts L into the stop bag, dropping labels it dominates.
 // Reports whether the bag improved (caller marks the stop for next round).
+// Equal labels (same arrival and trip count) collapse to one: without the
+// tie-break equivalent paths multiply exponentially across rounds, and a
+// zero-minute foot cycle would re-improve forever instead of terminating.
 func mergeLabel(bags map[string][]*mcLabel, L *mcLabel) bool {
 	cur := bags[L.stop]
 	for _, o := range cur {
 		if o.dominates(L) {
+			return false
+		}
+		if o.arr.Equal(L.arr) && o.trips == L.trips {
 			return false
 		}
 	}
@@ -58,6 +64,13 @@ func mergeLabel(bags map[string][]*mcLabel, L *mcLabel) bool {
 // semantics mirror raptor; no-route falls back to csa like raptor does.
 func (p *Planner) mcraptor(net *model.Network, fromStop, toStop string, depart time.Time, params model.SearchParams) ([]model.Leg, error) {
 	bags := p.mcraptorBags(net, fromStop, depart, params)
+	return p.mcraptorLegsFromBags(net, bags, fromStop, toStop, depart, params)
+}
+
+// mcraptorLegsFromBags — best-leg selection over precomputed bags: shared by
+// the single-best query and the departure fast path in planWithStops, so one
+// McRAPTOR search serves both best and alternatives.
+func (p *Planner) mcraptorLegsFromBags(net *model.Network, bags map[string][]*mcLabel, fromStop, toStop string, depart time.Time, params model.SearchParams) ([]model.Leg, error) {
 	best := selectTargetLabel(bags[toStop], params.MaxTransfers)
 	if best == nil {
 		return p.csa(net, fromStop, toStop, depart, params)
@@ -92,12 +105,17 @@ func selectTargetLabel(bag []*mcLabel, maxTransfers int) *mcLabel {
 }
 
 // legsForLabel — reconstruct transit legs along the label parent chain.
+// The chain may revisit a stop (foot loops); the pred map keeps the
+// target-side visit so reconstruction terminates at the origin instead of
+// cycling between two visits of the same stop.
 func legsForLabel(p *Planner, net *model.Network, best *mcLabel, fromStop string) []model.Leg {
 	pred := map[string]*prev{}
 	arr := map[string]time.Time{}
 	for cur := best; cur != nil; {
-		pred[cur.stop] = cur.pr
-		arr[cur.stop] = cur.arr
+		if _, seen := pred[cur.stop]; !seen {
+			pred[cur.stop] = cur.pr
+			arr[cur.stop] = cur.arr
+		}
 		if cur.stop == fromStop {
 			break
 		}
@@ -127,6 +145,11 @@ func (p *Planner) mcraptorBags(net *model.Network, fromStop string, depart time.
 		}
 		routeTrips[trip.RouteID] = append(routeTrips[trip.RouteID], trip)
 	}
+	routeIDs := make([]string, 0, len(routeTrips))
+	for id := range routeTrips {
+		routeIDs = append(routeIDs, id)
+	}
+	sort.Strings(routeIDs)
 	for _, trips := range routeTrips {
 		sort.Slice(trips, func(i, j int) bool {
 			if len(trips[i].StopTimes) == 0 || len(trips[j].StopTimes) == 0 {
@@ -134,6 +157,41 @@ func (p *Planner) mcraptorBags(net *model.Network, fromStop string, depart time.
 			}
 			return trips[i].StopTimes[0].DepartureSec < trips[j].StopTimes[0].DepartureSec
 		})
+	}
+	// routesByStop — inverted index: only routes serving a marked stop are
+	// scanned in a round, instead of every route for every label.
+	routesByStop := map[string][]string{}
+	seenRouteStop := map[string]bool{}
+	for _, route := range routeIDs {
+		for _, trip := range routeTrips[route] {
+			for _, st := range trip.StopTimes {
+				key := route + "\x00" + st.StopID
+				if !seenRouteStop[key] {
+					seenRouteStop[key] = true
+					routesByStop[st.StopID] = append(routesByStop[st.StopID], route)
+				}
+			}
+		}
+	}
+	for stop := range routesByStop {
+		sort.Strings(routesByStop[stop])
+	}
+	// tripBoardPos — first boarding position per (trip, stop): O(1) board
+	// lookup in the round loop instead of scanning StopTimes per label.
+	tripBoardPos := map[string]map[string]int{}
+	for _, route := range routeIDs {
+		for _, trip := range routeTrips[route] {
+			pos := tripBoardPos[trip.ID]
+			if pos == nil {
+				pos = map[string]int{}
+				tripBoardPos[trip.ID] = pos
+			}
+			for i, st := range trip.StopTimes {
+				if _, ok := pos[st.StopID]; !ok {
+					pos[st.StopID] = i
+				}
+			}
+		}
 	}
 	transfersFrom := net.TransfersByStop
 	if len(transfersFrom) == 0 {
@@ -163,6 +221,9 @@ func (p *Planner) mcraptorBags(net *model.Network, fromStop string, depart time.
 			cur := queue[0]
 			queue = queue[1:]
 			for _, tr := range transfersFrom[cur.stop] {
+				if tr.ToStopID == cur.stop {
+					continue
+				}
 				cand := cur.arr.Add(time.Duration(tr.Minutes) * time.Minute)
 				if tr.MinTransferTime > 0 && tr.MinTransferTime != tr.Minutes {
 					cand = cur.arr.Add(time.Duration(tr.MinTransferTime) * time.Minute)
@@ -178,95 +239,98 @@ func (p *Planner) mcraptorBags(net *model.Network, fromStop string, depart time.
 	improve(origin)
 	relaxFoot(origin)
 
+	boardTrip := func(wl *mcLabel, trip *model.Trip, boardPos int) {
+		tripsMade := wl.trips + 1
+		if wl.trip != "" && wl.trip == trip.ID {
+			tripsMade = wl.trips
+		}
+		for i := boardPos; i < len(trip.StopTimes)-1; i++ {
+			fromST := trip.StopTimes[i]
+			toST := trip.StopTimes[i+1]
+			depT := dayBase.Add(time.Duration(fromST.DepartureSec) * time.Second)
+			arrT := dayBase.Add(time.Duration(toST.ArrivalSec) * time.Second)
+			if arrT.Before(depT) {
+				arrT = arrT.Add(24 * time.Hour)
+			}
+			for depT.Before(earliest[fromST.StopID]) {
+				depT = depT.Add(24 * time.Hour)
+				arrT = arrT.Add(24 * time.Hour)
+			}
+			if depT.Before(wl.arr) {
+				continue
+			}
+			if i == boardPos && wl.trip != "" && wl.trip != trip.ID {
+				buf := p.minTransfer
+				if trip.Mode == model.ModeFlight {
+					buf = p.flightCheckIn
+				}
+				if buf > 0 && depT.Before(wl.arr.Add(time.Duration(buf)*time.Minute)) {
+					continue
+				}
+			}
+			if fromStopObj, ok1 := net.Stops[fromST.StopID]; ok1 {
+				if toStopObj, ok2 := net.Stops[toST.StopID]; ok2 {
+					if isImplausibleLeg(fromStopObj, toStopObj, depT, arrT, trip.Mode) {
+						continue
+					}
+				}
+			}
+			nl := &mcLabel{
+				stop: toST.StopID, arr: arrT, trips: tripsMade, trip: trip.ID,
+				pr: &prev{conn: &model.Connection{
+					TripID: trip.ID, ProviderID: trip.ProviderID, RouteID: trip.RouteID, Mode: trip.Mode,
+					From: fromST.StopID, To: toST.StopID, Departure: depT, Arrival: arrT,
+				}},
+				parent: wl,
+			}
+			if improve(nl) {
+				relaxFoot(nl)
+			}
+		}
+	}
+
 	for round := 1; round <= rounds; round++ {
 		if len(marked) == 0 {
 			break
 		}
-		type work struct {
-			stop string
-			l    *mcLabel
-		}
-		var ws []work
+		byStop := map[string][]*mcLabel{}
 		for s := range marked {
-			for _, l := range bags[s] {
-				ws = append(ws, work{stop: s, l: l})
-			}
+			byStop[s] = append(byStop[s], bags[s]...)
 			delete(marked, s)
 		}
-		for _, trips := range routeTrips {
-			for _, w := range ws {
-				bestTripIdx := -1
-				bestBoardPos := -1
-				var bestBoardTime time.Time
-				for ti, trip := range trips {
-					for pos, st := range trip.StopTimes {
-						if st.StopID != w.stop {
+		stops := make([]string, 0, len(byStop))
+		for s := range byStop {
+			stops = append(stops, s)
+		}
+		sort.Strings(stops)
+		for _, stop := range stops {
+			labels := byStop[stop]
+			sort.Slice(labels, func(i, j int) bool {
+				if labels[i].arr.Equal(labels[j].arr) {
+					return labels[i].trips < labels[j].trips
+				}
+				return labels[i].arr.Before(labels[j].arr)
+			})
+			for _, route := range routesByStop[stop] {
+				trips := routeTrips[route]
+				for _, wl := range labels {
+					// Every departure at or after the label arrival is
+					// boardable: a later trip with a fuller stopping
+					// pattern may reach stops the earliest trip skips.
+					for _, trip := range trips {
+						boardPos, ok := tripBoardPos[trip.ID][stop]
+						if !ok || boardPos >= len(trip.StopTimes)-1 {
 							continue
 						}
-						dt := dayBase.Add(time.Duration(st.DepartureSec) * time.Second)
+						dt := dayBase.Add(time.Duration(trip.StopTimes[boardPos].DepartureSec) * time.Second)
 						for dt.Before(depart) {
 							dt = dt.Add(24 * time.Hour)
 						}
-						for dt.Before(w.l.arr) {
+						for dt.Before(wl.arr) {
 							dt = dt.Add(24 * time.Hour)
 						}
-						if bestTripIdx == -1 || dt.Before(bestBoardTime) {
-							bestTripIdx = ti
-							bestBoardPos = pos
-							bestBoardTime = dt
-						}
-						break
-					}
-				}
-				if bestTripIdx == -1 {
-					continue
-				}
-				trip := trips[bestTripIdx]
-				tripsMade := w.l.trips + 1
-				if w.l.trip != "" && w.l.trip == trip.ID {
-					tripsMade = w.l.trips
-				}
-				for i := bestBoardPos; i < len(trip.StopTimes)-1; i++ {
-					fromST := trip.StopTimes[i]
-					toST := trip.StopTimes[i+1]
-					depT := dayBase.Add(time.Duration(fromST.DepartureSec) * time.Second)
-					arrT := dayBase.Add(time.Duration(toST.ArrivalSec) * time.Second)
-					if arrT.Before(depT) {
-						arrT = arrT.Add(24 * time.Hour)
-					}
-					for depT.Before(earliest[fromST.StopID]) {
-						depT = depT.Add(24 * time.Hour)
-						arrT = arrT.Add(24 * time.Hour)
-					}
-					if depT.Before(w.l.arr) {
-						continue
-					}
-					if i == bestBoardPos && w.l.trip != "" && w.l.trip != trip.ID {
-						buf := p.minTransfer
-						if trip.Mode == model.ModeFlight {
-							buf = p.flightCheckIn
-						}
-						if buf > 0 && depT.Before(w.l.arr.Add(time.Duration(buf)*time.Minute)) {
-							continue
-						}
-					}
-					if fromStopObj, ok1 := net.Stops[fromST.StopID]; ok1 {
-						if toStopObj, ok2 := net.Stops[toST.StopID]; ok2 {
-							if isImplausibleLeg(fromStopObj, toStopObj, depT, arrT, trip.Mode) {
-								continue
-							}
-						}
-					}
-					nl := &mcLabel{
-						stop: toST.StopID, arr: arrT, trips: tripsMade, trip: trip.ID,
-						pr: &prev{conn: &model.Connection{
-							TripID: trip.ID, ProviderID: trip.ProviderID, RouteID: trip.RouteID, Mode: trip.Mode,
-							From: fromST.StopID, To: toST.StopID, Departure: depT, Arrival: arrT,
-						}},
-						parent: w.l,
-					}
-					if improve(nl) {
-						relaxFoot(nl)
+						_ = dt
+						boardTrip(wl, trip, boardPos)
 					}
 				}
 			}
@@ -283,6 +347,13 @@ func (p *Planner) mcraptorBags(net *model.Network, fromStop string, depart time.
 // cap 2) so downstream swap/pricing behave identically.
 func (p *Planner) nativeAlternatives(net *model.Network, from, to model.Coords, params model.SearchParams, fromStop, toStop *model.Stop, best *model.Journey, transitDepart time.Time) []model.Journey {
 	bags := p.mcraptorBags(net, fromStop.ID, transitDepart, params)
+	return p.nativeAlternativesFromBags(net, bags, from, to, params, fromStop, toStop, best)
+}
+
+// nativeAlternativesFromBags — same front over precomputed bags: the
+// departure fast path in planWithStops reuses the bags built for the best
+// journey instead of running a second full search.
+func (p *Planner) nativeAlternativesFromBags(net *model.Network, bags map[string][]*mcLabel, from, to model.Coords, params model.SearchParams, fromStop, toStop *model.Stop, best *model.Journey) []model.Journey {
 	labels := append([]*mcLabel(nil), bags[toStop.ID]...)
 	pref := params.Preference
 	if pref == "" {

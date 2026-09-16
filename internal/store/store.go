@@ -128,6 +128,10 @@ type FareStore interface {
 
 type QuotaStore interface {
 	TryConsumeQuota(ctx context.Context, provider string, limit int) (bool, int, error)
+	// RefundQuota returns a TryConsumeQuota reservation for the given UTC day
+	// (the day the reservation was taken): budget counts successes only,
+	// attempts stay in the api_calls log. Floor 0, never negative.
+	RefundQuota(ctx context.Context, provider string, day time.Time) error
 	GetQuota(ctx context.Context, provider string, day time.Time) (QuotaRow, bool)
 	SetQuotaLimit(ctx context.Context, provider string, limit int) error
 	RecordApiCall(ctx context.Context, provider, endpoint string, cost int) error

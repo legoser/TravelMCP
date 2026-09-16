@@ -59,14 +59,8 @@ func AssertQuotaContract(t *testing.T, st store.Store, prov, other string) {
 	if !found || q.Used != limit+1 || q.Limit != limit*2 {
 		t.Fatalf("GetQuota = %+v found=%v, want used=%d limit=%d", q, found, limit+1, limit*2)
 	}
-	rq, ok := st.(interface {
-		RefundQuota(ctx context.Context, provider string) error
-	})
-	if !ok {
-		t.Fatal("store must implement RefundQuota")
-	}
 	// used is limit+1 here: one refund returns a single unit.
-	if err := rq.RefundQuota(ctx, prov); err != nil {
+	if err := st.RefundQuota(ctx, prov, day); err != nil {
 		t.Fatal(err)
 	}
 	if q, _ := st.GetQuota(ctx, prov, day); q.Used != limit {
@@ -74,7 +68,7 @@ func AssertQuotaContract(t *testing.T, st store.Store, prov, other string) {
 	}
 	// Drain to the floor: used never goes negative, consume works again.
 	for i := 0; i < limit+2; i++ {
-		if err := rq.RefundQuota(ctx, prov); err != nil {
+		if err := st.RefundQuota(ctx, prov, day); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -81,6 +81,61 @@ func TestMcraptorParityIntercity(t *testing.T) {
 	assertMcParity(t, "intercity "+probe.ID, csa, mc, errCSA, errMC)
 }
 
+// TestMcraptorShortEarlyVsFullLate — один RouteID с разными паттернами:
+// ранний укороченный рейс не доезжает до цели, поздний полный доезжает.
+// Жадный выбор только ранней поездки на маршруте терял цель; поиск обязан
+// рассматривать все отправления после прибытия лейбла.
+func TestMcraptorShortEarlyVsFullLate(t *testing.T) {
+	day := time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC)
+	mkStop := func(id string, lat, lon float64) *model.Stop {
+		return &model.Stop{ID: id, ProviderID: "test", Name: id, Lat: lat, Lon: lon}
+	}
+	net := model.NewNetwork()
+	net.Stops["A"] = mkStop("A", 55.0, 86.0)
+	net.Stops["B"] = mkStop("B", 55.01, 86.01)
+	net.Stops["C"] = mkStop("C", 55.02, 86.02)
+	// Early short: A->B 06:10-06:20, цель C недостижима этим рейсом.
+	net.Trips["short"] = &model.Trip{ID: "short", RouteID: "r1", ProviderID: "test", Mode: model.ModeBus, StopTimes: []model.StopTime{
+		{StopID: "A", Sequence: 0, ArrivalSec: 370 * 60, DepartureSec: 370 * 60},
+		{StopID: "B", Sequence: 1, ArrivalSec: 380 * 60, DepartureSec: 380 * 60},
+	}}
+	// Late full: A->B->C 06:30-06:50.
+	net.Trips["full"] = &model.Trip{ID: "full", RouteID: "r1", ProviderID: "test", Mode: model.ModeBus, StopTimes: []model.StopTime{
+		{StopID: "A", Sequence: 0, ArrivalSec: 390 * 60, DepartureSec: 390 * 60},
+		{StopID: "B", Sequence: 1, ArrivalSec: 400 * 60, DepartureSec: 401 * 60},
+		{StopID: "C", Sequence: 2, ArrivalSec: 410 * 60, DepartureSec: 410 * 60},
+	}}
+	net.BuildIndexes()
+	p := NewWithEngine(nil, "mcraptor")
+	params := model.SearchParams{Departure: day.Add(6 * time.Hour), MaxTransfers: -1}
+	bags := p.mcraptorBags(net, "A", day.Add(6*time.Hour), params)
+	if selectTargetLabel(bags["C"], -1) == nil {
+		t.Fatal("mcraptor bags: C unreachable, late full trip was skipped")
+	}
+	mc, err := p.Plan(net,
+		model.Coords{Lat: 55.0, Lon: 86.0}, model.Coords{Lat: 55.02, Lon: 86.02}, params)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if got := mc.Arrival.Hour()*60 + mc.Arrival.Minute(); got != 410 {
+		t.Fatalf("arrival=%v, want 06:50 (late full trip)", mc.Arrival)
+	}
+}
+
+func TestMergeLabelEqualCollapse(t *testing.T) {
+	bags := map[string][]*mcLabel{}
+	at := time.Date(2026, 8, 30, 6, 30, 0, 0, time.UTC)
+	if !mergeLabel(bags, &mcLabel{stop: "B", arr: at, trips: 1}) {
+		t.Fatal("first label must improve")
+	}
+	if mergeLabel(bags, &mcLabel{stop: "B", arr: at, trips: 1}) {
+		t.Fatal("equal label must not improve (tie-break)")
+	}
+	if len(bags["B"]) != 1 {
+		t.Fatalf("bag size=%d, want 1", len(bags["B"]))
+	}
+}
+
 // TestMcraptorTransferLimitChoice — критерий вместо пост-проверки: быстрый
 // маршрут с пересадкой и медленный прямой. Нативный фронт видит обоих
 // (эвристика сдвигов видела только попутных победителей), поэтому при
