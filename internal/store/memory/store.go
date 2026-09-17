@@ -318,6 +318,10 @@ func (m *MemoryStore) TryConsumeQuota(ctx context.Context, provider string, limi
 	if !ok {
 		q = store.QuotaRow{Provider: provider, Day: day, Used: 0, Limit: limit}
 	}
+	if q.ResetAt == nil {
+		reset := nextUTCMidnight().Format("2006-01-02 15:04:05-07:00")
+		q.ResetAt = &reset
+	}
 	if q.Limit != limit && q.Limit != 0 {
 		limit = q.Limit
 	}
@@ -373,8 +377,18 @@ func (m *MemoryStore) SetQuotaLimit(ctx context.Context, provider string, limit 
 	q.Provider = provider
 	q.Day = day
 	q.Limit = limit
+	if q.ResetAt == nil {
+		reset := nextUTCMidnight().Format("2006-01-02 15:04:05-07:00")
+		q.ResetAt = &reset
+	}
 	m.quotas[key] = q
 	return nil
+}
+
+// nextUTCMidnight — ближайшая полночь UTC (сброс суточной квоты,
+// зеркало reset_at postgres: (now() AT TIME ZONE 'UTC')::date + 1 day).
+func nextUTCMidnight() time.Time {
+	return time.Now().UTC().Truncate(24 * time.Hour).Add(24 * time.Hour)
 }
 
 func (m *MemoryStore) RecordApiCall(ctx context.Context, provider, endpoint string, cost int) error {
@@ -647,12 +661,27 @@ func (m *MemoryStore) MarkJobRetry(ctx context.Context, id int64, errMsg string)
 	}
 	j.State = "retry"
 	j.LastError = errMsg
-	j.Attempts++
-	backoff := time.Duration(j.Attempts*2) * time.Minute
+	backoff := time.Duration((j.Attempts+1)*2) * time.Minute
 	if backoff > 30*time.Minute {
 		backoff = 30 * time.Minute
 	}
-	j.NextRun = time.Now().Add(backoff).Format(time.RFC3339)
+	return m.markJobRetryAtLocked(id, errMsg, time.Now().Add(backoff))
+}
+
+func (m *MemoryStore) MarkJobRetryAt(ctx context.Context, id int64, errMsg string, nextRun time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.markJobRetryAtLocked(id, errMsg, nextRun)
+}
+
+func (m *MemoryStore) markJobRetryAtLocked(id int64, errMsg string, nextRun time.Time) error {
+	j, ok := m.jobs[id]
+	if !ok {
+		return fmt.Errorf("job %d not found", id)
+	}
+	j.State = "retry"
+	j.LastError = errMsg
+	j.NextRun = nextRun.Format(time.RFC3339)
 	m.jobs[id] = j
 	return nil
 }

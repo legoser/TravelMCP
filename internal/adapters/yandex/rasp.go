@@ -100,12 +100,13 @@ type Rasp struct {
 
 // RaspStats — сводка вызовов: что взято из кэша, что из API, что скипнуто.
 type RaspStats struct {
-	ScheduleCache int
-	ScheduleAPI   int
-	SchedulePages int
-	ThreadCache   int
-	ThreadAPI     int
-	QuotaBlocked  int
+	ScheduleCache  int
+	ScheduleAPI    int
+	SchedulePages  int
+	ScheduleMerged int
+	ThreadCache    int
+	ThreadAPI      int
+	QuotaBlocked   int
 }
 
 func NewRasp(cfg config.Config, client *httpx.Client, cacheDir string, quota QuotaFunc, offline bool) *Rasp {
@@ -153,8 +154,13 @@ func (r *Rasp) Stats() RaspStats {
 // schedule_<code>_<date>.json содержит одну страницу (как собирали
 // скрипты); дополнительные страницы сохраняются как
 // schedule_<code>_<date>_<offset>.json и мержатся в памяти.
+// Чтение из кэша игнорирует дату: файлы станции за все даты сливаются
+// с дедупом по UID нитки, поэтому offline-сбор не требует помнить,
+// какие даты лежат в кэше. Запись остаётся date-keyed (перезапись того
+// же ключа); в API уходим, только когда кэша станции нет вообще.
 func (r *Rasp) Schedule(ctx context.Context, stationCode, date string) (*RaspSchedule, error) {
 	merged := &RaspSchedule{}
+	exactOK := false
 	if raw, ok := readJSONFile(r.schedulePath(stationCode, date, 0)); ok {
 		if err := json.Unmarshal(raw, merged); err != nil {
 			return nil, fmt.Errorf("rasp schedule cache %s: %w", stationCode, err)
@@ -162,15 +168,36 @@ func (r *Rasp) Schedule(ctx context.Context, stationCode, date string) (*RaspSch
 		r.mu.Lock()
 		r.stats.ScheduleCache++
 		r.mu.Unlock()
-	} else if r.offline {
-		return nil, fmt.Errorf("rasp: нет кэша расписания %s на %s (offline)", stationCode, date)
-	} else {
-		if err := r.fetchSchedule(ctx, merged, stationCode, date, 0); err != nil {
-			return nil, err
-		}
+		exactOK = true
 	}
 	if merged.Pagination.Limit <= 0 {
 		merged.Pagination.Limit = 100
+	}
+	if raws := r.otherDateSchedules(stationCode, date); len(raws) > 0 {
+		for _, raw := range raws {
+			extra := &RaspSchedule{}
+			if err := json.Unmarshal(raw, extra); err != nil {
+				continue
+			}
+			merged.Schedule = append(merged.Schedule, extra.Schedule...)
+		}
+		r.mu.Lock()
+		r.stats.ScheduleCache += len(raws)
+		r.stats.ScheduleMerged += len(raws)
+		r.mu.Unlock()
+	}
+	if !exactOK {
+		if len(merged.Schedule) > 0 {
+			dedupeScheduleUIDs(merged)
+			return merged, nil
+		}
+		if r.offline {
+			return nil, fmt.Errorf("rasp: нет кэша расписания %s ни на одну дату (offline)", stationCode)
+		}
+		if err := r.fetchSchedule(ctx, merged, stationCode, date, 0); err != nil {
+			return nil, err
+		}
+		exactOK = true
 	}
 	for off := merged.Pagination.Limit; off < merged.Pagination.Total; off += merged.Pagination.Limit {
 		extra := &RaspSchedule{}
@@ -195,6 +222,74 @@ func (r *Rasp) Schedule(ctx context.Context, stationCode, date string) (*RaspSch
 	}
 	dedupeScheduleUIDs(merged)
 	return merged, nil
+}
+
+// otherDateSchedules — сырые JSON файлов расписания станции за даты,
+// отличные от запрошенной (включая их постраничные _<offset> файлы).
+// Имя после префикса обязано начинаться с даты YYYY-MM-DD, чтобы коды,
+// являющиеся префиксом других кодов, не подмешивались.
+func (r *Rasp) otherDateSchedules(stationCode, date string) [][]byte {
+	if r.cacheDir == "" {
+		return nil
+	}
+	prefix := "schedule_" + sanitizeUID(stationCode) + "_"
+	exactPrefix := prefix + date
+	entries, err := os.ReadDir(r.cacheDir)
+	if err != nil {
+		return nil
+	}
+	var out [][]byte
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		if !strings.HasPrefix(name, prefix) || strings.HasPrefix(name, exactPrefix) {
+			continue
+		}
+		if !isScheduleDateRest(strings.TrimSuffix(strings.TrimPrefix(name, prefix), ".json")) {
+			continue
+		}
+		raw, ok := readJSONFile(filepath.Join(r.cacheDir, name))
+		if !ok {
+			continue
+		}
+		out = append(out, raw)
+	}
+	return out
+}
+
+// isScheduleDateRest — остаток имени файла после schedule_<code>_:
+// YYYY-MM-DD с опциональным _<offset>.
+func isScheduleDateRest(rest string) bool {
+	if len(rest) < 10 {
+		return false
+	}
+	d := rest[:10]
+	if d[4] != '-' || d[7] != '-' {
+		return false
+	}
+	for i := 0; i < 10; i++ {
+		if i == 4 || i == 7 {
+			continue
+		}
+		if d[i] < '0' || d[i] > '9' {
+			return false
+		}
+	}
+	tail := rest[10:]
+	if tail == "" {
+		return true
+	}
+	if tail[0] != '_' || len(tail) < 2 {
+		return false
+	}
+	for i := 1; i < len(tail); i++ {
+		if tail[i] < '0' || tail[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (r *Rasp) fetchSchedule(ctx context.Context, out *RaspSchedule, stationCode, date string, offset int) error {

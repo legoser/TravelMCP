@@ -355,6 +355,89 @@ func TestRaspOfflineScheduleFromCache(t *testing.T) {
 	}
 }
 
+func writeTestSchedule(t *testing.T, dir, code, date string, uids ...string) {
+	t.Helper()
+	items := make([]RaspScheduleItem, 0, len(uids))
+	for _, u := range uids {
+		it := RaspScheduleItem{}
+		it.Thread.UID = u
+		items = append(items, it)
+	}
+	st := &RaspSchedule{Schedule: items}
+	st.Pagination.Total = len(items)
+	st.Pagination.Limit = 100
+	raw, _ := json.Marshal(st)
+	if err := os.WriteFile(filepath.Join(dir, "schedule_"+code+"_"+date+".json"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func scheduleUIDs(s *RaspSchedule) map[string]bool {
+	out := map[string]bool{}
+	for _, it := range s.Schedule {
+		out[it.Thread.UID] = true
+	}
+	return out
+}
+
+// TestRaspOfflineScheduleMergesAllDates — чтение из кэша игнорирует дату:
+// offline-сбор сливает файлы станции за все даты с дедупом по UID.
+func TestRaspOfflineScheduleMergesAllDates(t *testing.T) {
+	dir := t.TempDir()
+	writeTestSchedule(t, dir, "s9623379", "2026-09-01", "u1", "u2")
+	writeTestSchedule(t, dir, "s9623379", "2026-09-10", "u2", "u3")
+	writeTestSchedule(t, dir, "s96233790", "2026-09-05", "u9")
+	r := NewRasp(config.Config{}, httpx.New(nil, "rasp-test"), dir, nil, true)
+	got, err := r.Schedule(context.Background(), "s9623379", "2026-09-17")
+	if err != nil {
+		t.Fatalf("offline обязан читать кэш за другие даты: %v", err)
+	}
+	uids := scheduleUIDs(got)
+	for _, want := range []string{"u1", "u2", "u3"} {
+		if !uids[want] {
+			t.Fatalf("uids=%v, want %q", uids, want)
+		}
+	}
+	if len(uids) != 3 {
+		t.Fatalf("uids=%v, want дедуп до 3", uids)
+	}
+	if uids["u9"] {
+		t.Fatalf("uids=%v: код-префикс s96233790 не должен подмешиваться", uids)
+	}
+	if r.Stats().ScheduleAPI != 0 {
+		t.Fatalf("offline обязан работать без API: %+v", r.Stats())
+	}
+	if r.Stats().ScheduleMerged != 2 {
+		t.Fatalf("merged=%d, want 2", r.Stats().ScheduleMerged)
+	}
+}
+
+// TestRaspOnlineScheduleUsesCacheBeforeAPI — онлайн тоже сначала читает
+// кэш за любые даты и идёт в API, только когда кэша станции нет вообще.
+func TestRaspOnlineScheduleUsesCacheBeforeAPI(t *testing.T) {
+	dir := t.TempDir()
+	writeTestSchedule(t, dir, "s9623379", "2026-09-01", "u1")
+	calls := 0
+	quota := func(_ context.Context, _ string, _ int) (bool, int, error) {
+		calls++
+		return true, calls, nil
+	}
+	cfg := config.Config{}
+	cfg.Yandex.RaspURL = "http://127.0.0.1:1"
+	cfg.Yandex.RaspKey = "test-key"
+	r := NewRasp(cfg, httpx.New(nil, "rasp-test"), dir, quota, false)
+	got, err := r.Schedule(context.Background(), "s9623379", "2026-09-17")
+	if err != nil {
+		t.Fatalf("кэш за другую дату обязан использоваться без API: %v", err)
+	}
+	if !scheduleUIDs(got)["u1"] {
+		t.Fatalf("uids=%v, want u1", scheduleUIDs(got))
+	}
+	if calls != 0 {
+		t.Fatalf("квота/API не должны вызываться при наличии кэша: calls=%d", calls)
+	}
+}
+
 func TestRaspThreadQuotaGate(t *testing.T) {
 	dir := t.TempDir()
 	cfg := config.Config{}

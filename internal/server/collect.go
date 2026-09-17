@@ -75,10 +75,23 @@ func (s *Server) enqueueCollectJob(w http.ResponseWriter, reqst *http.Request, k
 		writeJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "regions или region обязательны"})
 		return
 	}
+	region := req.Region
+	// Точечный сбор: регион подставляется сразу (из тегов терминала),
+	// чтобы задание было видно в таблице Jobs по региону, а не с пустым
+	// значением — хендлер позже делает то же самое для конвейера.
+	if kind == "trips" && region == "" && req.TerminalID > 0 {
+		if tagger, ok := s.store.(interface {
+			GetTerminalTags(ctx context.Context, id int64) (map[string]string, error)
+		}); ok {
+			if tags, err := tagger.GetTerminalTags(reqst.Context(), req.TerminalID); err == nil {
+				region = tags["region"]
+			}
+		}
+	}
 	payload, err := json.Marshal(map[string]any{
 		"kind":          kind,
 		"regions":       req.Regions,
-		"region":        req.Region,
+		"region":        region,
 		"date":          req.Date,
 		"transports":    req.Transports,
 		"station_types": req.StationTypes,
@@ -93,7 +106,6 @@ func (s *Server) enqueueCollectJob(w http.ResponseWriter, reqst *http.Request, k
 		writeJSONResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	region := req.Region
 	if region == "" && len(req.Regions) > 0 {
 		region = req.Regions[0]
 	}

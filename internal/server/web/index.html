@@ -35,7 +35,7 @@
 <div id="rtOut" style="margin-top:10px"></div>
 </div>
 
-<div class="tabs"><div class="tab active" onclick="showTab('users')">Пользователи</div><div class="tab" onclick="showTab('keys')">Ключи</div><div class="tab" onclick="showTab('config')">Конфиг</div><div class="tab" onclick="showTab('dash')">Дашборд</div><div class="tab" onclick="showTab('collect')">Сбор</div><div class="tab" onclick="showTab('runs')">Прогоны</div><div class="tab" onclick="showTab('imports')">Импорты</div><div class="tab" onclick="showTab('terminals')">Терминалы</div><div class="tab" onclick="showTab('schedules')">Расписания</div><div class="tab" onclick="showTab('review')">Ревью</div><div class="tab" onclick="showTab('external')">Внешний API</div><div class="tab" onclick="showTab('quotas')">Квоты/Аудит</div></div>
+<div class="tabs"><div class="tab active" onclick="showTab('users')">Пользователи</div><div class="tab" onclick="showTab('keys')">Ключи</div><div class="tab" onclick="showTab('config')">Конфиг</div><div class="tab" onclick="showTab('dash')">Дашборд</div><div class="tab" onclick="showTab('collect')">Сбор</div><div class="tab" onclick="showTab('runs')">Импорты</div><div class="tab" onclick="showTab('imports')">Jobs</div><div class="tab" onclick="showTab('terminals')">Терминалы</div><div class="tab" onclick="showTab('schedules')">Расписания</div><div class="tab" onclick="showTab('review')">Ревью</div><div class="tab" onclick="showTab('external')">Внешний API</div><div class="tab" onclick="showTab('quotas')">Квоты/Аудит</div></div>
 
 <div id="tab-users" class="card">
 <div class="row" style="justify-content:space-between"><h2>Пользователи</h2><button class="secondary" onclick="loadUsers()">↻ Обновить</button></div>
@@ -82,7 +82,7 @@
 
 <div id="tab-collect" class="card hidden">
 <div class="row" style="justify-content:space-between"><h2>Сбор региона (ручной режим)</h2><button class="secondary" onclick="loadCollectRegions()">↻ Обновить регионы</button></div>
-<div class="muted" style="font-size:12px;margin-top:6px">Односторонний импорт из Яндекс-дампа → unverified-терминалы в каноне. Затем валидация через внешние API и ручное одобрение во вкладке <b>Терминалы</b>. Сбор рейсов — cache-first (кэш валиден), недостающее добирается через API по квоте. <b>Городские остановки (bus_stop)</b> — только если осознанно хотите плотное городское покрытие: их ~126 тыс. в дампе, расписаний в кэше для них нет — offline их не соберёт, а онлайн сожжёт квоту.</div>
+<div class="muted" style="font-size:12px;margin-top:6px">Односторонний импорт из Яндекс-дампа → unverified-терминалы в каноне. Затем валидация через внешние API и ручное одобрение во вкладке <b>Терминалы</b>. Сбор рейсов — cache-first (кэш валиден, дата при чтении из кэша игнорируется — сливаются все даты), недостающее добирается через API по квоте. Результаты сборов — во вкладке <b>Импорты</b>, очередь фоновых заданий — во вкладке <b>Jobs</b>. <b>Городские остановки (bus_stop)</b> — только если осознанно хотите плотное городское покрытие: их ~126 тыс. в дампе, расписаний в кэше для них нет — offline их не соберёт, а онлайн сожжёт квоту.</div>
 <div class="grid" style="margin-top:10px">
 <div><label class="muted">Регион (дампа Яндекса)</label><select id="colRegion" style="width:100%" onchange="colRegionChanged()"><option value="">— загрузите список —</option></select></div>
 <div><label class="muted">Дата расписаний (для рейсов)</label><input id="colDate" style="width:100%" placeholder="YYYY-MM-DD (пусто = сегодня)"></div>
@@ -129,14 +129,15 @@
 </div>
 
 <div id="tab-runs" class="card hidden">
-<div class="row" style="justify-content:space-between"><h2>Прогоны — сводка качества</h2><button class="secondary" onclick="loadRuns()">↻ Обновить</button></div>
-<div class="muted" style="font-size:12px;margin-top:6px">sync_runs: сборы скелета/рейсов и attach-конвейер. Клик по строке — полная сводка (coverage, promoted/staged/dead по маршрутам, квоты).</div>
+<div class="row" style="justify-content:space-between"><h2>Импорты — результаты сборов</h2><button class="secondary" onclick="loadRuns()">↻ Обновить</button></div>
+<div class="muted" style="font-size:12px;margin-top:6px">sync_runs: что импортировано в систему сборами скелета/рейсов и attach-конвейером. Очередь фоновых заданий — во вкладке <b>Jobs</b>. Клик по строке — полная сводка (coverage, promoted/staged/dead по маршрутам, квоты).</div>
 <div style="overflow:auto;margin-top:10px"><table><thead><tr><th>ID</th><th>kind</th><th>tag</th><th>state</th><th>создан</th><th>завершён</th><th></th></tr></thead><tbody id="runsBody"><tr><td colspan="7" class="muted">—</td></tr></tbody></table></div>
 <pre id="runDetail" class="mono hidden" style="margin-top:12px;max-height:420px;overflow:auto">—</pre>
 </div>
 
 <div id="tab-imports" class="card hidden">
-<div class="row" style="justify-content:space-between"><h2>Импорты и Jobs</h2><button class="secondary" onclick="loadImports()">↻ Обновить</button></div>
+<div class="row" style="justify-content:space-between"><h2>Jobs — фоновые задания</h2><button class="secondary" onclick="loadImports()">↻ Обновить</button></div>
+<div class="muted" style="font-size:12px;margin-top:6px">Очередь заданий (сборы, импорты GTFS, rail, cleanup). Результаты завершённых сборов — во вкладке <b>Импорты</b>.</div>
 <div class="row" style="margin-top:8px;gap:8px"><button onclick="enqueueMintrans()">Обновить автобусы (mintrans)</button><button onclick="enqueueRail()">Обновить ж/д (rail)</button><label class="secondary" style="cursor:pointer;padding:6px 10px;border:1px solid #ccc;border-radius:4px">Выбрать gtfs.zip <input type="file" id="gtfsFile" accept=".zip" style="display:none" onchange="enqueueGTFS(this)"></label><button class="secondary" onclick="document.getElementById('gtfsFile').click()">Upload gtfs.zip</button><button class="secondary" onclick="loadJobs()">Jobs</button><button class="secondary" onclick="loadLogs()">Logs</button></div>
 <div class="muted" style="font-size:11px;margin-top:4px">Выбранный zip загружается в <code>data/tmp/gtfs/&lt;uuid&gt;/&lt;имя&gt;</code> (уникальный каталог), распаковывается в <code>unpacked/</code>; успешно — каталог удаляется, при <code>dead</code> остаётся для дебага. <code>POST /api/v1/import/gtfs</code> → <code>jobs import_gtfs payload={\"path\":...,\"tmp_dir\":...,\"hash\":sha256}</code>.</div>
 <div style="overflow:auto;margin-top:10px"><h3 style="font-size:13px">Последние импорты</h3><table><thead><tr><th>provider</th><th>at</th><th>records</th><th>status</th><th>checksum</th></tr></thead><tbody id="importsBody"><tr><td colspan="5" class="muted">—</td></tr></tbody></table></div>

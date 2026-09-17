@@ -150,6 +150,10 @@ type JobStore interface {
 	ClaimNextJob(ctx context.Context) (*JobRow, error)
 	MarkJobDone(ctx context.Context, id int64) error
 	MarkJobRetry(ctx context.Context, id int64, errMsg string) error
+	// MarkJobRetryAt — повтор к заданному времени (ретрай квоты до
+	// reset_at из api_quotas). Счётчик attempts не трогает: он растёт
+	// только в ClaimNextJob (одна попытка = один claim).
+	MarkJobRetryAt(ctx context.Context, id int64, errMsg string, nextRun time.Time) error
 	MarkJobDead(ctx context.Context, id int64, errMsg string) error
 	ListJobs(ctx context.Context, limit int) ([]JobRow, error)
 }

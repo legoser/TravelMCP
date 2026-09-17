@@ -1460,7 +1460,14 @@ func (p *PostgresStore) MarkJobRetry(ctx context.Context, id int64, errMsg strin
 	if backoff > 30*time.Minute {
 		backoff = 30 * time.Minute
 	}
-	_, err := p.pool.Exec(ctx, `UPDATE jobs SET state='retry', last_error=$2, attempts=attempts+1, next_run=now()+$3::interval, updated_at=now() WHERE id=$1`, id, errMsg, fmt.Sprintf("%d seconds", int(backoff.Seconds())))
+	return p.MarkJobRetryAt(ctx, id, errMsg, time.Now().Add(backoff))
+}
+
+func (p *PostgresStore) MarkJobRetryAt(ctx context.Context, id int64, errMsg string, nextRun time.Time) error {
+	if p.pool == nil {
+		return nil
+	}
+	_, err := p.pool.Exec(ctx, `UPDATE jobs SET state='retry', last_error=$2, next_run=$3, updated_at=now() WHERE id=$1`, id, errMsg, nextRun)
 	return err
 }
 
@@ -2106,7 +2113,11 @@ func (t *pgTxStore) MarkJobRetry(ctx context.Context, id int64, errMsg string) e
 	if backoff > 30*time.Minute {
 		backoff = 30 * time.Minute
 	}
-	_, err := t.tx.Exec(ctx, `UPDATE jobs SET state='retry', last_error=$2, attempts=attempts+1, next_run=now()+$3::interval, updated_at=now() WHERE id=$1`, id, errMsg, fmt.Sprintf("%d seconds", int(backoff.Seconds())))
+	return t.MarkJobRetryAt(ctx, id, errMsg, time.Now().Add(backoff))
+}
+
+func (t *pgTxStore) MarkJobRetryAt(ctx context.Context, id int64, errMsg string, nextRun time.Time) error {
+	_, err := t.tx.Exec(ctx, `UPDATE jobs SET state='retry', last_error=$2, next_run=$3, updated_at=now() WHERE id=$1`, id, errMsg, nextRun)
 	return err
 }
 

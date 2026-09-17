@@ -269,10 +269,21 @@ func (cr *CollectRunner) runTrips(ctx context.Context, jobID int64, p collectPay
 		"restricted", stats.Restricted, "no_times", stats.NoTimes, "empty", stats.Empty,
 		"threads_dead", stats.ThreadsDead,
 		"rasp_schedule_cache", rs.ScheduleCache, "rasp_schedule_api", rs.ScheduleAPI,
+		"rasp_schedule_merged", rs.ScheduleMerged,
 		"rasp_thread_cache", rs.ThreadCache, "rasp_thread_api", rs.ThreadAPI,
 		"rasp_quota_blocked", rs.QuotaBlocked)
 	if len(trips) == 0 {
-		return fmt.Errorf("collect trips: годных рейсов нет (кэш %s пуст для %s или квота исчерпана)", cfg.Yandex.RaspCacheDir, date)
+		if p.Offline {
+			code := ""
+			if len(yan) == 1 {
+				code = yan[0].PrimaryCode()
+			}
+			return &syncpkg.ErrOfflineCacheEmpty{TerminalID: p.TerminalID, Code: code, Region: p.Region, Date: date}
+		}
+		if rs.QuotaBlocked > 0 {
+			return &syncpkg.ErrQuotaBlocked{Provider: "yandex_rasp"}
+		}
+		return fmt.Errorf("collect trips: годных рейсов нет (кэш %s пуст для %s)", cfg.Yandex.RaspCacheDir, date)
 	}
 
 	rst, ok := cr.Store.(syncpkg.TripsRunnerStore)

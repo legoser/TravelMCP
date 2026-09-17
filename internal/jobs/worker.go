@@ -3,12 +3,14 @@ package jobs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
 	"travelmcp/internal/store"
+	syncpkg "travelmcp/internal/sync"
 )
 
 type Handler func(ctx context.Context, job store.JobRow) error
@@ -53,6 +55,19 @@ func (w *Worker) RunOnce(ctx context.Context) error {
 	if err := w.withQuota(ctx, job, h); err != nil {
 		if IsCancelled(err) {
 			w.logger.Warn("job cancelled by operator", "id", job.ID, "type", job.Type)
+			return err
+		}
+		var offlineErr *syncpkg.ErrOfflineCacheEmpty
+		if errors.As(err, &offlineErr) {
+			w.logger.Warn("job dead: offline cache empty, retry pointless", "id", job.ID, "type", job.Type, "err", err)
+			_ = w.store.MarkJobDead(ctx, job.ID, err.Error())
+			return err
+		}
+		var quotaErr *syncpkg.ErrQuotaBlocked
+		if errors.As(err, &quotaErr) {
+			nextRun := w.quotaResetAt(ctx, quotaErr.Provider)
+			w.logger.Warn("job quota blocked, retry after reset", "id", job.ID, "type", job.Type, "provider", quotaErr.Provider, "next_run", nextRun)
+			_ = w.store.MarkJobRetryAt(ctx, job.ID, err.Error(), nextRun)
 			return err
 		}
 		if isRateLimited(err) {
@@ -143,6 +158,20 @@ func (w *Worker) refundQuota(ctx context.Context, provider string, day time.Time
 	if err := w.store.RefundQuota(ctx, provider, day); err != nil {
 		w.logger.Warn("quota refund failed", "provider", provider, "err", err)
 	}
+}
+
+// quotaResetAt — время сброса суточной квоты провайдера (reset_at из
+// api_quotas) + 2 минуты джиттера, чтобы не стартовать ровно в полночь
+// вместе с остальной очередью. Нет строки квоты — fallback +12 часов.
+func (w *Worker) quotaResetAt(ctx context.Context, provider string) time.Time {
+	if q, ok := w.store.GetQuota(ctx, provider, time.Now().UTC()); ok && q.ResetAt != nil && *q.ResetAt != "" {
+		for _, layout := range []string{"2006-01-02 15:04:05-07:00", "2006-01-02 15:04:05-07", time.RFC3339} {
+			if ts, err := time.Parse(layout, *q.ResetAt); err == nil {
+				return ts.Add(2 * time.Minute)
+			}
+		}
+	}
+	return time.Now().Add(12 * time.Hour)
 }
 
 func (w *Worker) providersForJob(job *store.JobRow) []string {

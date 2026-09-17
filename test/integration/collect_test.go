@@ -92,6 +92,25 @@ func TestCollectEndpointsAndSyncRuns(t *testing.T) {
 		t.Fatalf("trips job payload wrong: %v", tripsJob)
 	}
 
+	// Точечный сбор: регион подставляется из тегов терминала при
+	// постановке, чтобы задание было видно в Jobs по региону.
+	termID, err := ms.UpsertTerminal(t.Context(), store.TerminalRow{}, map[string]string{"ru": "Томск АВ"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ms.SetTerminalTag(t.Context(), termID, "region", "Томская область"); err != nil {
+		t.Fatal(err)
+	}
+	pointJob := post("/api/v1/collect/trips", map[string]any{
+		"terminal_id": float64(termID),
+		"transport":   "bus",
+		"date":        "2026-09-17",
+		"offline":     true,
+	})
+	if pointJob["kind"] != "trips" || pointJob["region"] != "Томская область" {
+		t.Fatalf("point job region wrong: %v", pointJob)
+	}
+
 	// issue #12: overpass-сбор терминалов+маршрутов без расписания
 	routesJob := post("/api/v1/collect/routes", map[string]any{
 		"region": "Республика Алтай",

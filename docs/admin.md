@@ -12,11 +12,14 @@
 ### Пользователи / Ключи / Конфиг / Дашборд
 Базовые: модерация `pending→active→blocked`, выдача `mcp:read/admin` ключей (`POST /api/v1/keys`), hot-reload `PUT /api/v1/config {"providers":{"enabled":["synth","intercity"]},"planner":{"engine":"csa"}}`, дашборд `GET /api/v1/dashboard` + `GET /api/v1/providers`/`/metrics`.
 
-### Импорты (Фаза 5 B+)
+### Импорты — результаты сборов
+`GET /api/v1/sync/runs` — `sync_runs`: что импортировано в систему сборами скелета/рейсов и attach-конвейером (клик по строке — сводка coverage/promoted/staged/dead/квоты). Строка появляется, только если сбор дошёл до attach-стадии; сбор, упавший на Rasp-стадии (пустой кэш/квота), виден лишь в Jobs и логах.
 `GET /api/v1/admin/imports` — последние `imports(provider, at, records, status, checksum)` (источник истины `Postgres`, порядок `at DESC`).  
 `GET /api/v1/admin/logs` — `import_logs(job_id, entity_type, stage, action, confidence)` — per-stop trace `normalize→enrich→dedup→verify→canonical`.  
-`GET /api/v1/jobs` / `POST /api/v1/jobs {"type":"sync_mintrans","payload":"{}"}` — очередь `jobs(state pending→running→retry→done/dead, attempts, next_run)`; состояние видно в таблице.  
-Кнопки: **Обновить автобусы** → `POST /api/v1/import/mintrans` — **отключена (409)**: legacy-импорт вырезан из сервера, канон пишут `skeleton-sync` + `trips-sync`; **Обновить ж/д** → `sync_rail`, **Upload gtfs.zip** → `import_gtfs`. Воркер `internal/jobs/worker.go` забирает `ClaimNextJob FOR UPDATE SKIP LOCKED`, `429` → `MarkJobRetry(next_run=now+attempt*2m cap 30m)` + ротация `B=mintrans→yandex→nominatim` (`api_quotas`). Джоба `sync_mintrans`, поставленная вручную через `POST /api/v1/jobs`, сразу падает с объяснением (не пишет в БД).
+
+### Jobs — фоновые задания
+`GET /api/v1/jobs` / `POST /api/v1/jobs {"type":"sync_mintrans","payload":"{}"}` — очередь `jobs(state pending→running→retry→done/dead, attempts, next_run)`; состояние видно в таблице, детали сборки (`kind`, `terminal_id`, `offline`) — в подписи под типом (парсинг `payload`).  
+Кнопки: **Обновить автобусы** → `POST /api/v1/import/mintrans` — **отключена (409)**: legacy-импорт вырезан из сервера, канон пишут `skeleton-sync` + `trips-sync`; **Обновить ж/д** → `sync_rail`, **Upload gtfs.zip** → `import_gtfs`. Воркер `internal/jobs/worker.go` забирает `ClaimNextJob FOR UPDATE SKIP LOCKED`, обычная ошибка → `MarkJobRetry(next_run=now+attempt*2m cap 30m)` + ротация `B=mintrans→yandex→nominatim` (`api_quotas`); `attempts` растёт только в `ClaimNextJob` (одна попытка = один claim). Особые исходы сбора рейсов (`internal/sync/collect_errors.go`): пустой offline-сбор (`ErrOfflineCacheEmpty`) → сразу `dead` без повторов; исчерпанная квота (`ErrQuotaBlocked`) → `MarkJobRetryAt` на `reset_at` квоты из `api_quotas` (+2 мин джиттера). Джоба `sync_mintrans`, поставленная вручную через `POST /api/v1/jobs`, сразу падает с объяснением (не пишет в БД).
 
 ### Терминалы — ручная правка
 `PUT /api/v1/admin/terminals/{id} {"name":"Кемерово АВ","lat":55.355,"lon":86.088}`  
